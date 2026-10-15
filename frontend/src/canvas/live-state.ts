@@ -3,7 +3,13 @@
  * cover hung in a door/window is, and a status colour for device pins.
  * Pure functions of `hass`, shared by the panel and the dashboard card. */
 
-import type { HomeAssistant, Opening, Pin, Room } from "../types";
+import type {
+  FurnitureItem,
+  HomeAssistant,
+  Opening,
+  Pin,
+  Room,
+} from "../types";
 
 export interface RoomLight {
   /** Light entities the room follows. */
@@ -249,12 +255,100 @@ function statusColor(
 
 /** A stable string for a set of live maps, so callers can skip re-rendering
  * when nothing visible changed. */
+/** A linked furniture item's live look (see FurnitureItem.entity_id). */
+export interface ItemState {
+  /** Colour to draw the item in while active; null leaves its own. */
+  color: string | null;
+  /** 0–1 glow around it: a light's brightness, a fixed glow for other
+   * active things, 0 for none. */
+  glow: number;
+  active: boolean;
+  unavailable: boolean;
+  /** The state in words, for its tooltip and label ("on · 70%"). */
+  text: string;
+}
+
+const ENTITY_GLOW: Record<string, number> = {
+  switch: 0.45,
+  fan: 0.35,
+  input_boolean: 0.35,
+  media_player: 0.4,
+  climate: 0.4,
+};
+
+export function itemState(hass: HomeAssistant, entityId: string): ItemState {
+  const st = hass.states[entityId];
+  const domain = entityId.split(".")[0] ?? "";
+  if (!st || st.state === "unavailable" || st.state === "unknown") {
+    return {
+      color: null,
+      glow: 0,
+      active: false,
+      unavailable: true,
+      text: st?.state ?? "unavailable",
+    };
+  }
+  const state = st.state ?? "";
+  const attrs = st.attributes;
+  let text = state;
+  let color: string | null =
+    domain === "input_boolean"
+      ? state === "on"
+        ? "#ffb300"
+        : null
+      : statusColor(domain, state, attrs);
+  let glow = color ? (ENTITY_GLOW[domain] ?? 0) : 0;
+  if (domain === "light" && state === "on") {
+    const brightness = attrs["brightness"];
+    const level = typeof brightness === "number" ? brightness / 255 : 1;
+    glow = Math.max(0.25, level);
+    text = `on · ${Math.round(level * 100)}%`;
+  } else if (domain === "cover") {
+    const open = coverOpenness(hass, entityId);
+    if (open !== null && typeof attrs["current_position"] === "number")
+      text = `${state} · ${Math.round(open * 100)}%`;
+  } else if (domain === "sensor") {
+    const unit = attrs["unit_of_measurement"];
+    text = typeof unit === "string" ? `${state} ${unit}` : state;
+    color = null;
+  }
+  return { color, glow, active: color !== null, unavailable: false, text };
+}
+
+export function computeItemStates(
+  items: FurnitureItem[],
+  hass: HomeAssistant | undefined,
+): Map<string, ItemState> {
+  const out = new Map<string, ItemState>();
+  if (!hass) return out;
+  for (const item of items) {
+    if (item.entity_id) out.set(item.id, itemState(hass, item.entity_id));
+  }
+  return out;
+}
+
+/** What a tap on a linked item does by default: toggle what can be
+ * toggled, show details for the rest. */
+export function isToggleable(entityId: string): boolean {
+  return [
+    "light",
+    "switch",
+    "fan",
+    "input_boolean",
+    "cover",
+    "media_player",
+  ].includes(entityId.split(".")[0] ?? "");
+}
+
 export function liveSignature(
   lights: Map<string, RoomLight>,
   covers: Map<string, number | null>,
   pins: Map<string, string>,
+  items: Map<string, ItemState> = new Map(),
 ): string {
   const parts: string[] = [];
+  for (const [id, s] of items)
+    parts.push(`${id}:${s.color}:${s.glow.toFixed(2)}:${s.text}`);
   for (const [id, l] of lights)
     parts.push(
       `${id}:${l.on}:${l.level.toFixed(2)}:${l.color}:${l.unavailable}:${l.entityIds.length}`,

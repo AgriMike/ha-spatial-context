@@ -138,6 +138,8 @@ _FURNITURE_SCHEMA = {
     vol.Optional("show_label"): bool,
     vol.Optional("mirrored"): bool,
     vol.Optional("locked"): bool,
+    # An HA entity the item stands for (a lamp's light, say).
+    vol.Optional("entity_id"): vol.Any(str, None),
 }
 
 _SCALE_SCHEMA = vol.Any(
@@ -221,6 +223,9 @@ _PLACEMENT_SCHEMA = {
         vol.Required("openings"): [_OPENING_SCHEMA],
         # Optional so a panel older than furniture can still save.
         vol.Optional("furniture", default=list): [_FURNITURE_SCHEMA],
+        vol.Optional("north_deg", default=None): vol.Any(
+            None, vol.All(vol.Coerce(float), vol.Range(min=0, max=360))
+        ),
         vol.Required("scale"): _SCALE_SCHEMA,
     }
 )
@@ -246,6 +251,7 @@ async def ws_save_layout(
         # Drop any opening whose wall was deleted in this same save.
         "openings": [o for o in msg["openings"] if o["wallId"] in wall_ids],
         "furniture": msg["furniture"],
+        "north_deg": msg["north_deg"],
         "scale": msg["scale"],
     }
     await async_save_floor_layout(hass, msg["floor_id"], layout)

@@ -152,6 +152,10 @@ export interface FurnitureItem {
   mirrored?: boolean;
   /** Can't be dragged, rotated or resized on the canvas. */
   locked?: boolean;
+  /** An HA entity this item stands for (a lamp's light, a TV's media
+   * player…) — its live state is drawn on the item (see live-state.ts's
+   * computeItemStates), and a dashboard tap toggles it. */
+  entity_id?: string | null;
 }
 
 /** The canvas's visible region in its own stored coordinate space — what
@@ -197,6 +201,10 @@ export interface FloorLayout {
    * than this field). */
   furniture: FurnitureItem[];
   scale: Scale | null;
+  /** Compass bearing the top of the plan faces (0 = north is up, 90 =
+   * east is up), or null when not set. With HA's home location this lets
+   * daylight through each window follow the real sun. */
+  north_deg: number | null;
 }
 
 /** A floor's traced footprint extent (rooms + walls only), in that floor's

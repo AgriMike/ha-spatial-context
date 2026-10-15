@@ -331,7 +331,7 @@
     "fit": "Fit to screen",
     "furniture": "Show furniture",
     "lights": "Show live lights",
-    "covers": "Show cover shading"
+    "covers": "Show daylight & cover shading"
   },
   "materials": {
     "timber_frame": "Timber framed (drywall)",
@@ -415,6 +415,21 @@
       "fitness": "Fitness & hobbies",
       "pets": "Pets",
       "decor": "Decor & plants"
-    }
+    },
+    "entityTitle": "Linked entity",
+    "entity": "Entity",
+    "noEntity": "None",
+    "toggle": "Toggle"
+  },
+  "compass": {
+    "title": "North is {dir} of the plan's top",
+    "faces": "Top of plan faces",
+    "notSet": "Not set",
+    "degrees": "Degrees clockwise from north",
+    "noLocation": "Set your home location in Home Assistant (Settings → System → General) for daylight that follows the sun.",
+    "preview": "Daylight at {time}",
+    "now": "Now",
+    "sun": "Sun {deg}° up in the {dir}",
+    "night": "Sun down"
   }
 }

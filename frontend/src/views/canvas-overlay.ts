@@ -59,7 +59,26 @@ import {
 } from "../styles";
 import { localize } from "../i18n";
 import { catalogItem } from "../canvas/furniture-catalog";
-import type { RoomLight } from "../canvas/live-state";
+import {
+  isToggleable,
+  type ItemState,
+  type RoomLight,
+} from "../canvas/live-state";
+
+/** Entity domains a furniture item can stand for, in picker order. */
+const LINKABLE_DOMAINS = [
+  "light",
+  "switch",
+  "fan",
+  "cover",
+  "media_player",
+  "climate",
+  "lock",
+  "vacuum",
+  "input_boolean",
+  "binary_sensor",
+  "sensor",
+];
 
 /** An entity offered in a picker: id plus display name. */
 export interface EntityOption {
@@ -328,6 +347,9 @@ export class CanvasOverlay extends LitElement {
   @property({ attribute: false }) selectedRoomLight: RoomLight | null = null;
   @property({ attribute: false }) selectedCoverOpenness: number | null = null;
   @property({ type: Boolean }) floorCalibrated = false;
+  /** Entities a furniture item can be linked to (see LINKABLE_DOMAINS). */
+  @property({ attribute: false }) linkableEntities: EntityOption[] = [];
+  @property({ attribute: false }) selectedItemState: ItemState | null = null;
   /** Show the weak → strong key along the bottom (a network layer is on). */
   @state() private _colorOpen = false;
   @property({ type: Boolean }) dirty = false;
@@ -728,6 +750,69 @@ export class CanvasOverlay extends LitElement {
     </div>`;
   }
 
+  /** The entity an item stands for: picker, live state and a toggle. */
+  private _renderItemEntity(item: FurnitureItem) {
+    const live = this.selectedItemState;
+    const byDomain = LINKABLE_DOMAINS.map((domain) => ({
+      domain,
+      entities: this.linkableEntities.filter((e) =>
+        e.entity_id.startsWith(`${domain}.`),
+      ),
+    })).filter((g) => g.entities.length > 0);
+    return html`<div class="info-group">
+      <div class="info-group-title">${localize("furniture.entityTitle")}</div>
+      ${this._fieldRow(
+        "mdi:link-variant",
+        localize("furniture.entity"),
+        this._selectWrap(
+          html`<select
+            @change=${(e: Event) =>
+              this._fire("furniture-change", {
+                patch: {
+                  entity_id: (e.target as HTMLSelectElement).value || null,
+                },
+              })}
+          >
+            <option value="" ?selected=${!item.entity_id}>
+              ${localize("furniture.noEntity")}
+            </option>
+            ${byDomain.map(
+              (g) =>
+                html`<optgroup label=${g.domain}>
+                  ${g.entities.map(
+                    (e) =>
+                      html`<option
+                        value=${e.entity_id}
+                        ?selected=${e.entity_id === item.entity_id}
+                      >
+                        ${e.name}
+                      </option>`,
+                  )}
+                </optgroup>`,
+            )}
+          </select>`,
+        ),
+      )}
+      ${
+        item.entity_id && live
+          ? this._fieldRow(
+              live.active ? "mdi:lightbulb-on" : "mdi:circle-outline",
+              live.text,
+              isToggleable(item.entity_id)
+                ? html`<span class="light-buttons"
+                    ><button
+                      @click=${() => this._fire("furniture-entity-toggle")}
+                    >
+                      ${localize("furniture.toggle")}
+                    </button></span
+                  >`
+                : nothing,
+            )
+          : nothing
+      }
+    </div>`;
+  }
+
   private _renderFurnitureCard(item: FurnitureItem) {
     const entry = catalogItem(item.kind);
     const unit =
@@ -896,6 +981,7 @@ export class CanvasOverlay extends LitElement {
           ${toggle("mdi:flip-horizontal", localize("furniture.mirror"), "mirrored")}
           ${toggle("mdi:lock-outline", localize("furniture.lock"), "locked")}
         </div>
+        ${this._renderItemEntity(item)}
         <div class="info-group">
           ${this._actionRow(
             "mdi:content-copy",

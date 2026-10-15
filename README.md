@@ -146,7 +146,7 @@ New points snap to nearby walls and room edges and line up with your last point,
 | **Device** | Set a **label**, a custom **icon** (search every Material Design icon), and a mounting **height**, and see its **network links** while a Connectivity Map layer is on. |
 | **Wall** | Set its **material** and **thickness**, and edit its corners. |
 | **Door / window** | Set its **width**, and link a **cover** (blind, shade, garage door) hung in it. See [Live lights and covers](#live-lights-and-covers). |
-| **Furniture / item** | **Name** it and show the name on the plan, set its real **width**, **depth** and **rotation**, **line thickness**, **colour** and **fill**, **mirror** it, **lock** it in place, **duplicate** it, and bring it to the front or send it to the back. |
+| **Furniture / item** | **Name** it and show the name on the plan, set its real **width**, **depth** and **rotation**, **line thickness**, **colour** and **fill**, **mirror** it, **lock** it in place, **duplicate** it, bring it to the front or send it to the back, and **link an entity** to it (see [Items linked to entities](#items-linked-to-entities)). |
 | **Connectivity link** | See both ends and the signal quality. A link to a device on another floor can jump to that floor. |
 | **Devices on one spot** | Choose which to select, or remove one from the spot. |
 
@@ -202,11 +202,19 @@ The sofa button in the toolbar opens a library of **780 furniture and household 
 
 Each item is a simple plan-view line drawing that redraws at whatever size you give it, so a longer dining table gets more room between its chairs instead of stretched ones. Select one to drag it, turn it with the round handle, or resize it with the square handles. Sizes are real centimetres, so they're only true to life once the floor's scale is set. The sofa, bulb and blinds buttons beside the zoom controls show or hide furniture, live lights and cover shading.
 
+## Items linked to entities
+
+Any furniture or item can stand for an HA entity: a floor lamp for its light, a TV for its media player, a fan for its fan. Pick the entity in the item's card. The item then shows the entity's live state. A lit lamp is drawn in its bulb's colour with a glow that grows with brightness, and other active things (a playing TV, a running fan or switch) are tinted with a softer glow. Items are faded while off and greyed out while unavailable. Hovering shows the state ("on · 70%"), and **Show name** adds it to the label. The card has a **Toggle** button, and on a dashboard a tap toggles the entity (or opens its details, see `item_tap_action`).
+
 ## Live lights and covers
 
 A room shows its lights live on the plan: filled in the lights' own colour and brighter with their brightness, or shaded dark with them all off. By default a room follows the lights in its HA area. Its card can add **other areas** (an open-plan space spanning two), **other rooms** (a dining room that should show the kitchen's lights too), and **individual lights**.
 
-Link a **cover** to a door or window from its card, and the floor behind it shows a daylight patch reaching into the room. The patch is brighter the more the cover is open, and turns to shade when it's closed. Device pins are tinted by their device's live state too: lights in their colour, switches and fans amber, open covers blue, motion or open doors red.
+Link a **cover** to a door or window from its card, and the floor behind it shows a daylight patch reaching into the room. The patch is brighter the more the cover is open, and turns to shade when it's closed.
+
+### Daylight that follows the sun
+
+Tell a floor which way it faces (**Background → Top of plan faces**, one of 16 compass points or an exact bearing) and, with your home location set in Home Assistant, daylight through every exterior window follows the real sun. A window facing the sun gets a beam across the floor at the sun's actual angle: long and orange at sunrise and sunset, short and near-white at midday. Other windows get soft sky light, and at night there's none. A cover dims the light by how far it's closed, so open and closed covers stay easy to tell apart, even at night. A compass and the sun's position show in the corner of the plan, and **Daylight at** previews any time of day. Dashboard cards follow the same sun. Device pins are tinted by their device's live state too: lights in their colour, switches and fans amber, open covers blue, motion or open doors red.
 
 ## Dashboard card
 
@@ -226,6 +234,7 @@ show_controls: true         # zoom and overlay buttons
 room_tap_action: toggle     # toggle | more-info | none
 cover_tap_action: more-info # more-info | toggle | none
 device_tap_action: more-info
+item_tap_action: toggle     # a linked lamp, TV…: toggle | more-info | none
 ```
 
 The card opens at the view you last saved for that floor. Tap a room to toggle its lights, a covered window or door to open its details (or open and close it), and a device to open its more-info dialog.

@@ -40,7 +40,11 @@ export class HaClient {
       type: "spatial_context/get_layout",
       floor_id: floorId,
     });
-    return { ...layout, furniture: layout.furniture ?? [] };
+    return {
+      ...layout,
+      furniture: layout.furniture ?? [],
+      north_deg: layout.north_deg ?? null,
+    };
   }
 
   async saveLayout(
@@ -62,6 +66,7 @@ export class HaClient {
       walls: layout.walls,
       openings: layout.openings,
       furniture: layout.furniture,
+      north_deg: layout.north_deg,
       scale: layout.scale,
     });
   }
@@ -409,5 +414,6 @@ export function emptyFloorLayout(): FloorLayout {
     openings: [],
     furniture: [],
     scale: null,
+    north_deg: null,
   };
 }

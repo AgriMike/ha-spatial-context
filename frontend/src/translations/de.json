@@ -331,7 +331,7 @@
     "fit": "An Bildschirm anpassen",
     "furniture": "Möbel zeigen",
     "lights": "Live-Licht zeigen",
-    "covers": "Beschattung zeigen"
+    "covers": "Tageslicht & Beschattung zeigen"
   },
   "materials": {
     "timber_frame": "Holzständerwand (Trockenbau)",
@@ -415,6 +415,21 @@
       "fitness": "Fitness & Hobby",
       "pets": "Haustiere",
       "decor": "Deko & Pflanzen"
-    }
+    },
+    "entityTitle": "Verknüpfte Entität",
+    "entity": "Entität",
+    "noEntity": "Keine",
+    "toggle": "Umschalten"
+  },
+  "compass": {
+    "title": "Norden relativ zur Oberkante des Plans: {dir}",
+    "faces": "Oberkante des Plans zeigt nach",
+    "notSet": "Nicht gesetzt",
+    "degrees": "Grad im Uhrzeigersinn von Norden",
+    "noLocation": "Lege deinen Standort in Home Assistant fest (Einstellungen → System → Allgemein), damit das Tageslicht der Sonne folgt.",
+    "preview": "Tageslicht um {time}",
+    "now": "Jetzt",
+    "sun": "Sonne {deg}° hoch im {dir}",
+    "night": "Sonne untergegangen"
   }
 }

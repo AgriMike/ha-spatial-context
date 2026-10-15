@@ -93,11 +93,14 @@ import "./views/entity-picker-sidebar";
 import "./views/furniture-library-sidebar";
 import type { EntityOption } from "./views/canvas-overlay";
 import { catalogItem } from "./canvas/furniture-catalog";
+import { COMPASS_POINTS } from "./canvas/sun";
 import {
   computeCoverOpenness,
+  computeItemStates,
   computePinColors,
   computeRoomLights,
   liveSignature,
+  type ItemState,
   type RoomLight,
 } from "./canvas/live-state";
 import "./views/property-overlay";
@@ -277,6 +280,9 @@ export class SpatialContextPanel extends LitElement {
   @state() private _roomLights = new Map<string, RoomLight>();
   @state() private _coverOpenness = new Map<string, number | null>();
   @state() private _pinColors = new Map<string, string>();
+  @state() private _itemStates = new Map<string, ItemState>();
+  /** Daylight preview: minutes past midnight today, or null for now. */
+  @state() private _sunPreviewMinutes: number | null = null;
   private _liveSig = "";
   @state() private _entities: PlaceableEntity[] = [];
   @state() private _areas: AreaMeta[] = [];
@@ -1051,9 +1057,11 @@ export class SpatialContextPanel extends LitElement {
     const lights = computeRoomLights(this._layout.rooms, hass);
     const covers = computeCoverOpenness(this._layout.openings, hass);
     const pins = computePinColors(this._layout.pins, hass);
-    const sig = liveSignature(lights, covers, pins);
+    const items = computeItemStates(this._layout.furniture, hass);
+    const sig = liveSignature(lights, covers, pins, items);
     if (sig === this._liveSig) return;
     this._liveSig = sig;
+    this._itemStates = items;
     this._roomLights = lights;
     this._coverOpenness = covers;
     this._pinColors = pins;
@@ -1070,6 +1078,132 @@ export class SpatialContextPanel extends LitElement {
         name: String(states[id]?.attributes["friendly_name"] ?? id),
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** Entities a furniture item can stand for, across the linkable
+   * domains. */
+  private _linkableEntities(): EntityOption[] {
+    const domains = [
+      "light",
+      "switch",
+      "fan",
+      "cover",
+      "media_player",
+      "climate",
+      "lock",
+      "vacuum",
+      "input_boolean",
+      "binary_sensor",
+      "sensor",
+    ];
+    return domains.flatMap((d) => this._entityOptions(d));
+  }
+
+  /** HA's home location, for the sun. */
+  private get _location(): { latitude: number; longitude: number } | null {
+    const c = this._hass?.config;
+    return typeof c?.latitude === "number" && typeof c.longitude === "number"
+      ? { latitude: c.latitude, longitude: c.longitude }
+      : null;
+  }
+
+  private get _sunTime(): number | null {
+    if (this._sunPreviewMinutes === null) return null;
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime() + this._sunPreviewMinutes * 60000;
+  }
+
+  private _onNorthChange = (deg: number | null) => {
+    this._updateLayout({
+      north_deg: deg === null ? null : ((Math.round(deg) % 360) + 360) % 360,
+    });
+  };
+
+  /** Background menu: which way the plan faces, and a daylight preview. */
+  private _renderCompassControls() {
+    if (this._view === "property") return nothing;
+    const north = this._layout.north_deg;
+    const minutes =
+      this._sunPreviewMinutes ??
+      new Date().getHours() * 60 + new Date().getMinutes();
+    const time = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+    return html`
+      <label class="popover-row"
+        >${localize("compass.faces")}
+        <select
+          @change=${(e: Event) => {
+            const v = (e.target as HTMLSelectElement).value;
+            this._onNorthChange(v === "" ? null : Number(v));
+          }}
+        >
+          <option value="" ?selected=${north === null}>
+            ${localize("compass.notSet")}
+          </option>
+          ${COMPASS_POINTS.map(
+            (p) =>
+              html`<option value=${p.deg} ?selected=${north === p.deg}>
+                ${p.name}
+              </option>`,
+          )}
+          ${
+            north !== null && !COMPASS_POINTS.some((p) => p.deg === north)
+              ? html`<option value=${north} selected>${north}°</option>`
+              : nothing
+          }
+        </select>
+        <input
+          type="number"
+          min="0"
+          max="359"
+          step="1"
+          style="width:64px"
+          title=${localize("compass.degrees")}
+          .value=${north === null ? "" : String(north)}
+          @change=${(e: Event) => {
+            const raw = (e.target as HTMLInputElement).value;
+            this._onNorthChange(raw === "" ? null : Number(raw));
+          }}
+        />
+      </label>
+      ${
+        north !== null && !this._location
+          ? html`<span class="hint" style="padding: 0 16px 8px"
+              >${localize("compass.noLocation")}</span
+            >`
+          : nothing
+      }
+      ${
+        north !== null && this._location
+          ? html`<label class="popover-row"
+              >${localize("compass.preview", { time })}
+              <input
+                type="range"
+                min="0"
+                max="1439"
+                step="10"
+                style="--pct:${(minutes / 1439) * 100}%"
+                .value=${String(minutes)}
+                @input=${(e: Event) =>
+                  (this._sunPreviewMinutes = Number(
+                    (e.target as HTMLInputElement).value,
+                  ))}
+              />
+              ${
+                this._sunPreviewMinutes !== null
+                  ? html`<button
+                      class="menu-item"
+                      style="width:auto"
+                      @click=${() => (this._sunPreviewMinutes = null)}
+                    >
+                      ${localize("compass.now")}
+                    </button>`
+                  : nothing
+              }
+            </label>`
+          : nothing
+      }
+    `;
   }
 
   private get _unitsPerCm(): number {
@@ -2955,6 +3089,7 @@ export class SpatialContextPanel extends LitElement {
         const [x, y] = tp([o.x, o.y]);
         return { ...o, x, y, width: o.width * s };
       }),
+      north_deg: src.north_deg,
       // Sizes are real-world centimetres, so only positions move.
       furniture: src.furniture.map((f) => {
         const [x, y] = tp([f.x, f.y]);
@@ -3092,6 +3227,17 @@ export class SpatialContextPanel extends LitElement {
     if (this._selectedFurnitureId) {
       this._patchFurniture(this._selectedFurnitureId, e.detail.patch);
     }
+  };
+
+  private _onFurnitureEntityToggle = () => {
+    const entityId = this._selectedFurniture?.entity_id;
+    if (!entityId || !this._hass?.callService) return;
+    void this._hass.callService(
+      "homeassistant",
+      "toggle",
+      {},
+      { entity_id: entityId },
+    );
   };
 
   private _onFurnitureDelete = () => {
@@ -3935,6 +4081,7 @@ export class SpatialContextPanel extends LitElement {
               </label>`
             : nothing
         }
+        ${this._renderCompassControls()}
       </icon-popover>
     `;
   }
@@ -4349,9 +4496,13 @@ export class SpatialContextPanel extends LitElement {
                     .roomLights=${this._roomLights}
                     .coverOpenness=${this._coverOpenness}
                     .pinColors=${this._pinColors}
+                    .itemStates=${this._itemStates}
                     .showFurniture=${this._overlays.furniture}
                     .showLights=${this._overlays.lights}
                     .showCovers=${this._overlays.covers}
+                    .northDeg=${this._layout.north_deg}
+                    .location=${this._location}
+                    .sunTime=${this._sunTime}
                     @overlay-toggle=${this._onOverlayToggle}
                     @furniture-place=${this._onFurniturePlace}
                     @furniture-select=${this._onFurnitureSelect}
@@ -4422,6 +4573,14 @@ export class SpatialContextPanel extends LitElement {
                         : null
                     }
                     .floorCalibrated=${this._layout.scale !== null}
+                    .linkableEntities=${this._selectedFurniture ? this._linkableEntities() : []}
+                    .selectedItemState=${
+                      this._selectedFurniture
+                        ? (this._itemStates.get(this._selectedFurniture.id) ??
+                          null)
+                        : null
+                    }
+                    @furniture-entity-toggle=${this._onFurnitureEntityToggle}
                     @furniture-library-click=${this._onFurnitureLibraryClick}
                     @furniture-done-click=${this._onFurnitureDone}
                     @furniture-rotate-armed-click=${this._onFurnitureRotateArmed}

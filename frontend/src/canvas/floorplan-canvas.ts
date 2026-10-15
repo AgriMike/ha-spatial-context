@@ -57,7 +57,16 @@ import { localize } from "../i18n";
 import { scaleStyles, sharedStyles, zoomControlsStyles } from "../styles";
 import { catalogItem } from "./furniture-catalog";
 import { drawItem, FURNITURE_STYLES, renderPrims } from "./furniture-draw";
-import type { RoomLight } from "./live-state";
+import type { ItemState, RoomLight } from "./live-state";
+import {
+  compassName,
+  daylight,
+  planBearing,
+  planVector,
+  sunColor,
+  sunPosition,
+  type SunPosition,
+} from "./sun";
 
 /** Fixed logical coordinate space width every floor's rooms/pins are stored in,
  * independent of the uploaded background image's actual pixel resolution. */
@@ -422,6 +431,18 @@ export class FloorplanCanvas extends LitElement {
       :host([dark]) .furniture {
         --fx-color: #b0bec5;
       }
+      .furniture.unavailable {
+        opacity: 0.4;
+      }
+      .furniture.idle {
+        opacity: 0.7;
+      }
+      .furniture.linked {
+        cursor: pointer;
+      }
+      .item-glow {
+        pointer-events: none;
+      }
       .furniture.ghost {
         opacity: 0.55;
         pointer-events: none;
@@ -461,6 +482,44 @@ export class FloorplanCanvas extends LitElement {
       }
       .cover-patch {
         pointer-events: none;
+      }
+      .compass {
+        position: absolute;
+        left: 12px;
+        bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        pointer-events: auto;
+      }
+      .compass svg {
+        width: 44px;
+        height: 44px;
+        filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
+      }
+      .compass-ring {
+        fill: var(--sc-panel-bg);
+        stroke: var(--sc-divider);
+      }
+      .compass-north {
+        fill: var(--sc-danger);
+      }
+      .compass-south {
+        fill: var(--sc-fg-secondary);
+      }
+      .compass-n {
+        font-size: 9px;
+        font-weight: 600;
+        text-anchor: middle;
+        fill: var(--sc-fg);
+      }
+      .compass-sun {
+        padding: 2px 8px;
+        border-radius: 10px;
+        background: var(--sc-panel-bg);
+        color: var(--sc-fg-secondary);
+        font-size: 11px;
+        box-shadow: var(--sc-panel-shadow);
       }
       .controls button.active {
         color: var(--sc-accent);
@@ -523,9 +582,21 @@ export class FloorplanCanvas extends LitElement {
   @property({ attribute: false }) coverOpenness: Map<string, number | null> =
     new Map();
   @property({ attribute: false }) pinColors: Map<string, string> = new Map();
+  /** Live state of furniture items linked to an entity. */
+  @property({ attribute: false }) itemStates: Map<string, ItemState> =
+    new Map();
   @property({ type: Boolean }) showFurniture = true;
   @property({ type: Boolean }) showLights = true;
   @property({ type: Boolean }) showCovers = true;
+  /** Compass bearing the top of the plan faces (FloorLayout.north_deg). */
+  @property({ attribute: false }) northDeg: number | null = null;
+  /** HA's home location, for the sun's position. */
+  @property({ attribute: false }) location: {
+    latitude: number;
+    longitude: number;
+  } | null = null;
+  /** Preview the daylight at another time (ms since epoch); null = now. */
+  @property({ attribute: false }) sunTime: number | null = null;
   /** Furniture / lights / covers on-off buttons beside the zoom controls
    * (each fires "overlay-toggle"). */
   @property({ type: Boolean }) overlayButtons = true;
@@ -590,6 +661,9 @@ export class FloorplanCanvas extends LitElement {
   } | null = null;
   @state() private _selectedVertexIndex: number | null = null;
   @state() private _liveFurniture: FurnitureEdit | null = null;
+  /** Wall-clock time the daylight is drawn for, ticking each minute. */
+  @state() private _now = Date.now();
+  private _clock: ReturnType<typeof setInterval> | null = null;
   /** Where the pointer is while placing furniture (the ghost's spot). */
   @state() private _hoverImage: { x: number; y: number } | null = null;
 
@@ -668,8 +742,17 @@ export class FloorplanCanvas extends LitElement {
     this._resizeObserver.observe(this);
   }
 
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this._clock = setInterval(() => {
+      if (this.northDeg !== null && this.location) this._now = Date.now();
+    }, 60000);
+  }
+
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    if (this._clock) clearInterval(this._clock);
+    this._clock = null;
     this._resizeObserver?.disconnect();
   }
 
@@ -988,10 +1071,15 @@ export class FloorplanCanvas extends LitElement {
   }
 
   /** The smallest item under a point — a lamp on a rug wins. */
-  private _furnitureAt(x: number, y: number): FurnitureItem | null {
+  private _furnitureAt(
+    x: number,
+    y: number,
+    linkedOnly = false,
+  ): FurnitureItem | null {
     const tol = this._pxToUnits(3) / this.unitsPerCm;
     let best: FurnitureItem | null = null;
     for (const raw of this.furniture) {
+      if (linkedOnly && !raw.entity_id) continue;
       const item = this._effectiveFurniture(raw);
       const [lx, ly] = this._imageToFurniture(item, x, y);
       if (
@@ -1188,6 +1276,11 @@ export class FloorplanCanvas extends LitElement {
     if (meshLink) return { type: "meshLink", link: meshLink };
     const meshStub = findMeshStubAt(this.meshStubs, image.x, image.y, hitR);
     if (meshStub) return { type: "meshStub", stub: meshStub };
+    if (this.showFurniture && this.readOnly) {
+      // Dashboard: an item standing for an entity can be tapped.
+      const item = this._furnitureAt(image.x, image.y, true);
+      if (item) return { type: "furniture", item };
+    }
     if (this.showFurniture && !this.readOnly) {
       const selected = this.furniture.find(
         (f) => f.id === this.selectedFurnitureId,
@@ -1798,15 +1891,17 @@ export class FloorplanCanvas extends LitElement {
     if (this.readOnly) {
       // Dashboard: report what was tapped, select nothing.
       const tap =
-        hit.type === "pin"
-          ? { kind: "pin", id: hit.pin.id }
-          : hit.type === "pinStack"
-            ? { kind: "pin", id: hit.pins[0]!.id }
-            : hit.type === "opening"
-              ? { kind: "opening", id: hit.opening.id }
-              : hit.type === "room" || hit.type === "roomLabel"
-                ? { kind: "room", id: hit.room.id }
-                : null;
+        hit.type === "furniture"
+          ? { kind: "furniture", id: hit.item.id }
+          : hit.type === "pin"
+            ? { kind: "pin", id: hit.pin.id }
+            : hit.type === "pinStack"
+              ? { kind: "pin", id: hit.pins[0]!.id }
+              : hit.type === "opening"
+                ? { kind: "opening", id: hit.opening.id }
+                : hit.type === "room" || hit.type === "roomLabel"
+                  ? { kind: "room", id: hit.room.id }
+                  : null;
       if (tap) this.dispatchEvent(new CustomEvent("plan-tap", { detail: tap }));
       return;
     }
@@ -2773,13 +2868,41 @@ export class FloorplanCanvas extends LitElement {
     const inner = `translate(${-item.width_cm / 2} ${-item.depth_cm / 2})${
       flip ? ` translate(${item.width_cm} 0) scale(-1 1)` : ""
     }`;
+    // Linked to an entity: drawn in its state colour while active (a lit
+    // lamp in its bulb's colour, glowing with its brightness), faded while
+    // idle, greyed out while unavailable.
+    const live = ghost ? undefined : this.itemStates.get(item.id);
+    const color = live?.color ?? item.color;
     const style = `--fx-stroke-width:${item.stroke_width}px;${
-      item.color ? `--fx-color:${item.color};` : ""
+      color ? `--fx-color:${color};` : ""
     }`;
-    const label = item.label || entry?.name || item.kind;
+    const name = item.label || entry?.name || item.kind;
+    const label = live ? `${name} · ${live.text}` : name;
+    const stateClass = !live
+      ? ""
+      : live.unavailable
+        ? "linked unavailable"
+        : live.active
+          ? "linked active"
+          : "linked idle";
+    const glowR =
+      live && live.glow > 0 && this.showLights
+        ? (Math.max(item.width_cm, item.depth_cm) / 2) * k * (1.5 + live.glow)
+        : 0;
+    const glowId = `item-glow-${item.id}`;
     return svg`
-      <g class="furniture ${ghost ? "ghost" : ""}" style=${style} transform=${transform}>
-        <g transform=${inner}>${renderPrims(prims, !!item.fill)}</g>
+      ${
+        glowR > 0
+          ? svg`<defs><radialGradient id=${glowId}>
+              <stop offset="0" stop-color=${live!.color ?? "#ffd54f"} stop-opacity=${0.25 + 0.5 * live!.glow}></stop>
+              <stop offset="0.45" stop-color=${live!.color ?? "#ffd54f"} stop-opacity=${0.12 + 0.25 * live!.glow}></stop>
+              <stop offset="1" stop-color=${live!.color ?? "#ffd54f"} stop-opacity="0"></stop>
+            </radialGradient></defs>
+            <circle class="item-glow" cx=${item.x} cy=${item.y} r=${glowR} fill="url(#${glowId})"></circle>`
+          : nothing
+      }
+      <g class="furniture ${ghost ? "ghost" : ""} ${stateClass}" style=${style} transform=${transform}>
+        <g transform=${inner}>${renderPrims(prims, !!item.fill || !!live?.active)}</g>
         ${
           selected
             ? svg`<rect class="furniture-outline" x=${-item.width_cm / 2} y=${-item.depth_cm / 2} width=${item.width_cm} height=${item.depth_cm}></rect>`
@@ -2833,17 +2956,61 @@ export class FloorplanCanvas extends LitElement {
     );
   }
 
-  /** Daylight (or shade) on the floor behind each door/window that has a
-   * cover linked: a patch reaching into the room, warm and bright as the
-   * cover opens, dark as it closes — clipped to the room it falls in. */
-  private _renderCoverPatches() {
-    if (!this.showCovers || this.coverOpenness.size === 0) return nothing;
+  /** The sun right now (or at the previewed time), when the floor's
+   * compass is set and HA has a home location — else null. */
+  private _sun(): SunPosition | null {
+    if (this.northDeg === null || !this.location) return null;
+    return sunPosition(
+      new Date(this.sunTime ?? this._now),
+      this.location.latitude,
+      this.location.longitude,
+    );
+  }
+
+  /** Light on the floor behind each window (and each door/window with a
+   * cover linked), clipped to the room it falls in.
+   *
+   * With the floor's compass set and HA's location known, it follows the
+   * real sun: windows facing it get a beam at the sun's actual angle,
+   * longer as it sinks, golden at sunrise and sunset and near-white at
+   * midday; the rest get soft sky light; night shows none (a faint glow
+   * through an open cover, shade behind a closed one). A cover dims it by
+   * how far it's closed. Without a compass, linked covers show a simple
+   * patch: bright open, dark closed. */
+  private _renderDaylight() {
+    if (!this.showCovers) return nothing;
+    const sun = this._sun();
+    if (!sun && this.coverOpenness.size === 0) return nothing;
     const defs: unknown[] = [];
     const patches: unknown[] = [];
     const clipped = new Set<string>();
+    const m = 100 * this.unitsPerCm; // stored units per metre
+    let n = 0;
+    const patch = (
+      pts: [number, number][],
+      from: [number, number],
+      to: [number, number],
+      color: string,
+      alpha: number,
+      clipId: string,
+    ) => {
+      if (alpha <= 0.01) return;
+      const id = `daylight-${n++}`;
+      defs.push(svg`
+        <linearGradient id=${id} gradientUnits="userSpaceOnUse" x1=${from[0]} y1=${from[1]} x2=${to[0]} y2=${to[1]}>
+          <stop offset="0" stop-color=${color} stop-opacity=${Math.min(0.85, alpha)}></stop>
+          <stop offset="1" stop-color=${color} stop-opacity="0"></stop>
+        </linearGradient>`);
+      patches.push(
+        svg`<polygon class="cover-patch" points=${pts.map(([x, y]) => `${x},${y}`).join(" ")} fill="url(#${id})" clip-path="url(#${clipId})"></polygon>`,
+      );
+    };
     for (const opening of this.openings) {
-      if (!this.coverOpenness.has(opening.id)) continue;
-      const openness = this.coverOpenness.get(opening.id) ?? null;
+      const linked = this.coverOpenness.has(opening.id);
+      if (!linked && !(sun && opening.type === "window")) continue;
+      const openness = linked
+        ? (this.coverOpenness.get(opening.id) ?? null)
+        : 1;
       const ends = this._openingEndpoints(opening);
       if (!ends) continue;
       const [[x1, y1], [x2, y2]] = ends;
@@ -2853,51 +3020,156 @@ export class FloorplanCanvas extends LitElement {
       const ty = (y2 - y1) / width;
       const cx = (x1 + x2) / 2;
       const cy = (y1 + y2) / 2;
-      const depth = Math.max(width * 1.6, 120 * this.unitsPerCm);
-      const spread = width * 0.25;
       const probe = Math.max(this._pxToUnits(8), 15 * this.unitsPerCm);
-      for (const side of [1, -1]) {
-        const nx = -ty * side;
-        const ny = tx * side;
-        const room = this.rooms.find(
-          (r) =>
-            r.visible !== false &&
-            r.points.length >= 3 &&
-            pointInPolygon(cx + nx * probe, cy + ny * probe, r.points),
-        );
-        if (!room) continue;
-        const clipId = `cover-clip-${room.id}`;
+      const sides = [1, -1]
+        .map((side) => {
+          const nx = -ty * side;
+          const ny = tx * side;
+          const room = this.rooms.find(
+            (r) =>
+              r.visible !== false &&
+              r.points.length >= 3 &&
+              pointInPolygon(cx + nx * probe, cy + ny * probe, r.points),
+          );
+          return room ? { nx, ny, room } : null;
+        })
+        .filter((v) => v !== null);
+      // Light comes in from outside: only through an exterior window or
+      // door, i.e. one with a room on just one side — unless no compass.
+      if (sun && sides.length !== 1 && !linked) continue;
+      for (const { nx, ny, room } of sides) {
+        const clipId = `daylight-clip-${room.id}`;
         if (!clipped.has(clipId)) {
           clipped.add(clipId);
           defs.push(
             svg`<clipPath id=${clipId}><polygon points=${room.points.map(([x, y]) => `${x},${y}`).join(" ")}></polygon></clipPath>`,
           );
         }
-        const gradId = `cover-grad-${opening.id}-${side}`;
-        const lit = openness ?? 0;
-        const color =
-          openness === null ? "#9e9e9e" : lit >= 0.05 ? "#ffd54f" : "#263238";
-        const alpha =
-          openness === null ? 0.25 : lit >= 0.05 ? 0.2 + 0.5 * lit : 0.45;
-        defs.push(svg`
-          <linearGradient id=${gradId} gradientUnits="userSpaceOnUse" x1=${cx} y1=${cy} x2=${cx + nx * depth} y2=${cy + ny * depth}>
-            <stop offset="0" stop-color=${color} stop-opacity=${alpha}></stop>
-            <stop offset="1" stop-color=${color} stop-opacity="0"></stop>
-          </linearGradient>`);
-        const pts = [
+        const reach = (d: number, spread: number): [number, number][] => [
           [x1, y1],
           [x2, y2],
-          [x2 + nx * depth + tx * spread, y2 + ny * depth + ty * spread],
-          [x1 + nx * depth - tx * spread, y1 + ny * depth - ty * spread],
-        ]
-          .map(([x, y]) => `${x},${y}`)
-          .join(" ");
-        patches.push(
-          svg`<polygon class="cover-patch" points=${pts} fill="url(#${gradId})" clip-path="url(#${clipId})"></polygon>`,
-        );
+          [x2 + nx * d + tx * spread, y2 + ny * d + ty * spread],
+          [x1 + nx * d - tx * spread, y1 + ny * d - ty * spread],
+        ];
+        const soft = (d: number, color: string, alpha: number) =>
+          patch(
+            reach(d, width * 0.25),
+            [cx, cy],
+            [cx + nx * d, cy + ny * d],
+            color,
+            alpha,
+            clipId,
+          );
+        if (openness === null) {
+          soft(width * 1.2, "#9e9e9e", 0.25);
+          continue;
+        }
+        if (!sun) {
+          // No compass: open = bright, closed = shade.
+          const depth = Math.max(width * 1.6, 1.2 * m);
+          if (openness >= 0.05) soft(depth, "#ffd54f", 0.2 + 0.5 * openness);
+          else soft(depth, "#263238", 0.45);
+          continue;
+        }
+        const day = daylight(sun.elevation);
+        const shade = sides.length === 1 || linked;
+        if (day <= 0) {
+          // Night: a faint glow through an open cover, shade if closed.
+          if (linked && openness >= 0.05)
+            soft(width * 1.2, "#90caf9", 0.14 * openness);
+          else if (linked) soft(width * 1.4, "#263238", 0.35);
+          continue;
+        }
+        const color = sunColor(sun.elevation);
+        // Soft sky light through any window in daytime.
+        soft(Math.max(width * 1.3, 1 * m), "#fffbe6", 0.18 * day * openness);
+        // Direct sun: only through a window facing it.
+        const out = planBearing(-nx, -ny, this.northDeg ?? 0);
+        const facing = Math.cos(((sun.azimuth - out) * Math.PI) / 180);
+        if (facing > 0.04 && sun.elevation > 0.5 && shade) {
+          const [rx, ry] = planVector(sun.azimuth + 180, this.northDeg ?? 0);
+          // How far the beam reaches across the floor: a ~2.1 m window
+          // head over the sun's height, longer as it sinks (capped).
+          const len =
+            Math.min(
+              7,
+              Math.max(0.6, 2.1 / Math.tan(sun.elevation * (Math.PI / 180))),
+            ) * m;
+          const along = rx * nx + ry * ny; // into-room share of the ray
+          if (along > 0.05) {
+            const dx = rx * len;
+            const dy = ry * len;
+            const strength = Math.min(
+              1,
+              Math.max(0.35, Math.sin(sun.elevation * (Math.PI / 180)) * 1.8),
+            );
+            patch(
+              [
+                [x1, y1],
+                [x2, y2],
+                [x2 + dx, y2 + dy],
+                [x1 + dx, y1 + dy],
+              ],
+              [cx, cy],
+              [cx + dx, cy + dy],
+              color,
+              (0.3 + 0.45 * strength) * Math.min(1, facing * 1.6) * openness,
+              clipId,
+            );
+          }
+        }
+        if (linked && openness < 0.95) {
+          soft(
+            Math.max(width * 1.4, 1.2 * m),
+            "#263238",
+            0.4 * (1 - openness) * day,
+          );
+        }
       }
     }
     return svg`<defs>${defs}</defs>${patches}`;
+  }
+
+  /** A north arrow, when the floor's compass is set. */
+  private _renderCompass() {
+    if (this.northDeg === null) return nothing;
+    const sun = this._sun();
+    return html`<div
+      class="compass"
+      title=${localize("compass.title", {
+        dir: compassName(this.northDeg),
+      })}
+    >
+      <svg
+        viewBox="-20 -20 40 40"
+        style="transform: rotate(${-this.northDeg}deg)"
+      >
+        <circle r="18" class="compass-ring"></circle>
+        <polygon points="0,-15 5,2 0,-2 -5,2" class="compass-north"></polygon>
+        <polygon points="0,15 5,2 0,-2 -5,2" class="compass-south"></polygon>
+        <text
+          y="-6"
+          class="compass-n"
+          transform="rotate(${this.northDeg} 0 -9)"
+        >
+          N
+        </text>
+      </svg>
+      ${
+        sun
+          ? html`<span class="compass-sun"
+              >${
+                sun.elevation > 0
+                  ? localize("compass.sun", {
+                      deg: Math.round(sun.elevation),
+                      dir: compassName(sun.azimuth),
+                    })
+                  : localize("compass.night")
+              }</span
+            >`
+          : nothing
+      }
+    </div>`;
   }
 
   private _renderOverlayButtons() {
@@ -3071,7 +3343,7 @@ export class FloorplanCanvas extends LitElement {
           @pointerleave=${this._onPointerLeave}
         >
           ${this.rooms.map((room) => this._renderRoom(room))}
-          ${this._renderCoverPatches()}
+          ${this._renderDaylight()}
           ${this.showFurniture ? this.furniture.map((item) => this._renderFurniture(item)) : nothing}
           ${this.walls.map((wall) => this._renderWall(wall))}
           ${this.openings.map((opening) => this._renderOpening(opening))}
@@ -3087,7 +3359,7 @@ export class FloorplanCanvas extends LitElement {
           ${this.mode === "furniture" ? this._renderFurnitureGhost() : nothing}
         </svg>
       `}
-      ${this._renderScaleBar()}
+      ${this._renderScaleBar()} ${this._renderCompass()}
       <div class="controls">
         ${this._renderOverlayButtons()}
         <button

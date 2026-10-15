@@ -171,6 +171,8 @@ async def async_get_map_data(hass: HomeAssistant) -> dict[str, Any]:
                 "floor_id": floor_meta["floor_id"],
                 "name": floor_meta["name"],
                 "meters_per_unit": floor_mpu,
+                # Compass bearing the plan's +y-up direction faces (0 = north).
+                "north_deg": layout.get("north_deg"),
                 "rooms": exported_rooms,
                 "walls": exported_walls,
                 "furniture": [
@@ -238,6 +240,7 @@ def _export_furniture(item: dict, rooms: list, mpu: float | None) -> dict:
         "rotation_deg": item["rotation_deg"],
         "width_cm": item["width_cm"],
         "depth_cm": item["depth_cm"],
+        "entity_id": item.get("entity_id"),
     }
 
 

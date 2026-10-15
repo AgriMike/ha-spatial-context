@@ -15,9 +15,11 @@ import type {
 } from "./types";
 import {
   computeCoverOpenness,
+  computeItemStates,
   computePinColors,
   computeRoomLights,
   coverOpenness,
+  isToggleable,
   liveSignature,
   primaryEntityForDevice,
   type RoomLight,
@@ -43,6 +45,8 @@ export interface SpatialContextCardConfig {
   room_tap_action?: TapAction;
   cover_tap_action?: TapAction;
   device_tap_action?: "more-info" | "none";
+  /** A furniture item linked to an entity (a lamp, say). */
+  item_tap_action?: TapAction;
 }
 
 /** The canvas element's surface the card drives (see floorplan-canvas.ts). */
@@ -264,6 +268,12 @@ class SpatialContextCard extends HTMLElement {
     c["showFurniture"] = this._overlays.furniture;
     c["showLights"] = this._overlays.lights;
     c["showCovers"] = this._overlays.covers;
+    c["northDeg"] = l.north_deg ?? null;
+    const conf = this._hass?.config;
+    c["location"] =
+      typeof conf?.latitude === "number" && typeof conf.longitude === "number"
+        ? { latitude: conf.latitude, longitude: conf.longitude }
+        : null;
     this._liveSig = "";
     this._applyLive();
   }
@@ -277,13 +287,15 @@ class SpatialContextCard extends HTMLElement {
     const lights = computeRoomLights(l.rooms, hass);
     const covers = computeCoverOpenness(l.openings, hass);
     const pins = computePinColors(l.pins, hass);
-    const sig = liveSignature(lights, covers, pins);
+    const items = computeItemStates(l.furniture, hass);
+    const sig = liveSignature(lights, covers, pins, items);
     if (sig === this._liveSig) return;
     this._liveSig = sig;
     this._roomLights = lights;
     c["roomLights"] = lights;
     c["coverOpenness"] = covers;
     c["pinColors"] = pins;
+    c["itemStates"] = items;
   }
 
   private _onOverlayToggle = (
@@ -337,6 +349,22 @@ class SpatialContextCard extends HTMLElement {
         );
       } else {
         this._moreInfo(cover);
+      }
+    } else if (e.detail.kind === "furniture") {
+      const entity = l.furniture.find((f) => f.id === e.detail.id)?.entity_id;
+      const action = cfg.item_tap_action ?? "toggle";
+      if (!entity || action === "none") return;
+      if (action === "toggle" && isToggleable(entity)) {
+        void hass.callService?.(
+          "homeassistant",
+          "toggle",
+          {},
+          {
+            entity_id: entity,
+          },
+        );
+      } else {
+        this._moreInfo(entity);
       }
     } else if (e.detail.kind === "pin") {
       if ((cfg.device_tap_action ?? "more-info") === "none") return;
@@ -428,6 +456,11 @@ class SpatialContextCardEditor extends HTMLElement {
         ${option("toggle", "Toggle its lights", c.room_tap_action ?? "toggle")}
         ${option("more-info", "Open a light's details", c.room_tap_action)}
         ${option("none", "Nothing", c.room_tap_action)}
+      </select></div>
+      <div class="row"><label>Tap a linked item (lamp, TV…)</label><select data-key="item_tap_action">
+        ${option("toggle", "Toggle it", c.item_tap_action ?? "toggle")}
+        ${option("more-info", "Open its details", c.item_tap_action)}
+        ${option("none", "Nothing", c.item_tap_action)}
       </select></div>
       <div class="row"><label>Tap a covered window/door</label><select data-key="cover_tap_action">
         ${option("more-info", "Open the cover's details", c.cover_tap_action ?? "more-info")}

@@ -79,6 +79,9 @@ def _empty_floor() -> dict[str, Any]:
         # _FURNITURE_SCHEMA): catalog drawings at real-world size.
         "furniture": [],
         "scale": None,
+        # Compass bearing the top of the plan faces (0 = north up), for
+        # daylight that follows the sun; None until set.
+        "north_deg": None,
     }
 
 
