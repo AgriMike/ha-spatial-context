@@ -188,7 +188,12 @@
     "debugLoggingHint": "Writes spatial_context_debug.log in your config folder — ids and counts only",
     "about": "About",
     "version": "Version",
-    "github": "GitHub repository"
+    "github": "GitHub repository",
+    "daylight": "Daylight",
+    "weather": "Weather for cloud cover",
+    "weatherAuto": "Automatic",
+    "weatherNone": "Ignore the weather",
+    "weatherHint": "Clouds dim the sunlight through windows: no beam when it's overcast, just soft sky light."
   },
   "picker": {
     "search": "Search devices…",
@@ -430,6 +435,23 @@
     "preview": "Daylight at {time}",
     "now": "Now",
     "sun": "Sun {deg}° up in the {dir}",
-    "night": "Sun down"
+    "night": "Sun down",
+    "weather": {
+      "sunny": "sunny",
+      "clear-night": "clear",
+      "partlycloudy": "partly cloudy",
+      "cloudy": "cloudy",
+      "fog": "fog",
+      "rainy": "rain",
+      "pouring": "heavy rain",
+      "snowy": "snow",
+      "snowy-rainy": "sleet",
+      "hail": "hail",
+      "lightning": "thunder",
+      "lightning-rainy": "storms",
+      "windy": "windy",
+      "windy-variant": "windy, cloudy",
+      "exceptional": "unusual weather"
+    }
   }
 }

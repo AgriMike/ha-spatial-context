@@ -97,6 +97,10 @@ export interface Settings {
   auto_save: boolean;
   /** Send panel events to the backend's debug log file (see debug.py). */
   debug_logging: boolean;
+  /** Weather entity whose cloud cover dims sunlight through windows: null
+   * picks one automatically, "none" ignores the weather. Absent from a
+   * backend older than this field — treat as null. */
+  weather_entity_id?: string | null;
 }
 
 /** What the backend reports for the version handshake (see debug.py). */

@@ -24,6 +24,7 @@ import {
   primaryEntityForDevice,
   type RoomLight,
 } from "./canvas/live-state";
+import { skyFromWeather } from "./canvas/sun";
 
 const PANEL_BUNDLE_URL = `/spatial_context_panel.js?v=${__BUILD_ID__}`;
 
@@ -45,6 +46,9 @@ export interface SpatialContextCardConfig {
   room_tap_action?: TapAction;
   cover_tap_action?: TapAction;
   device_tap_action?: "more-info" | "none";
+  /** Weather entity for cloud cover ("none" to ignore the weather);
+   * defaults to the panel's setting, else one picked automatically. */
+  weather_entity?: string;
   /** A furniture item linked to an entity (a lamp, say). */
   item_tap_action?: TapAction;
 }
@@ -96,6 +100,8 @@ class SpatialContextCard extends HTMLElement {
   private _roomLights = new Map<string, RoomLight>();
   private _error: string | null = null;
   private _overlays = { furniture: true, lights: true, covers: true };
+  /** The panel's weather setting (Settings → Daylight). */
+  private _weatherSetting: string | null = null;
 
   constructor() {
     super();
@@ -196,6 +202,12 @@ class SpatialContextCard extends HTMLElement {
         loadCanvas(),
       ]);
       this._layout = { ...layout, furniture: layout.furniture ?? [] };
+      this._weatherSetting = await hass.connection
+        .sendMessagePromise<{ weather_entity_id?: string | null }>({
+          type: "spatial_context/get_settings",
+        })
+        .then((s) => s.weather_entity_id ?? null)
+        .catch(() => null);
       this._entities = new Map(entities.map((e) => [e.entity_id, e]));
       this._error = null;
     } catch (err) {
@@ -288,13 +300,21 @@ class SpatialContextCard extends HTMLElement {
     const covers = computeCoverOpenness(l.openings, hass);
     const pins = computePinColors(l.pins, hass);
     const items = computeItemStates(l.furniture, hass);
-    const sig = liveSignature(lights, covers, pins, items);
+    const skyNow = skyFromWeather(
+      hass.states,
+      this._config.weather_entity ?? this._weatherSetting,
+    );
+    const sig = `${liveSignature(lights, covers, pins, items)}|${skyNow?.condition}:${skyNow?.clouds}`;
     if (sig === this._liveSig) return;
     this._liveSig = sig;
     this._roomLights = lights;
     c["roomLights"] = lights;
     c["coverOpenness"] = covers;
     c["pinColors"] = pins;
+    c["sky"] = skyFromWeather(
+      hass.states,
+      this._config.weather_entity ?? this._weatherSetting,
+    );
     c["itemStates"] = items;
   }
 

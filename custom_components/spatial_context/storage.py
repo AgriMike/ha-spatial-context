@@ -281,6 +281,9 @@ def _empty_settings() -> dict[str, Any]:
         # Send panel events to <config>/spatial_context_debug.log (see
         # debug.py) — off unless someone is chasing a problem.
         "debug_logging": False,
+        # Weather entity whose cloud cover dims sunlight through windows:
+        # None = pick one automatically, "none" = ignore the weather.
+        "weather_entity_id": None,
     }
 
 

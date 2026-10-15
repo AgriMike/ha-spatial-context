@@ -188,7 +188,12 @@
     "debugLoggingHint": "Schreibt spatial_context_debug.log in Ihren Konfigurationsordner – nur IDs und Anzahlen",
     "about": "Info",
     "version": "Version",
-    "github": "GitHub-Repository"
+    "github": "GitHub-Repository",
+    "daylight": "Tageslicht",
+    "weather": "Wetter für Bewölkung",
+    "weatherAuto": "Automatisch",
+    "weatherNone": "Wetter ignorieren",
+    "weatherHint": "Wolken dämpfen das Sonnenlicht durch die Fenster: bei bedecktem Himmel kein Strahl, nur weiches Himmelslicht."
   },
   "picker": {
     "search": "Geräte suchen…",
@@ -430,6 +435,23 @@
     "preview": "Tageslicht um {time}",
     "now": "Jetzt",
     "sun": "Sonne {deg}° hoch im {dir}",
-    "night": "Sonne untergegangen"
+    "night": "Sonne untergegangen",
+    "weather": {
+      "sunny": "sonnig",
+      "clear-night": "klar",
+      "partlycloudy": "teils bewölkt",
+      "cloudy": "bewölkt",
+      "fog": "Nebel",
+      "rainy": "Regen",
+      "pouring": "Starkregen",
+      "snowy": "Schnee",
+      "snowy-rainy": "Schneeregen",
+      "hail": "Hagel",
+      "lightning": "Gewitter",
+      "lightning-rainy": "Unwetter",
+      "windy": "windig",
+      "windy-variant": "windig, bewölkt",
+      "exceptional": "ungewöhnliches Wetter"
+    }
   }
 }

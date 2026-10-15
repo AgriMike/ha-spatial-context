@@ -109,3 +109,87 @@ export function planVector(
   const a = (bearing - northDeg) * RAD;
   return [Math.sin(a), -Math.cos(a)];
 }
+
+/** Cloud cover per HA weather condition, when the entity doesn't report a
+ * cloud_coverage percentage. */
+const CONDITION_CLOUDS: Record<string, number> = {
+  sunny: 0,
+  "clear-night": 0,
+  windy: 0.2,
+  partlycloudy: 0.5,
+  "windy-variant": 0.6,
+  exceptional: 0.5,
+  cloudy: 0.9,
+  rainy: 0.9,
+  snowy: 0.9,
+  lightning: 0.9,
+  fog: 0.95,
+  hail: 0.95,
+  "snowy-rainy": 0.95,
+  "lightning-rainy": 0.95,
+  pouring: 1,
+};
+
+const WET = new Set([
+  "rainy",
+  "pouring",
+  "snowy",
+  "snowy-rainy",
+  "hail",
+  "fog",
+  "lightning-rainy",
+]);
+
+export interface Sky {
+  /** 0 clear … 1 overcast. */
+  clouds: number;
+  /** The weather entity's condition, e.g. "partlycloudy". */
+  condition: string;
+}
+
+/** How cloudy it is, from a weather entity: its cloud_coverage when it has
+ * one (raised for rain, snow and fog, which block the sun whatever the
+ * reported coverage), else its condition. `setting` is the configured
+ * entity: null picks one (weather.home / weather.forecast_home, else the
+ * first), "none" ignores the weather. Null when there's nothing to go on. */
+export function skyFromWeather(
+  states: Record<
+    string,
+    { state?: string; attributes: Record<string, unknown> } | undefined
+  >,
+  setting: string | null | undefined,
+): Sky | null {
+  if (setting === "none") return null;
+  let id = setting ?? null;
+  if (!id) {
+    const all = Object.keys(states)
+      .filter((e) => e.startsWith("weather."))
+      .sort();
+    id =
+      all.find((e) => e === "weather.home") ??
+      all.find((e) => e === "weather.forecast_home") ??
+      all[0] ??
+      null;
+  }
+  const st = id ? states[id] : undefined;
+  if (!st || !st.state || st.state === "unavailable" || st.state === "unknown")
+    return null;
+  const condition = st.state;
+  const coverage = st.attributes["cloud_coverage"];
+  let clouds =
+    typeof coverage === "number"
+      ? coverage / 100
+      : (CONDITION_CLOUDS[condition] ?? 0);
+  if (WET.has(condition)) clouds = Math.max(clouds, 0.9);
+  return { clouds: Math.max(0, Math.min(1, clouds)), condition };
+}
+
+/** Grey-white of light from an overcast sky. */
+export function skyColor(clouds: number): string {
+  return mix("#fffbe6", "#e6ebef", clouds);
+}
+
+/** Sunlight, washed toward grey as clouds thicken. */
+export function cloudySunColor(elevation: number, clouds: number): string {
+  return mix(sunColor(elevation), "#eef1f3", clouds * 0.7);
+}

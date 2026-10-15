@@ -363,6 +363,7 @@ _SETTINGS_SCHEMA = {
     ),
     vol.Optional("auto_save", default=True): bool,
     vol.Optional("debug_logging", default=False): bool,
+    vol.Optional("weather_entity_id", default=None): vol.Any(None, str),
 }
 
 

@@ -93,7 +93,7 @@ import "./views/entity-picker-sidebar";
 import "./views/furniture-library-sidebar";
 import type { EntityOption } from "./views/canvas-overlay";
 import { catalogItem } from "./canvas/furniture-catalog";
-import { COMPASS_POINTS } from "./canvas/sun";
+import { COMPASS_POINTS, skyFromWeather, type Sky } from "./canvas/sun";
 import {
   computeCoverOpenness,
   computeItemStates,
@@ -281,6 +281,8 @@ export class SpatialContextPanel extends LitElement {
   @state() private _coverOpenness = new Map<string, number | null>();
   @state() private _pinColors = new Map<string, string>();
   @state() private _itemStates = new Map<string, ItemState>();
+  /** Cloud cover from the weather entity, for daylight through windows. */
+  @state() private _sky: Sky | null = null;
   /** Daylight preview: minutes past midnight today, or null for now. */
   @state() private _sunPreviewMinutes: number | null = null;
   private _liveSig = "";
@@ -1058,6 +1060,13 @@ export class SpatialContextPanel extends LitElement {
     const covers = computeCoverOpenness(this._layout.openings, hass);
     const pins = computePinColors(this._layout.pins, hass);
     const items = computeItemStates(this._layout.furniture, hass);
+    const sky = skyFromWeather(hass.states, this._settings.weather_entity_id);
+    if (
+      sky?.condition !== this._sky?.condition ||
+      Math.abs((sky?.clouds ?? -1) - (this._sky?.clouds ?? -1)) > 0.01
+    ) {
+      this._sky = sky;
+    }
     const sig = liveSignature(lights, covers, pins, items);
     if (sig === this._liveSig) return;
     this._liveSig = sig;
@@ -4262,6 +4271,7 @@ export class SpatialContextPanel extends LitElement {
           <settings-menu
             .settings=${this._settings}
             .coordinatorChoices=${this._placedDeviceChoices}
+            .weatherEntities=${this._entityOptions("weather")}
             @settings-change=${this._onSettingsChange}
             @settings-close=${() => (this._settingsPopoverOpen = false)}
           ></settings-menu>
@@ -4503,6 +4513,7 @@ export class SpatialContextPanel extends LitElement {
                     .northDeg=${this._layout.north_deg}
                     .location=${this._location}
                     .sunTime=${this._sunTime}
+                    .sky=${this._sky}
                     @overlay-toggle=${this._onOverlayToggle}
                     @furniture-place=${this._onFurniturePlace}
                     @furniture-select=${this._onFurnitureSelect}

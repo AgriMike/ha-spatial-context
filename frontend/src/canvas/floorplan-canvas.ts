@@ -59,11 +59,13 @@ import { catalogItem } from "./furniture-catalog";
 import { drawItem, FURNITURE_STYLES, renderPrims } from "./furniture-draw";
 import type { ItemState, RoomLight } from "./live-state";
 import {
+  cloudySunColor,
   compassName,
   daylight,
+  skyColor,
+  type Sky,
   planBearing,
   planVector,
-  sunColor,
   sunPosition,
   type SunPosition,
 } from "./sun";
@@ -595,6 +597,9 @@ export class FloorplanCanvas extends LitElement {
     latitude: number;
     longitude: number;
   } | null = null;
+  /** Cloud cover from HA's weather (see sun.ts's skyFromWeather): dims
+   * and greys sunlight through windows. Null = assume a clear sky. */
+  @property({ attribute: false }) sky: Sky | null = null;
   /** Preview the daylight at another time (ms since epoch); null = now. */
   @property({ attribute: false }) sunTime: number | null = null;
   /** Furniture / lights / covers on-off buttons beside the zoom controls
@@ -3080,13 +3085,20 @@ export class FloorplanCanvas extends LitElement {
           else if (linked) soft(width * 1.4, "#263238", 0.35);
           continue;
         }
-        const color = sunColor(sun.elevation);
-        // Soft sky light through any window in daytime.
-        soft(Math.max(width * 1.3, 1 * m), "#fffbe6", 0.18 * day * openness);
+        // Clouds: the direct beam fades out as they thicken (gone when
+        // overcast); diffuse sky light stays, greyer and a touch brighter.
+        const clouds = this.sky?.clouds ?? 0;
+        const sunShare = Math.max(0, 1 - clouds / 0.85) ** 1.5;
+        const color = cloudySunColor(sun.elevation, clouds);
+        soft(
+          Math.max(width * 1.3, 1 * m),
+          skyColor(clouds),
+          0.18 * (1 + 0.4 * clouds) * day * openness,
+        );
         // Direct sun: only through a window facing it.
         const out = planBearing(-nx, -ny, this.northDeg ?? 0);
         const facing = Math.cos(((sun.azimuth - out) * Math.PI) / 180);
-        if (facing > 0.04 && sun.elevation > 0.5 && shade) {
+        if (facing > 0.04 && sun.elevation > 0.5 && shade && sunShare > 0.02) {
           const [rx, ry] = planVector(sun.azimuth + 180, this.northDeg ?? 0);
           // How far the beam reaches across the floor: a ~2.1 m window
           // head over the sun's height, longer as it sinks (capped).
@@ -3113,7 +3125,10 @@ export class FloorplanCanvas extends LitElement {
               [cx, cy],
               [cx + dx, cy + dy],
               color,
-              (0.3 + 0.45 * strength) * Math.min(1, facing * 1.6) * openness,
+              (0.3 + 0.45 * strength) *
+                Math.min(1, facing * 1.6) *
+                openness *
+                sunShare,
               clipId,
             );
           }
@@ -3159,12 +3174,15 @@ export class FloorplanCanvas extends LitElement {
         sun
           ? html`<span class="compass-sun"
               >${
-                sun.elevation > 0
+                (sun.elevation > 0
                   ? localize("compass.sun", {
                       deg: Math.round(sun.elevation),
                       dir: compassName(sun.azimuth),
                     })
-                  : localize("compass.night")
+                  : localize("compass.night")) +
+                (this.sky
+                  ? ` · ${localize(`compass.weather.${this.sky.condition}`)}`
+                  : "")
               }</span
             >`
           : nothing

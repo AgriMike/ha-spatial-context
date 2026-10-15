@@ -383,6 +383,7 @@ export function emptySettings(): Settings {
     zigbee_coordinator_device_id: null,
     auto_save: true,
     debug_logging: false,
+    weather_entity_id: null,
   };
 }
 

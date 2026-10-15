@@ -170,6 +170,11 @@ export class SettingsMenu extends LitElement {
   ];
 
   @property({ attribute: false }) settings!: Settings;
+  /** Weather entities, for the daylight cloud-cover choice. */
+  @property({ attribute: false }) weatherEntities: {
+    entity_id: string;
+    name: string;
+  }[] = [];
   /** Placed devices (any floor) a coordinator can be pinned to. */
   @property({ attribute: false }) coordinatorChoices: {
     deviceId: string;
@@ -350,6 +355,38 @@ export class SettingsMenu extends LitElement {
               />s</span
             >`,
             localize("settings.scanTimeoutHint"),
+          )}
+        </div>
+
+        <div class="section">
+          <div class="section-title">${localize("settings.daylight")}</div>
+          ${this._row(
+            localize("settings.weather"),
+            html`<select
+              aria-label=${localize("settings.weather")}
+              @change=${(e: Event) =>
+                this._change({
+                  weather_entity_id:
+                    (e.target as HTMLSelectElement).value || null,
+                })}
+            >
+              <option value="" ?selected=${!s.weather_entity_id}>
+                ${localize("settings.weatherAuto")}
+              </option>
+              <option value="none" ?selected=${s.weather_entity_id === "none"}>
+                ${localize("settings.weatherNone")}
+              </option>
+              ${this.weatherEntities.map(
+                (w) =>
+                  html`<option
+                    value=${w.entity_id}
+                    ?selected=${w.entity_id === s.weather_entity_id}
+                  >
+                    ${w.name}
+                  </option>`,
+              )}
+            </select>`,
+            localize("settings.weatherHint"),
           )}
         </div>
 
