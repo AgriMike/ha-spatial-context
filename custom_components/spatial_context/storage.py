@@ -75,6 +75,9 @@ def _empty_floor() -> dict[str, Any]:
         "pins": [],
         "walls": [],
         "openings": [],
+        # Furniture and household items (see websocket_api.py's
+        # _FURNITURE_SCHEMA): catalog drawings at real-world size.
+        "furniture": [],
         "scale": None,
     }
 

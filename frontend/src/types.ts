@@ -20,6 +20,13 @@ export interface Room {
   /** Where the room's name label sits, when dragged there by hand (#33).
    * Null/undefined = automatic (see geometry.ts's roomLabelPoint). */
   label_position?: [number, number] | null;
+  /** What this room's live light shading follows, besides its own
+   * `area_id`: other HA areas (an open-plan space spanning two), other
+   * rooms on this floor (whose lights it shows too), and specific light
+   * entities. See canvas/live-state.ts. */
+  linked_area_ids?: string[];
+  linked_room_ids?: string[];
+  light_entity_ids?: string[];
 }
 
 export interface Pin {
@@ -115,6 +122,36 @@ export interface Opening {
   x: number;
   y: number;
   width: number;
+  /** A cover (blind, shade, garage door…) hung in this opening — its live
+   * position shades the floor behind it. */
+  cover_entity_id?: string | null;
+}
+
+/** A piece of furniture or household item: a catalog drawing (see
+ * canvas/furniture-catalog.ts) placed at its real-world size. `x`/`y` is
+ * its centre in stored units; size stays in centimetres, so recalibrating
+ * the floor keeps it the right size. */
+export interface FurnitureItem {
+  id: string;
+  /** Catalog item id — which drawing, and its default name. */
+  kind: string;
+  x: number;
+  y: number;
+  rotation_deg: number;
+  width_cm: number;
+  depth_cm: number;
+  /** Line thickness in screen pixels (constant at any zoom). */
+  stroke_width: number;
+  /** Line colour; null follows the theme. */
+  color?: string | null;
+  /** Shade the item's footprint in its line colour. */
+  fill?: boolean;
+  /** Display name; null uses the catalog name. */
+  label?: string | null;
+  show_label?: boolean;
+  mirrored?: boolean;
+  /** Can't be dragged, rotated or resized on the canvas. */
+  locked?: boolean;
 }
 
 /** The canvas's visible region in its own stored coordinate space — what
@@ -156,6 +193,9 @@ export interface FloorLayout {
   pins: Pin[];
   walls: Wall[];
   openings: Opening[];
+  /** Always present (HaClient.getLayout fills it in for a backend older
+   * than this field). */
+  furniture: FurnitureItem[];
   scale: Scale | null;
 }
 
@@ -328,7 +368,15 @@ export interface ExportSnapshot {
 }
 
 export type CanvasMode =
-  "select" | "pan" | "trace" | "wall" | "opening" | "scale" | "place" | "align";
+  | "select"
+  | "pan"
+  | "trace"
+  | "wall"
+  | "opening"
+  | "scale"
+  | "place"
+  | "align"
+  | "furniture";
 
 /** How a new trace point (or a dragged vertex) snaps (#36): "all" onto
  * any nearby wall or room edge, "same" only onto shapes of the kind being
@@ -502,7 +550,23 @@ export interface HomeAssistant {
   fetchWithAuth(path: string, init?: RequestInit): Promise<Response>;
   config?: { latitude?: number; longitude?: number; components?: string[] };
   themes?: { darkMode?: boolean };
-  states: Record<string, { attributes: Record<string, unknown> } | undefined>;
+  states: Record<
+    string,
+    { state?: string; attributes: Record<string, unknown> } | undefined
+  >;
+  /** Entity/device registry display entries, as the HA frontend keeps
+   * them — used to find which lights are in which area. */
+  entities?: Record<
+    string,
+    { area_id?: string | null; device_id?: string | null } | undefined
+  >;
+  devices?: Record<string, { area_id?: string | null } | undefined>;
+  callService?: (
+    domain: string,
+    service: string,
+    data?: Record<string, unknown>,
+    target?: Record<string, unknown>,
+  ) => Promise<unknown>;
   /** For i18n (see i18n.ts's setLanguage) — the real HA-supplied object
    * always carries at least one of these; both optional here since this
    * is a hand-narrowed local type, not runtime-enforced. */

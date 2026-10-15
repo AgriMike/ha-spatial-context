@@ -17,7 +17,8 @@
       "window": "Fenster hinzufügen",
       "scale": "Maßstab festlegen",
       "place": "Gerät platzieren",
-      "align": "Etagen ausrichten"
+      "align": "Etagen ausrichten",
+      "furniture": "Möbel & Haushaltsgegenstände"
     },
     "snap": {
       "tooltip": "Woran neue Punkte einrasten (Umschalttaste halten, um einen Punkt frei zu setzen)",
@@ -36,7 +37,8 @@
       "placeOpening": "Auf eine Wand klicken, um {type} zu platzieren.",
       "alignAgainst": "Ausrichten an:",
       "noBackground": "Diese Etage hat kein Hintergrundbild zum Ausrichten.",
-      "alignDrag": "Zum Verschieben ziehen, mit +/− die Größe ändern, dann „Anwenden“."
+      "alignDrag": "Zum Verschieben ziehen, mit +/− die Größe ändern, dann „Anwenden“.",
+      "placeFurniture": "Klicken zum Platzieren · R dreht · Umschalt+Klick platziert noch eins"
     },
     "openingType": {
       "door": "eine Tür",
@@ -52,7 +54,8 @@
       "finishWall": "Wand fertigstellen",
       "chooseAnother": "Andere wählen",
       "apply": "Anwenden",
-      "close": "Schließen"
+      "close": "Schließen",
+      "done": "Fertig"
     },
     "align": {
       "choose": "— Etage wählen —",
@@ -90,7 +93,12 @@
       "width": "Breite ({unit})",
       "storedUnits": "gespeicherte Einheiten",
       "calibrate": "Maßstab kalibrieren für reale Einheiten",
-      "delete": "Löschen"
+      "delete": "Löschen",
+      "cover": "Beschattung",
+      "noCover": "Keine",
+      "coverState": "Gerade",
+      "coverOpen": "{pct}% offen",
+      "coverUnavailable": "Nicht verfügbar"
     },
     "meshStub": {
       "goToFloor": "Zur Etage"
@@ -115,9 +123,24 @@
       "wall": "Wand",
       "wallOpening": "In einer Wand",
       "hide": "Details ausblenden",
-      "show": "Details anzeigen"
+      "show": "Details anzeigen",
+      "furniture": "Möbel"
     },
-    "calibrateHint": "Klicken, um den Maßstab festzulegen"
+    "calibrateHint": "Klicken, um den Maßstab festzulegen",
+    "lights": {
+      "title": "Licht",
+      "count": "{on} von {total} Lichtern an",
+      "none": "Keine Lichter im Bereich dieses Raums",
+      "on": "Alle an",
+      "off": "Alle aus"
+    },
+    "links": {
+      "add": "Hinzufügen…",
+      "remove": "Entfernen",
+      "areas": "Auch Bereiche zeigen",
+      "rooms": "Auch Räume zeigen",
+      "lights": "Auch Lichter zeigen"
+    }
   },
   "mapBackground": {
     "noWebgl": "Dieser Browser kann die Karte nicht darstellen (WebGL2 erforderlich).",
@@ -305,7 +328,10 @@
   "canvasControls": {
     "zoomIn": "Vergrößern",
     "zoomOut": "Verkleinern",
-    "fit": "An Bildschirm anpassen"
+    "fit": "An Bildschirm anpassen",
+    "furniture": "Möbel zeigen",
+    "lights": "Live-Licht zeigen",
+    "covers": "Beschattung zeigen"
   },
   "materials": {
     "timber_frame": "Holzständerwand (Trockenbau)",
@@ -349,5 +375,46 @@
     "skipped": "{count} Türen/Fenster lagen in der SVG-Datei an keiner Wand und wurden ausgelassen.",
     "nothingFound": "In dieser SVG-Datei wurden keine Räume, Wände, Türen oder Fenster gefunden. Benenne ihre Gruppen rooms, walls, doors und windows (siehe README).",
     "alsoBackground": "Auch den Hintergrund dieses Stockwerks durch die SVG ersetzen? (Abbrechen behält den aktuellen Hintergrund und fügt nur die Geometrie hinzu.)"
+  },
+  "furniture": {
+    "libraryTitle": "Möbel & Gegenstände",
+    "close": "Schließen",
+    "search": "Gegenstände suchen",
+    "count": "{count} Gegenstände",
+    "none": "Keine passenden Gegenstände",
+    "showLabel": "Namen zeigen",
+    "width": "Breite ({unit})",
+    "depth": "Tiefe",
+    "calibrate": "Maßstab dieses Stockwerks setzen (Maßstab festlegen) für echte Größen.",
+    "rotation": "Drehung (°)",
+    "rotateLeft": "90° nach links drehen",
+    "rotateRight": "90° nach rechts drehen",
+    "lineThickness": "Linienstärke ({px} px)",
+    "fill": "Füllung",
+    "mirror": "Spiegeln",
+    "lock": "Fixieren",
+    "duplicate": "Duplizieren (Strg+D)",
+    "toFront": "In den Vordergrund",
+    "toBack": "In den Hintergrund",
+    "delete": "Gegenstand löschen",
+    "category": {
+      "all": "Alle",
+      "living": "Wohnzimmer",
+      "bedroom": "Schlafzimmer",
+      "kitchen": "Küche",
+      "dining": "Essbereich",
+      "bathroom": "Bad",
+      "office": "Büro",
+      "laundry": "Wäsche & Technik",
+      "electronics": "Elektronik & Smart Home",
+      "lighting": "Beleuchtung",
+      "kids": "Kinder & Baby",
+      "entry": "Flur & Stauraum",
+      "outdoor": "Garten & draußen",
+      "garage": "Garage & Werkstatt",
+      "fitness": "Fitness & Hobby",
+      "pets": "Haustiere",
+      "decor": "Deko & Pflanzen"
+    }
   }
 }

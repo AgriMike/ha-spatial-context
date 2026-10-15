@@ -36,10 +36,13 @@ export class HaClient {
   }
 
   async getLayout(floorId: string): Promise<FloorLayout> {
-    return this.hass.connection.sendMessagePromise<FloorLayout>({
-      type: "spatial_context/get_layout",
-      floor_id: floorId,
-    });
+    const layout = await this.hass.connection.sendMessagePromise<FloorLayout>(
+      {
+        type: "spatial_context/get_layout",
+        floor_id: floorId,
+      },
+    );
+    return { ...layout, furniture: layout.furniture ?? [] };
   }
 
   async saveLayout(
@@ -60,6 +63,7 @@ export class HaClient {
       pins: layout.pins,
       walls: layout.walls,
       openings: layout.openings,
+      furniture: layout.furniture,
       scale: layout.scale,
     });
   }
@@ -405,6 +409,7 @@ export function emptyFloorLayout(): FloorLayout {
     pins: [],
     walls: [],
     openings: [],
+    furniture: [],
     scale: null,
   };
 }

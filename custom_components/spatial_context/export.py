@@ -116,6 +116,12 @@ async def async_get_map_data(hass: HomeAssistant) -> dict[str, Any]:
             {
                 "id": room["id"],
                 "name": room["name"],
+                "area_id": room.get("area_id"),
+                # What the room's live light shading follows (see
+                # types.ts's Room) — besides its own area_id.
+                "linked_area_ids": room.get("linked_area_ids", []),
+                "linked_room_ids": room.get("linked_room_ids", []),
+                "light_entity_ids": room.get("light_entity_ids", []),
                 "devices": room_devices.get(room["id"], []),
             }
             for room in layout.get("rooms", [])
@@ -135,6 +141,7 @@ async def async_get_map_data(hass: HomeAssistant) -> dict[str, Any]:
                     "x_m": opening["x"] * floor_mpu if floor_mpu else None,
                     "y_m": opening["y"] * floor_mpu if floor_mpu else None,
                     "width_m": opening["width"] * floor_mpu if floor_mpu else None,
+                    "cover_entity_id": opening.get("cover_entity_id"),
                 }
             )
 
@@ -166,6 +173,10 @@ async def async_get_map_data(hass: HomeAssistant) -> dict[str, Any]:
                 "meters_per_unit": floor_mpu,
                 "rooms": exported_rooms,
                 "walls": exported_walls,
+                "furniture": [
+                    _export_furniture(item, layout.get("rooms", []), floor_mpu)
+                    for item in layout.get("furniture", [])
+                ],
             }
         )
 
@@ -189,6 +200,44 @@ async def async_get_map_data(hass: HomeAssistant) -> dict[str, Any]:
         "floors": exported_floors,
         "property_meters_per_unit": property_mpu,
         "outdoor_devices": outdoor_devices,
+    }
+
+
+def _point_in_polygon(x: float, y: float, points: list) -> bool:
+    inside = False
+    j = len(points) - 1
+    for i, (xi, yi) in enumerate(points):
+        xj, yj = points[j]
+        if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+            inside = not inside
+        j = i
+    return inside
+
+
+def _export_furniture(item: dict, rooms: list, mpu: float | None) -> dict:
+    """A furniture/household item with the room it stands in. `kind` is the
+    frontend catalog id; `label` the user's own name for it, if any."""
+    room = next(
+        (
+            r
+            for r in rooms
+            if len(r.get("points", [])) >= 3
+            and _point_in_polygon(item["x"], item["y"], r["points"])
+        ),
+        None,
+    )
+    return {
+        "kind": item["kind"],
+        "label": item.get("label"),
+        "room_id": room["id"] if room else None,
+        "room_name": room["name"] if room else None,
+        "x": item["x"],
+        "y": item["y"],
+        "x_m": item["x"] * mpu if mpu else None,
+        "y_m": item["y"] * mpu if mpu else None,
+        "rotation_deg": item["rotation_deg"],
+        "width_cm": item["width_cm"],
+        "depth_cm": item["depth_cm"],
     }
 
 

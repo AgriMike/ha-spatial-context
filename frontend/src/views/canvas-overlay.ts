@@ -5,6 +5,7 @@ import type {
   AreaMeta,
   CanvasMode,
   FloorMeta,
+  FurnitureItem,
   Opening,
   PlaceableEntity,
   Pin,
@@ -57,6 +58,14 @@ import {
   toolRowStyles,
 } from "../styles";
 import { localize } from "../i18n";
+import { catalogItem } from "../canvas/furniture-catalog";
+import type { RoomLight } from "../canvas/live-state";
+
+/** An entity offered in a picker: id plus display name. */
+export interface EntityOption {
+  entity_id: string;
+  name: string;
+}
 
 /** Everything that floats over the canvas, Innerspace-style, instead of
  * pushing it down: the drawing-mode toolbar (top-left), the scale readout
@@ -212,6 +221,74 @@ export class CanvasOverlay extends LitElement {
       .room-opacity {
         width: 140px;
       }
+      .link-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 2px 12px 6px 44px;
+      }
+      .link-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        max-width: 100%;
+        height: 26px;
+        padding: 0 4px 0 10px;
+        border: 1px solid var(--sc-divider);
+        border-radius: 13px;
+        font-size: 12px;
+      }
+      .link-chip span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .link-chip button {
+        display: grid;
+        place-items: center;
+        width: 20px;
+        height: 20px;
+        padding: 0;
+        border-radius: 50%;
+        color: var(--sc-fg-secondary);
+      }
+      .link-chip ha-icon {
+        --mdc-icon-size: 14px;
+      }
+      .light-buttons {
+        display: flex;
+        gap: 6px;
+      }
+      .light-buttons button {
+        height: 30px;
+        padding: 0 10px;
+        border: 1px solid var(--sc-divider);
+        border-radius: var(--sc-r-control);
+      }
+      .furniture-size {
+        width: 64px;
+      }
+      .stroke-range {
+        width: 120px;
+      }
+      .icon-buttons {
+        display: flex;
+        gap: 2px;
+      }
+      .icon-buttons button {
+        display: grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border-radius: 50%;
+      }
+      .color-reset {
+        height: 28px;
+        padding: 0 8px;
+        font-size: 12px;
+        color: var(--sc-fg-secondary);
+      }
     `,
   ];
 
@@ -239,6 +316,17 @@ export class CanvasOverlay extends LitElement {
   @property({ attribute: false }) entityLookup: Map<string, PlaceableEntity> =
     new Map();
   @property({ attribute: false }) selectedOpening: Opening | null = null;
+  @property({ attribute: false }) selectedFurniture: FurnitureItem | null = null;
+  @property({ type: Boolean }) furnitureLibraryOpen = false;
+  /** Every room on the floor (for linking one room's lights to another). */
+  @property({ attribute: false }) rooms: Room[] = [];
+  /** All HA areas, on any floor (for linking a room's lights to them). */
+  @property({ attribute: false }) allAreas: AreaMeta[] = [];
+  @property({ attribute: false }) lightEntities: EntityOption[] = [];
+  @property({ attribute: false }) coverEntities: EntityOption[] = [];
+  @property({ attribute: false }) selectedRoomLight: RoomLight | null = null;
+  @property({ attribute: false }) selectedCoverOpenness: number | null = null;
+  @property({ type: Boolean }) floorCalibrated = false;
   /** Show the weak → strong key along the bottom (a network layer is on). */
   @state() private _colorOpen = false;
   @property({ type: Boolean }) dirty = false;
@@ -269,6 +357,7 @@ export class CanvasOverlay extends LitElement {
    * else. */
   @state() private _wallThicknessUnit: SmallSubUnit | null = null;
   @state() private _openingWidthUnit: SmallSubUnit | null = null;
+  @state() private _furnitureSizeUnit: SmallSubUnit | null = null;
 
   override willUpdate(changed: PropertyValues<this>) {
     if (
@@ -288,6 +377,12 @@ export class CanvasOverlay extends LitElement {
       changed.get("selectedOpening")?.id !== this.selectedOpening?.id
     ) {
       this._openingWidthUnit = null;
+    }
+    if (
+      changed.has("selectedFurniture") &&
+      changed.get("selectedFurniture")?.id !== this.selectedFurniture?.id
+    ) {
+      this._furnitureSizeUnit = null;
     }
   }
 
@@ -380,6 +475,13 @@ export class CanvasOverlay extends LitElement {
         ${this._modeButton("scale", "mdi:ruler", localize("canvas.mode.scale"))}
         <span class="tool-divider"></span>
         ${this._modeButton("place", "mdi:map-marker-plus", localize("canvas.mode.place"))}
+        <button
+          class=${this.furnitureLibraryOpen ? "active" : ""}
+          title=${localize("canvas.mode.furniture")}
+          @click=${() => this._fire("furniture-library-click")}
+        >
+          <ha-icon icon="mdi:sofa-single-outline"></ha-icon>
+        </button>
         ${this._modeButton("align", "mdi:compare", localize("canvas.mode.align"))}
       </div>
     `;
@@ -489,7 +591,328 @@ export class CanvasOverlay extends LitElement {
     if (this.mode === "align") {
       return this._renderAlignBar();
     }
+    if (this.mode === "furniture") {
+      return html`<div class="hint-bar floating-panel">
+        <span class="hint">${localize("canvas.hint.placeFurniture")}</span>
+        <button @click=${() => this._fire("furniture-rotate-armed-click")}>
+          <ha-icon icon="mdi:rotate-right-variant"></ha-icon>
+        </button>
+        <button @click=${() => this._fire("furniture-done-click")}>
+          ${localize("canvas.button.done")}
+        </button>
+      </div>`;
+    }
     return nothing;
+  }
+
+  /** A list of linked things as removable chips, plus a dropdown adding
+   * another. */
+  private _renderLinks(
+    icon: string,
+    label: string,
+    linked: { id: string; label: string }[],
+    options: { id: string; label: string }[],
+    onChange: (ids: string[]) => void,
+  ) {
+    const ids = linked.map((l) => l.id);
+    const remaining = options.filter((o) => !ids.includes(o.id));
+    return html`
+      ${this._fieldRow(
+        icon,
+        label,
+        this._selectWrap(
+          html`<select
+            @change=${(e: Event) => {
+              const select = e.target as HTMLSelectElement;
+              if (select.value) onChange([...ids, select.value]);
+              select.value = "";
+            }}
+          >
+            <option value="" selected>${localize("canvas.links.add")}</option>
+            ${remaining.map(
+              (o) => html`<option value=${o.id}>${o.label}</option>`,
+            )}
+          </select>`,
+        ),
+      )}
+      ${
+        linked.length
+          ? html`<div class="link-chips">
+              ${linked.map(
+                (l) => html`<span class="link-chip"
+                  ><span>${l.label}</span
+                  ><button
+                    title=${localize("canvas.links.remove")}
+                    @click=${() => onChange(ids.filter((id) => id !== l.id))}
+                  >
+                    <ha-icon icon="mdi:close"></ha-icon></button
+                ></span>`,
+              )}
+            </div>`
+          : nothing
+      }
+    `;
+  }
+
+  /** The selected room's lights: live status, on/off, and what it follows
+   * besides its own area. */
+  private _renderRoomLights(room: Room) {
+    const light = this.selectedRoomLight;
+    const areaName = (id: string) =>
+      this.allAreas.find((a) => a.area_id === id)?.name ?? id;
+    const lightName = (id: string) =>
+      this.lightEntities.find((l) => l.entity_id === id)?.name ?? id;
+    const roomName = (id: string) =>
+      this.rooms.find((r) => r.id === id)?.name ?? id;
+    return html`<div class="info-group">
+      <div class="info-group-title">${localize("canvas.lights.title")}</div>
+      ${this._fieldRow(
+        light && light.on > 0 ? "mdi:lightbulb-on" : "mdi:lightbulb-outline",
+        light
+          ? localize("canvas.lights.count", {
+              on: light.on,
+              total: light.entityIds.length,
+            })
+          : localize("canvas.lights.none"),
+        light
+          ? html`<span class="light-buttons">
+              <button
+                @click=${() => this._fire("room-lights-command", { on: true })}
+              >
+                ${localize("canvas.lights.on")}
+              </button>
+              <button
+                @click=${() => this._fire("room-lights-command", { on: false })}
+              >
+                ${localize("canvas.lights.off")}
+              </button>
+            </span>`
+          : nothing,
+      )}
+      ${this._renderLinks(
+        "mdi:link-variant",
+        localize("canvas.links.areas"),
+        (room.linked_area_ids ?? []).map((id) => ({
+          id,
+          label: areaName(id),
+        })),
+        this.allAreas
+          .filter((a) => a.area_id !== room.area_id)
+          .map((a) => ({ id: a.area_id, label: a.name })),
+        (ids) => this._fire("room-links-change", { linked_area_ids: ids }),
+      )}
+      ${this._renderLinks(
+        "mdi:vector-link",
+        localize("canvas.links.rooms"),
+        (room.linked_room_ids ?? []).map((id) => ({
+          id,
+          label: roomName(id),
+        })),
+        this.rooms
+          .filter((r) => r.id !== room.id)
+          .map((r) => ({ id: r.id, label: r.name })),
+        (ids) => this._fire("room-links-change", { linked_room_ids: ids }),
+      )}
+      ${this._renderLinks(
+        "mdi:lightbulb-multiple-outline",
+        localize("canvas.links.lights"),
+        (room.light_entity_ids ?? []).map((id) => ({
+          id,
+          label: lightName(id),
+        })),
+        this.lightEntities.map((l) => ({ id: l.entity_id, label: l.name })),
+        (ids) => this._fire("room-links-change", { light_entity_ids: ids }),
+      )}
+    </div>`;
+  }
+
+  private _renderFurnitureCard(item: FurnitureItem) {
+    const entry = catalogItem(item.kind);
+    const unit = this._furnitureSizeUnit ?? defaultSmallSubUnit(this.unitSystem);
+    const change = (patch: Partial<FurnitureItem>) =>
+      this._fire("furniture-change", { patch });
+    const sizeInput = (key: "width_cm" | "depth_cm") => html`<input
+      type="number"
+      class="furniture-size"
+      min="0"
+      step=${unit === "cm" || unit === "in" ? "1" : "0.01"}
+      .value=${formatSmallAs(item[key], unit)}
+      @change=${(e: Event) => {
+        const cm = parseSmallAs((e.target as HTMLInputElement).value, unit);
+        if (cm !== null && Number.isFinite(cm) && cm >= 1) {
+          change({ [key]: Math.round(cm * 10) / 10 });
+        }
+      }}
+    />`;
+    const toggle = (
+      icon: string,
+      label: string,
+      key: "fill" | "show_label" | "mirrored" | "locked",
+    ) =>
+      this._fieldRow(
+        icon,
+        label,
+        html`<input
+          type="checkbox"
+          class="switch"
+          role="switch"
+          .checked=${!!item[key]}
+          @change=${(e: Event) =>
+            change({ [key]: (e.target as HTMLInputElement).checked })}
+        />`,
+      );
+    return this._card({
+      title: item.label || entry?.name || item.kind,
+      subtitle: entry
+        ? localize(`furniture.category.${entry.category}`)
+        : localize("canvas.card.furniture"),
+      onClose: this._clearSelection,
+      body: html`
+        <div class="info-group">
+          ${this._fieldRow(
+            "mdi:pencil",
+            localize("canvas.card.name"),
+            html`<input
+              type="text"
+              class="text-field"
+              placeholder=${entry?.name ?? ""}
+              .value=${item.label ?? ""}
+              @change=${(e: Event) =>
+                change({
+                  label: (e.target as HTMLInputElement).value.trim() || null,
+                })}
+            />`,
+          )}
+          ${toggle("mdi:format-text", localize("furniture.showLabel"), "show_label")}
+          ${this._fieldRow(
+            "mdi:arrow-expand-horizontal",
+            localize("furniture.width", { unit }),
+            html`<span class="inline-pair"
+              >${sizeInput("width_cm")}${this._unitSelect(
+                unit,
+                (u) => (this._furnitureSizeUnit = u),
+              )}</span
+            >`,
+          )}
+          ${this._fieldRow(
+            "mdi:arrow-expand-vertical",
+            localize("furniture.depth", { unit }),
+            sizeInput("depth_cm"),
+          )}
+          ${
+            this.floorCalibrated
+              ? nothing
+              : html`<div class="info-row">
+                  <span class="grow info-sub"
+                    >${localize("furniture.calibrate")}</span
+                  >
+                </div>`
+          }
+          ${this._fieldRow(
+            "mdi:rotate-right",
+            localize("furniture.rotation"),
+            html`<span class="inline-pair">
+              <input
+                type="number"
+                class="furniture-size"
+                step="1"
+                .value=${String(Math.round(item.rotation_deg * 10) / 10)}
+                @change=${(e: Event) => {
+                  const deg = Number((e.target as HTMLInputElement).value);
+                  if (Number.isFinite(deg))
+                    change({ rotation_deg: ((deg % 360) + 360) % 360 });
+                }}
+              />
+              <span class="icon-buttons">
+                <button
+                  title=${localize("furniture.rotateLeft")}
+                  @click=${() =>
+                    change({
+                      rotation_deg: (item.rotation_deg + 270) % 360,
+                    })}
+                >
+                  <ha-icon icon="mdi:rotate-left"></ha-icon>
+                </button>
+                <button
+                  title=${localize("furniture.rotateRight")}
+                  @click=${() =>
+                    change({ rotation_deg: (item.rotation_deg + 90) % 360 })}
+                >
+                  <ha-icon icon="mdi:rotate-right"></ha-icon>
+                </button>
+              </span>
+            </span>`,
+          )}
+        </div>
+        <div class="info-group">
+          <div class="info-group-title">${localize("canvas.card.style")}</div>
+          ${this._fieldRow(
+            "mdi:format-line-weight",
+            localize("furniture.lineThickness", {
+              px: item.stroke_width.toFixed(1),
+            }),
+            html`<input
+              type="range"
+              class="stroke-range"
+              min="0.5"
+              max="6"
+              step="0.25"
+              style="--pct:${((item.stroke_width - 0.5) / 5.5) * 100}%"
+              .value=${String(item.stroke_width)}
+              @input=${(e: Event) =>
+                change({
+                  stroke_width: Number((e.target as HTMLInputElement).value),
+                })}
+            />`,
+          )}
+          ${this._fieldRow(
+            "mdi:palette",
+            localize("canvas.card.colour"),
+            html`<span class="inline-pair">
+              ${
+                item.color
+                  ? html`<button
+                      class="color-reset"
+                      @click=${() => change({ color: null })}
+                    >
+                      ${localize("canvas.card.colourDefault")}
+                    </button>`
+                  : nothing
+              }
+              <input
+                type="color"
+                class="room-fill-color"
+                .value=${item.color ?? "#607d8b"}
+                @input=${(e: Event) =>
+                  change({ color: (e.target as HTMLInputElement).value })}
+              />
+            </span>`,
+          )}
+          ${toggle("mdi:format-color-fill", localize("furniture.fill"), "fill")}
+          ${toggle("mdi:flip-horizontal", localize("furniture.mirror"), "mirrored")}
+          ${toggle("mdi:lock-outline", localize("furniture.lock"), "locked")}
+        </div>
+        <div class="info-group">
+          ${this._actionRow("mdi:content-copy", localize("furniture.duplicate"), () =>
+            this._fire("furniture-duplicate-click"),
+          )}
+          ${this._actionRow(
+            "mdi:arrange-bring-to-front",
+            localize("furniture.toFront"),
+            () => this._fire("furniture-order-click", { front: true }),
+          )}
+          ${this._actionRow(
+            "mdi:arrange-send-to-back",
+            localize("furniture.toBack"),
+            () => this._fire("furniture-order-click", { front: false }),
+          )}
+        </div>
+      `,
+      footer: this._deleteButton(
+        localize("furniture.delete"),
+        "furniture-delete-click",
+      ),
+    });
   }
 
   private _renderAlignBar() {
@@ -761,6 +1184,7 @@ export class CanvasOverlay extends LitElement {
               />`,
             )}
           </div>
+          ${this._renderRoomLights(room)}
           <div class="info-group">
             <div class="info-group-title">${localize("canvas.card.style")}</div>
             ${this._renderColourPicker(room)}
@@ -993,12 +1417,57 @@ export class CanvasOverlay extends LitElement {
                 </div>`
               : nothing
           }
+          ${this._fieldRow(
+            "mdi:blinds",
+            localize("canvas.opening.cover"),
+            this._selectWrap(
+              html`<select
+                @change=${(e: Event) =>
+                  this._fire("opening-cover-change", {
+                    entityId: (e.target as HTMLSelectElement).value || null,
+                  })}
+              >
+                <option value="" ?selected=${!opening.cover_entity_id}>
+                  ${localize("canvas.opening.noCover")}
+                </option>
+                ${this.coverEntities.map(
+                  (c) =>
+                    html`<option
+                      value=${c.entity_id}
+                      ?selected=${c.entity_id === opening.cover_entity_id}
+                    >
+                      ${c.name}
+                    </option>`,
+                )}
+              </select>`,
+            ),
+          )}
+          ${
+            opening.cover_entity_id
+              ? this._fieldRow(
+                  "mdi:weather-sunny",
+                  localize("canvas.opening.coverState"),
+                  html`<span
+                    >${
+                      this.selectedCoverOpenness === null
+                        ? localize("canvas.opening.coverUnavailable")
+                        : localize("canvas.opening.coverOpen", {
+                            pct: Math.round(this.selectedCoverOpenness * 100),
+                          })
+                    }</span
+                  >`,
+                )
+              : nothing
+          }
         </div>`,
         footer: this._deleteButton(
           localize("canvas.opening.delete"),
           "opening-delete-click",
         ),
       });
+    }
+    if (this.selectedFurniture) {
+      return this._renderFurnitureCard(this.selectedFurniture);
     }
     if (this.selectedMeshLink) {
       const link = this.selectedMeshLink;

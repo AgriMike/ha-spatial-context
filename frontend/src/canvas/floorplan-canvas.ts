@@ -1,9 +1,10 @@
-import { LitElement, html, svg, css, nothing } from "lit";
+import { LitElement, html, svg, css, nothing, unsafeCSS } from "lit";
 import { property, query, state } from "lit/decorators.js";
 import { safeCustomElement } from "../define";
 import { mdiFloorPlan } from "@mdi/js";
 import type {
   CanvasMode,
+  FurnitureItem,
   Opening,
   OpeningType,
   PlaceableEntity,
@@ -54,6 +55,9 @@ import { GROUP_ICON_PATH } from "./pin-icons";
 import { formatLarge, largeUnitLabel } from "../units";
 import { localize } from "../i18n";
 import { scaleStyles, sharedStyles, zoomControlsStyles } from "../styles";
+import { catalogItem } from "./furniture-catalog";
+import { drawItem, FURNITURE_STYLES, renderPrims } from "./furniture-draw";
+import type { RoomLight } from "./live-state";
 
 /** Fixed logical coordinate space width every floor's rooms/pins are stored in,
  * independent of the uploaded background image's actual pixel resolution. */
@@ -76,6 +80,11 @@ export const DEFAULT_ROOM_FILL_COLOR = "#03a9f4";
 export const DEFAULT_ROOM_FILL_OPACITY = 0.18;
 export const DEFAULT_ROOM_BORDER_OPACITY = 1;
 const PIN_RADIUS_PX = 12;
+/** Furniture sizes are real centimetres; until a floor is calibrated they
+ * draw as if the plan were 20 m wide. */
+const FALLBACK_UNITS_PER_CM = BASE_WIDTH / 2000;
+const FURNITURE_ROTATE_HANDLE_PX = 26;
+const FURNITURE_MIN_CM = 5;
 const MESH_STUB_RADIUS_PX = 10;
 
 /** What's currently being vertex-edited — a room (closed ring, min 3 points)
@@ -95,8 +104,22 @@ export interface AlignOverlay {
   opacity: number;
 }
 
+type FurnitureHandle = "rotate" | "corner" | "right" | "bottom";
+
+/** A furniture item mid-drag/rotate/resize, before it's committed. */
+interface FurnitureEdit {
+  id: string;
+  x: number;
+  y: number;
+  rotation_deg: number;
+  width_cm: number;
+  depth_cm: number;
+}
+
 type DownHit =
   | { type: "vertex"; index: number }
+  | { type: "furniture"; item: FurnitureItem }
+  | { type: "furnitureHandle"; item: FurnitureItem; handle: FurnitureHandle }
   | { type: "edgeMidpoint"; index: number }
   | { type: "pin"; pin: Pin }
   | { type: "pinStack"; pins: Pin[] }
@@ -117,6 +140,8 @@ type Gesture =
   | { kind: "roomLabel"; roomId: string }
   | { kind: "roomMove"; roomId: string; startX: number; startY: number }
   | { kind: "openingMove"; openingId: string }
+  | { kind: "furnitureMove"; id: string; startX: number; startY: number }
+  | { kind: "furnitureHandle"; id: string; handle: FurnitureHandle }
   | { kind: "openingHandle"; openingId: string; whichEnd: 0 | 1 }
   | {
       kind: "pinch";
@@ -389,6 +414,61 @@ export class FloorplanCanvas extends LitElement {
       }
       ${zoomControlsStyles}
       ${scaleStyles}
+      ${unsafeCSS(FURNITURE_STYLES)}
+      .furniture {
+        --fx-color: #546e7a;
+        cursor: pointer;
+      }
+      :host([dark]) .furniture {
+        --fx-color: #b0bec5;
+      }
+      .furniture.ghost {
+        opacity: 0.55;
+        pointer-events: none;
+      }
+      .furniture-outline {
+        fill: none;
+        stroke: var(--sc-accent);
+        stroke-width: 1.5px;
+        stroke-dasharray: 5 4;
+        vector-effect: non-scaling-stroke;
+        pointer-events: none;
+      }
+      .furniture-handle {
+        fill: var(--sc-panel-bg, white);
+        stroke: var(--sc-accent);
+        stroke-width: 2px;
+        vector-effect: non-scaling-stroke;
+      }
+      .furniture-handle.rotate {
+        cursor: grab;
+      }
+      .furniture-handle.corner {
+        cursor: nwse-resize;
+      }
+      .furniture-label {
+        fill: var(--sc-fg);
+        text-anchor: middle;
+        dominant-baseline: central;
+        pointer-events: none;
+        paint-order: stroke;
+        stroke: var(--sc-bg);
+        stroke-width: 3px;
+      }
+      .room-lights {
+        font-size: 0.75em;
+        fill: var(--sc-fg-secondary);
+      }
+      .cover-patch {
+        pointer-events: none;
+      }
+      .controls button.active {
+        color: var(--sc-accent);
+      }
+      .controls button.off {
+        color: var(--sc-fg-secondary);
+        opacity: 0.6;
+      }
     `,
   ];
 
@@ -430,6 +510,28 @@ export class FloorplanCanvas extends LitElement {
   @property({ attribute: false }) selectedPinId: string | null = null;
   @property({ attribute: false }) selectedWallId: string | null = null;
   @property({ attribute: false }) selectedOpeningId: string | null = null;
+  @property({ attribute: false }) furniture: FurnitureItem[] = [];
+  @property({ attribute: false }) selectedFurnitureId: string | null = null;
+  /** Catalog id armed for placement (mode "furniture"), drawn under the
+   * pointer until clicked into place. */
+  @property({ attribute: false }) armedFurnitureKind: string | null = null;
+  @property({ type: Number }) armedFurnitureRotation = 0;
+  /** Live state (see live-state.ts): each room's lights, each opening's
+   * cover, and a status colour for pins whose device is active. */
+  @property({ attribute: false }) roomLights: Map<string, RoomLight> =
+    new Map();
+  @property({ attribute: false }) coverOpenness: Map<string, number | null> =
+    new Map();
+  @property({ attribute: false }) pinColors: Map<string, string> = new Map();
+  @property({ type: Boolean }) showFurniture = true;
+  @property({ type: Boolean }) showLights = true;
+  @property({ type: Boolean }) showCovers = true;
+  /** Furniture / lights / covers on-off buttons beside the zoom controls
+   * (each fires "overlay-toggle"). */
+  @property({ type: Boolean }) overlayButtons = true;
+  /** Dashboard use: nothing can be edited — a tap on a room, device or
+   * door/window fires "plan-tap" instead of selecting it. */
+  @property({ type: Boolean }) readOnly = false;
   /** `${fromPin.id}|${toPin.id}` of the currently-selected mesh link, or
    * null — links have no id of their own, so panel.ts derives this key
    * from whichever ResolvedMeshLink it's holding as selected. */
@@ -487,6 +589,9 @@ export class FloorplanCanvas extends LitElement {
     width: number;
   } | null = null;
   @state() private _selectedVertexIndex: number | null = null;
+  @state() private _liveFurniture: FurnitureEdit | null = null;
+  /** Where the pointer is while placing furniture (the ghost's spot). */
+  @state() private _hoverImage: { x: number; y: number } | null = null;
 
   @query("svg") private _svg!: SVGSVGElement;
 
@@ -837,6 +942,123 @@ export class FloorplanCanvas extends LitElement {
       : opening;
   }
 
+  /** Stored units per real centimetre — from the floor's calibration, or a
+   * stand-in until it's calibrated (FALLBACK_UNITS_PER_CM). */
+  get unitsPerCm(): number {
+    if (this.scale && this.scale.meters > 0) {
+      const [[x1, y1], [x2, y2]] = this.scale.points;
+      const d = distance(x1, y1, x2, y2);
+      if (d > 0) return d / this.scale.meters / 100;
+    }
+    return FALLBACK_UNITS_PER_CM;
+  }
+
+  private _effectiveFurniture(item: FurnitureItem): FurnitureItem {
+    const live = this._liveFurniture;
+    return live?.id === item.id ? { ...item, ...live } : item;
+  }
+
+  /** A point in an item's own frame (centimetres from its centre, before
+   * rotation) -> stored coordinates. */
+  private _furnitureToImage(
+    item: FurnitureItem,
+    lx: number,
+    ly: number,
+  ): [number, number] {
+    const k = this.unitsPerCm;
+    const r = (item.rotation_deg * Math.PI) / 180;
+    const c = Math.cos(r);
+    const s = Math.sin(r);
+    return [item.x + (lx * c - ly * s) * k, item.y + (lx * s + ly * c) * k];
+  }
+
+  /** Stored coordinates -> the item's own frame (centimetres from centre). */
+  private _imageToFurniture(
+    item: FurnitureItem,
+    x: number,
+    y: number,
+  ): [number, number] {
+    const k = this.unitsPerCm;
+    const r = (item.rotation_deg * Math.PI) / 180;
+    const c = Math.cos(r);
+    const s = Math.sin(r);
+    const dx = (x - item.x) / k;
+    const dy = (y - item.y) / k;
+    return [dx * c + dy * s, -dx * s + dy * c];
+  }
+
+  /** The smallest item under a point — a lamp on a rug wins. */
+  private _furnitureAt(x: number, y: number): FurnitureItem | null {
+    const tol = this._pxToUnits(3) / this.unitsPerCm;
+    let best: FurnitureItem | null = null;
+    for (const raw of this.furniture) {
+      const item = this._effectiveFurniture(raw);
+      const [lx, ly] = this._imageToFurniture(item, x, y);
+      if (
+        Math.abs(lx) <= item.width_cm / 2 + tol &&
+        Math.abs(ly) <= item.depth_cm / 2 + tol &&
+        (!best || item.width_cm * item.depth_cm < best.width_cm * best.depth_cm)
+      ) {
+        best = raw;
+      }
+    }
+    return best;
+  }
+
+  private _furnitureHandles(
+    raw: FurnitureItem,
+  ): Record<FurnitureHandle, [number, number]> {
+    const item = this._effectiveFurniture(raw);
+    const w = item.width_cm / 2;
+    const d = item.depth_cm / 2;
+    const above =
+      this._pxToUnits(FURNITURE_ROTATE_HANDLE_PX) / this.unitsPerCm;
+    return {
+      rotate: this._furnitureToImage(item, 0, -d - above),
+      corner: this._furnitureToImage(item, w, d),
+      right: this._furnitureToImage(item, w, 0),
+      bottom: this._furnitureToImage(item, 0, d),
+    };
+  }
+
+  /** A rotate/resize handle dragged to `image`. Resizing keeps the opposite
+   * side fixed and snaps to whole centimetres; rotation snaps to 15 degrees
+   * (Shift frees both). */
+  private _furnitureHandleEdit(
+    item: FurnitureItem,
+    handle: FurnitureHandle,
+    image: { x: number; y: number },
+    free: boolean,
+  ): FurnitureEdit {
+    const base: FurnitureEdit = {
+      id: item.id,
+      x: item.x,
+      y: item.y,
+      rotation_deg: item.rotation_deg,
+      width_cm: item.width_cm,
+      depth_cm: item.depth_cm,
+    };
+    if (handle === "rotate") {
+      let deg =
+        (Math.atan2(image.y - item.y, image.x - item.x) * 180) / Math.PI + 90;
+      if (!free) deg = Math.round(deg / 15) * 15;
+      return { ...base, rotation_deg: ((deg % 360) + 360) % 360 };
+    }
+    const [lx, ly] = this._imageToFurniture(item, image.x, image.y);
+    const snap = (v: number) =>
+      Math.max(FURNITURE_MIN_CM, free ? v : Math.round(v));
+    const w =
+      handle === "bottom" ? item.width_cm : snap(lx + item.width_cm / 2);
+    const d =
+      handle === "right" ? item.depth_cm : snap(ly + item.depth_cm / 2);
+    const [x, y] = this._furnitureToImage(
+      item,
+      (w - item.width_cm) / 2,
+      (d - item.depth_cm) / 2,
+    );
+    return { ...base, x, y, width_cm: w, depth_cm: d };
+  }
+
   /** The two endpoints of an opening's drawn segment, along its wall's local direction. */
   private _openingEndpoints(
     opening: Opening,
@@ -968,6 +1190,22 @@ export class FloorplanCanvas extends LitElement {
     if (meshLink) return { type: "meshLink", link: meshLink };
     const meshStub = findMeshStubAt(this.meshStubs, image.x, image.y, hitR);
     if (meshStub) return { type: "meshStub", stub: meshStub };
+    if (this.showFurniture && !this.readOnly) {
+      const selected = this.furniture.find(
+        (f) => f.id === this.selectedFurnitureId,
+      );
+      if (selected && !selected.locked) {
+        const handles = this._furnitureHandles(selected);
+        for (const handle of ["rotate", "corner", "right", "bottom"] as const) {
+          const [hx, hy] = handles[handle];
+          if (distance(hx, hy, image.x, image.y) <= hitR) {
+            return { type: "furnitureHandle", item: selected, handle };
+          }
+        }
+      }
+      const item = this._furnitureAt(image.x, image.y);
+      if (item) return { type: "furniture", item };
+    }
     if (this.selectedOpeningId) {
       const selectedOpening = this.openings.find(
         (o) => o.id === this.selectedOpeningId,
@@ -1054,6 +1292,11 @@ export class FloorplanCanvas extends LitElement {
         );
       } else if (this._hoverSnap) {
         this._hoverSnap = null;
+      }
+      if (this.mode === "furniture") {
+        this._hoverImage = this._clientToImage(e.clientX, e.clientY);
+      } else if (this._hoverImage) {
+        this._hoverImage = null;
       }
       return;
     }
@@ -1142,6 +1385,30 @@ export class FloorplanCanvas extends LitElement {
       this._liveEditPoints = points;
     } else if (this._gesture?.kind === "pin") {
       this._liveDragPin = { id: this._gesture.pinId, x: image.x, y: image.y };
+    } else if (this._gesture?.kind === "furnitureMove") {
+      const gesture = this._gesture;
+      const item = this.furniture.find((f) => f.id === gesture.id);
+      if (item) {
+        this._liveFurniture = {
+          id: item.id,
+          x: item.x + image.x - gesture.startX,
+          y: item.y + image.y - gesture.startY,
+          rotation_deg: item.rotation_deg,
+          width_cm: item.width_cm,
+          depth_cm: item.depth_cm,
+        };
+      }
+    } else if (this._gesture?.kind === "furnitureHandle") {
+      const gesture = this._gesture;
+      const item = this.furniture.find((f) => f.id === gesture.id);
+      if (item) {
+        this._liveFurniture = this._furnitureHandleEdit(
+          item,
+          gesture.handle,
+          image,
+          e.shiftKey,
+        );
+      }
     } else if (this._gesture?.kind === "roomMove") {
       let dx = image.x - this._gesture.startX;
       let dy = image.y - this._gesture.startY;
@@ -1228,6 +1495,26 @@ export class FloorplanCanvas extends LitElement {
     // generic pan fallback below would otherwise win here too, since
     // _downHit is always "empty" in any non-select mode).
     if (this.mode === "align") return { kind: "alignDrag" };
+    if (this.readOnly) return { kind: "pan" };
+    if (this._downHit?.type === "furnitureHandle") {
+      return {
+        kind: "furnitureHandle",
+        id: this._downHit.item.id,
+        handle: this._downHit.handle,
+      };
+    }
+    if (
+      this._downHit?.type === "furniture" &&
+      !this._downHit.item.locked &&
+      this._lastImage
+    ) {
+      return {
+        kind: "furnitureMove",
+        id: this._downHit.item.id,
+        startX: this._lastImage.x,
+        startY: this._lastImage.y,
+      };
+    }
     if (this._downHit?.type === "vertex") {
       this._vertexDragStartPoints = this._liveEditPoints
         ? [...this._liveEditPoints]
@@ -1267,6 +1554,7 @@ export class FloorplanCanvas extends LitElement {
 
   private _onPointerLeave = (): void => {
     this._hoverSnap = null;
+    this._hoverImage = null;
   };
 
   private _onPointerUp = (e: PointerEvent): void => {
@@ -1313,6 +1601,28 @@ export class FloorplanCanvas extends LitElement {
   }
 
   private _commitGesture(): void {
+    if (
+      (this._gesture?.kind === "furnitureMove" ||
+        this._gesture?.kind === "furnitureHandle") &&
+      this._liveFurniture
+    ) {
+      const edit = this._liveFurniture;
+      this._liveFurniture = null;
+      const item = this.furniture.find((f) => f.id === edit.id);
+      const changed =
+        !item ||
+        item.x !== edit.x ||
+        item.y !== edit.y ||
+        item.rotation_deg !== edit.rotation_deg ||
+        item.width_cm !== edit.width_cm ||
+        item.depth_cm !== edit.depth_cm;
+      if (changed) {
+        this.dispatchEvent(
+          new CustomEvent("furniture-update", { detail: edit }),
+        );
+      }
+      return;
+    }
     if (
       this._gesture?.kind === "vertex" &&
       this._editingTarget &&
@@ -1441,6 +1751,17 @@ export class FloorplanCanvas extends LitElement {
       return;
     }
 
+    if (this.mode === "furniture") {
+      if (this.armedFurnitureKind) {
+        this.dispatchEvent(
+          new CustomEvent("furniture-place", {
+            detail: { x: image.x, y: image.y, keepArmed: shiftKey },
+          }),
+        );
+      }
+      return;
+    }
+
     if (this.mode === "scale") {
       const points: [number, number][] = [
         ...this._pendingScalePoints,
@@ -1476,6 +1797,33 @@ export class FloorplanCanvas extends LitElement {
 
     // select mode
     const hit = this._downHit ?? { type: "empty" };
+    if (this.readOnly) {
+      // Dashboard: report what was tapped, select nothing.
+      const tap =
+        hit.type === "pin"
+          ? { kind: "pin", id: hit.pin.id }
+          : hit.type === "pinStack"
+            ? { kind: "pin", id: hit.pins[0]!.id }
+            : hit.type === "opening"
+              ? { kind: "opening", id: hit.opening.id }
+              : hit.type === "room" || hit.type === "roomLabel"
+                ? { kind: "room", id: hit.room.id }
+                : null;
+      if (tap) this.dispatchEvent(new CustomEvent("plan-tap", { detail: tap }));
+      return;
+    }
+    if (hit.type === "furniture") {
+      this.dispatchEvent(
+        new CustomEvent("furniture-select", {
+          detail: {
+            furnitureId:
+              this.selectedFurnitureId === hit.item.id ? null : hit.item.id,
+          },
+        }),
+      );
+      return;
+    }
+    if (hit.type === "furnitureHandle") return;
     if (hit.type === "vertex") {
       this._selectedVertexIndex =
         this._selectedVertexIndex === hit.index ? null : hit.index;
@@ -1589,6 +1937,9 @@ export class FloorplanCanvas extends LitElement {
         new CustomEvent("opening-select", { detail: { openingId: null } }),
       );
       this.dispatchEvent(
+        new CustomEvent("furniture-select", { detail: { furnitureId: null } }),
+      );
+      this.dispatchEvent(
         new CustomEvent("mesh-link-select", { detail: { link: null } }),
       );
       this.dispatchEvent(
@@ -1637,6 +1988,7 @@ export class FloorplanCanvas extends LitElement {
     this._liveDragPin = null;
     this._liveRoomLabel = null;
     this._liveOpeningEdit = null;
+    this._liveFurniture = null;
     this._gesture = null;
     this._gestureCancelled = true;
     this._svg.style.cursor = "";
@@ -1820,9 +2172,26 @@ export class FloorplanCanvas extends LitElement {
     const [cx, cy] = this._roomLabelPosition(room, points);
     const isEditing = this.editingRoomId === room.id;
     const isSelected = room.id === this.selectedRoomId || isEditing;
-    const fillColor = room.fill_color ?? DEFAULT_ROOM_FILL_COLOR;
-    const fillOpacity = room.fill_opacity ?? DEFAULT_ROOM_FILL_OPACITY;
+    const borderColor = room.fill_color ?? DEFAULT_ROOM_FILL_COLOR;
+    let fillColor = borderColor;
+    let fillOpacity = room.fill_opacity ?? DEFAULT_ROOM_FILL_OPACITY;
     const borderOpacity = room.border_opacity ?? DEFAULT_ROOM_BORDER_OPACITY;
+    // Live lights: lit in the lights' own colour, brighter with their
+    // brightness; dark with them all off.
+    const light = this.showLights ? this.roomLights.get(room.id) : undefined;
+    if (light && light.on > 0) {
+      fillColor = light.color;
+      fillOpacity = 0.15 + 0.55 * Math.min(1, light.level);
+    } else if (light && light.unavailable < light.entityIds.length) {
+      fillColor = this.dark ? "#000000" : "#263238";
+      fillOpacity = this.dark ? 0.45 : 0.3;
+    }
+    const lightsText = light
+      ? localize("canvas.lights.count", {
+          on: light.on,
+          total: light.entityIds.length,
+        })
+      : "";
 
     // While the room is being dragged: a dashed outline of where it
     // started, the spot it snaps back to.
@@ -1844,11 +2213,15 @@ export class FloorplanCanvas extends LitElement {
         fill-opacity=${
           isSelected ? Math.min(1, fillOpacity * (0.32 / 0.18)) : fillOpacity
         }
-        stroke=${fillColor}
+        stroke=${borderColor}
         stroke-opacity=${borderOpacity}
         stroke-width=${isSelected ? 3 : 2}
-      ></polygon>
-      <text class="room-label" x=${cx} y=${cy}>${room.name}</text>
+      >${lightsText ? svg`<title>${room.name}: ${lightsText}</title>` : nothing}</polygon>
+      <text class="room-label" x=${cx} y=${cy}>${room.name}${
+        lightsText
+          ? svg`<tspan class="room-lights" x=${cx} dy="1.2em">${lightsText}</tspan>`
+          : nothing
+      }</text>
       ${isEditing ? this._renderVertexHandles(points, true) : nothing}
     `;
   }
@@ -2107,7 +2480,7 @@ export class FloorplanCanvas extends LitElement {
         y,
         r,
         this._iconForPin(pin),
-        "var(--sc-accent)",
+        this.pinColors.get(pin.id) ?? "var(--sc-accent)",
         selected,
         this._pinLabel(pin),
       );
@@ -2120,7 +2493,8 @@ export class FloorplanCanvas extends LitElement {
       group.y,
       r,
       { kind: "path", d: GROUP_ICON_PATH },
-      "var(--sc-accent)",
+      group.pins.map((p) => this.pinColors.get(p.id)).find(Boolean) ??
+        "var(--sc-accent)",
       selected,
       label,
     );
@@ -2385,6 +2759,172 @@ export class FloorplanCanvas extends LitElement {
     `;
   }
 
+  private _renderFurniture(raw: FurnitureItem, ghost = false) {
+    const item = this._effectiveFurniture(raw);
+    const entry = catalogItem(item.kind);
+    const k = this.unitsPerCm;
+    const flip = !!item.mirrored !== !!entry?.flip;
+    const prims = drawItem(
+      entry?.draw ?? "box",
+      item.width_cm,
+      item.depth_cm,
+      entry?.opts ?? {},
+    );
+    const selected = !ghost && item.id === this.selectedFurnitureId;
+    const transform = `translate(${item.x} ${item.y}) rotate(${item.rotation_deg}) scale(${k} ${k})`;
+    const inner = `translate(${-item.width_cm / 2} ${-item.depth_cm / 2})${
+      flip ? ` translate(${item.width_cm} 0) scale(-1 1)` : ""
+    }`;
+    const style = `--fx-stroke-width:${item.stroke_width}px;${
+      item.color ? `--fx-color:${item.color};` : ""
+    }`;
+    const label = item.label || entry?.name || item.kind;
+    return svg`
+      <g class="furniture ${ghost ? "ghost" : ""}" style=${style} transform=${transform}>
+        <g transform=${inner}>${renderPrims(prims, !!item.fill)}</g>
+        ${
+          selected
+            ? svg`<rect class="furniture-outline" x=${-item.width_cm / 2} y=${-item.depth_cm / 2} width=${item.width_cm} height=${item.depth_cm}></rect>`
+            : nothing
+        }
+        <title>${label}</title>
+      </g>
+      ${
+        item.show_label && !ghost
+          ? svg`<text class="furniture-label" x=${item.x} y=${item.y} style="font-size:${this._pxToUnits(11)}px">${label}</text>`
+          : nothing
+      }
+    `;
+  }
+
+  /** Rotate/resize handles on the selected item, at a constant on-screen
+   * size — drawn above everything else so they stay grabbable. */
+  private _renderFurnitureHandles() {
+    if (this.readOnly || !this.showFurniture) return nothing;
+    const item = this.furniture.find((f) => f.id === this.selectedFurnitureId);
+    if (!item || item.locked) return nothing;
+    const h = this._furnitureHandles(item);
+    const live = this._effectiveFurniture(item);
+    const top = this._furnitureToImage(live, 0, -live.depth_cm / 2);
+    const r = this._pxToUnits(VERTEX_RADIUS_PX);
+    return svg`
+      <line class="furniture-outline" x1=${top[0]} y1=${top[1]} x2=${h.rotate[0]} y2=${h.rotate[1]}></line>
+      <circle class="furniture-handle rotate" cx=${h.rotate[0]} cy=${h.rotate[1]} r=${r}></circle>
+      <rect class="furniture-handle" x=${h.right[0] - r * 0.8} y=${h.right[1] - r * 0.8} width=${r * 1.6} height=${r * 1.6}></rect>
+      <rect class="furniture-handle" x=${h.bottom[0] - r * 0.8} y=${h.bottom[1] - r * 0.8} width=${r * 1.6} height=${r * 1.6}></rect>
+      <rect class="furniture-handle corner" x=${h.corner[0] - r} y=${h.corner[1] - r} width=${r * 2} height=${r * 2}></rect>
+    `;
+  }
+
+  private _renderFurnitureGhost() {
+    if (!this.armedFurnitureKind || !this._hoverImage) return nothing;
+    const entry = catalogItem(this.armedFurnitureKind);
+    if (!entry) return nothing;
+    return this._renderFurniture(
+      {
+        id: "__ghost__",
+        kind: entry.id,
+        x: this._hoverImage.x,
+        y: this._hoverImage.y,
+        rotation_deg: this.armedFurnitureRotation,
+        width_cm: entry.w,
+        depth_cm: entry.d,
+        stroke_width: 1.5,
+      },
+      true,
+    );
+  }
+
+  /** Daylight (or shade) on the floor behind each door/window that has a
+   * cover linked: a patch reaching into the room, warm and bright as the
+   * cover opens, dark as it closes — clipped to the room it falls in. */
+  private _renderCoverPatches() {
+    if (!this.showCovers || this.coverOpenness.size === 0) return nothing;
+    const defs: unknown[] = [];
+    const patches: unknown[] = [];
+    const clipped = new Set<string>();
+    for (const opening of this.openings) {
+      if (!this.coverOpenness.has(opening.id)) continue;
+      const openness = this.coverOpenness.get(opening.id) ?? null;
+      const ends = this._openingEndpoints(opening);
+      if (!ends) continue;
+      const [[x1, y1], [x2, y2]] = ends;
+      const width = distance(x1, y1, x2, y2);
+      if (width <= 0) continue;
+      const tx = (x2 - x1) / width;
+      const ty = (y2 - y1) / width;
+      const cx = (x1 + x2) / 2;
+      const cy = (y1 + y2) / 2;
+      const depth = Math.max(width * 1.6, 120 * this.unitsPerCm);
+      const spread = width * 0.25;
+      const probe = Math.max(this._pxToUnits(8), 15 * this.unitsPerCm);
+      for (const side of [1, -1]) {
+        const nx = -ty * side;
+        const ny = tx * side;
+        const room = this.rooms.find(
+          (r) =>
+            r.visible !== false &&
+            r.points.length >= 3 &&
+            pointInPolygon(cx + nx * probe, cy + ny * probe, r.points),
+        );
+        if (!room) continue;
+        const clipId = `cover-clip-${room.id}`;
+        if (!clipped.has(clipId)) {
+          clipped.add(clipId);
+          defs.push(
+            svg`<clipPath id=${clipId}><polygon points=${room.points.map(([x, y]) => `${x},${y}`).join(" ")}></polygon></clipPath>`,
+          );
+        }
+        const gradId = `cover-grad-${opening.id}-${side}`;
+        const lit = openness ?? 0;
+        const color =
+          openness === null ? "#9e9e9e" : lit >= 0.05 ? "#ffd54f" : "#263238";
+        const alpha =
+          openness === null ? 0.25 : lit >= 0.05 ? 0.2 + 0.5 * lit : 0.45;
+        defs.push(svg`
+          <linearGradient id=${gradId} gradientUnits="userSpaceOnUse" x1=${cx} y1=${cy} x2=${cx + nx * depth} y2=${cy + ny * depth}>
+            <stop offset="0" stop-color=${color} stop-opacity=${alpha}></stop>
+            <stop offset="1" stop-color=${color} stop-opacity="0"></stop>
+          </linearGradient>`);
+        const pts = [
+          [x1, y1],
+          [x2, y2],
+          [x2 + nx * depth + tx * spread, y2 + ny * depth + ty * spread],
+          [x1 + nx * depth - tx * spread, y1 + ny * depth - ty * spread],
+        ]
+          .map(([x, y]) => `${x},${y}`)
+          .join(" ");
+        patches.push(
+          svg`<polygon class="cover-patch" points=${pts} fill="url(#${gradId})" clip-path="url(#${clipId})"></polygon>`,
+        );
+      }
+    }
+    return svg`<defs>${defs}</defs>${patches}`;
+  }
+
+  private _renderOverlayButtons() {
+    if (!this.overlayButtons) return nothing;
+    const button = (
+      key: "furniture" | "lights" | "covers",
+      on: boolean,
+      icon: string,
+    ) => html`<button
+      class=${on ? "active" : "off"}
+      title=${localize(`canvasControls.${key}`)}
+      @click=${() =>
+        this.dispatchEvent(
+          new CustomEvent("overlay-toggle", { detail: { key } }),
+        )}
+    >
+      <ha-icon icon=${icon}></ha-icon>
+    </button>`;
+    return html`
+      ${button("furniture", this.showFurniture, "mdi:sofa-outline")}
+      ${button("lights", this.showLights, "mdi:lightbulb-group-outline")}
+      ${button("covers", this.showCovers, "mdi:blinds")}
+    `;
+  }
+
   private _renderScaleLine() {
     if (!this.scale) return nothing;
     const [[x1, y1], [x2, y2]] = this.scale.points;
@@ -2532,8 +3072,11 @@ export class FloorplanCanvas extends LitElement {
           @pointerleave=${this._onPointerLeave}
         >
           ${this.rooms.map((room) => this._renderRoom(room))}
+          ${this._renderCoverPatches()}
+          ${this.showFurniture ? this.furniture.map((item) => this._renderFurniture(item)) : nothing}
           ${this.walls.map((wall) => this._renderWall(wall))}
           ${this.openings.map((opening) => this._renderOpening(opening))}
+          ${this._renderFurnitureHandles()}
           ${this.meshLinks.map((link) => this._renderMeshLink(link))}
           ${this.meshStubs.map((stub) => this._renderMeshStubLine(stub))}
           ${this._renderMeshStubMarkers()}
@@ -2542,10 +3085,12 @@ export class FloorplanCanvas extends LitElement {
           ${this._renderScaleLine()}
           ${this.mode === "scale" ? this._renderPendingScale() : nothing}
           ${this._pinGroups().map((group) => this._renderPinGroup(group))}
+          ${this.mode === "furniture" ? this._renderFurnitureGhost() : nothing}
         </svg>
       `}
       ${this._renderScaleBar()}
       <div class="controls">
+        ${this._renderOverlayButtons()}
         <button
           @click=${() => this._zoomButton(0.8)}
           title=${localize("canvasControls.zoomIn")}

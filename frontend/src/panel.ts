@@ -8,6 +8,7 @@ import type {
   ContentBounds,
   FloorLayout,
   FloorMeta,
+  FurnitureItem,
   HomeAssistant,
   MatterNetworkTopology,
   NetworkType,
@@ -89,6 +90,16 @@ import "./views/canvas-overlay";
 import "./views/icon-popover";
 import "./views/row-actions";
 import "./views/entity-picker-sidebar";
+import "./views/furniture-library-sidebar";
+import type { EntityOption } from "./views/canvas-overlay";
+import { catalogItem } from "./canvas/furniture-catalog";
+import {
+  computeCoverOpenness,
+  computePinColors,
+  computeRoomLights,
+  liveSignature,
+  type RoomLight,
+} from "./canvas/live-state";
 import "./views/property-overlay";
 import "./views/icon-picker-dialog";
 import { localize } from "./i18n";
@@ -100,6 +111,24 @@ import type { PropertyBuilding } from "./views/property-overlay";
  * habit, not a fact every viewer should share. Browser storage can throw
  * or come back empty; fall back to snapping onto everything. */
 const SNAP_MODE_STORAGE_KEY = "spatial-context-snap-mode";
+
+const OVERLAYS_STORAGE_KEY = "spatial_context_overlays";
+
+interface OverlayToggles {
+  furniture: boolean;
+  lights: boolean;
+  covers: boolean;
+}
+
+function readStoredOverlays(): OverlayToggles {
+  const defaults = { furniture: true, lights: true, covers: true };
+  try {
+    const raw = localStorage.getItem(OVERLAYS_STORAGE_KEY);
+    return raw ? { ...defaults, ...(JSON.parse(raw) as Partial<OverlayToggles>) } : defaults;
+  } catch {
+    return defaults;
+  }
+}
 
 function readStoredSnapMode(): SnapMode {
   try {
@@ -233,6 +262,20 @@ export class SpatialContextPanel extends LitElement {
   @state() private _floors: FloorMeta[] = [];
   @state() private _currentFloorId: string | null = null;
   @state() private _layout: FloorLayout = emptyFloorLayout();
+  @state() private _selectedFurnitureId: string | null = null;
+  /** Catalog item armed for placement from the furniture library. */
+  @state() private _armedFurnitureKind: string | null = null;
+  @state() private _armedFurnitureRotation = 0;
+  @state() private _furnitureLibraryOpen = false;
+  /** Canvas overlays (furniture, live lights, cover shading) — a
+   * per-browser preference. */
+  @state() private _overlays: OverlayToggles = readStoredOverlays();
+  /** Live entity state drawn on the plan (see canvas/live-state.ts),
+   * replaced only when something visible changed. */
+  @state() private _roomLights = new Map<string, RoomLight>();
+  @state() private _coverOpenness = new Map<string, number | null>();
+  @state() private _pinColors = new Map<string, string>();
+  private _liveSig = "";
   @state() private _entities: PlaceableEntity[] = [];
   @state() private _areas: AreaMeta[] = [];
   @state() private _mode: CanvasMode = "select";
@@ -375,6 +418,7 @@ export class SpatialContextPanel extends LitElement {
 
   set hass(value: HomeAssistant) {
     this._hass = value;
+    this._refreshLive();
     if (!this._initialized) {
       this._initialized = true;
       void this._init();
@@ -990,6 +1034,46 @@ export class SpatialContextPanel extends LitElement {
     );
   }
 
+  private get _selectedFurniture(): FurnitureItem | null {
+    return (
+      this._layout.furniture.find((f) => f.id === this._selectedFurnitureId) ??
+      null
+    );
+  }
+
+  /** Recomputes the live light/cover/pin state from `hass`, keeping the old
+   * maps (so nothing re-renders) when nothing visible changed. */
+  private _refreshLive(): void {
+    const hass = this._hass;
+    if (!hass) return;
+    const lights = computeRoomLights(this._layout.rooms, hass);
+    const covers = computeCoverOpenness(this._layout.openings, hass);
+    const pins = computePinColors(this._layout.pins, hass);
+    const sig = liveSignature(lights, covers, pins);
+    if (sig === this._liveSig) return;
+    this._liveSig = sig;
+    this._roomLights = lights;
+    this._coverOpenness = covers;
+    this._pinColors = pins;
+  }
+
+  /** Every entity of a domain, by display name — for the light and cover
+   * pickers. */
+  private _entityOptions(domain: string): EntityOption[] {
+    const states = this._hass?.states ?? {};
+    return Object.keys(states)
+      .filter((id) => id.startsWith(`${domain}.`))
+      .map((id) => ({
+        entity_id: id,
+        name: String(states[id]?.attributes["friendly_name"] ?? id),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  private get _unitsPerCm(): number {
+    return this._canvas?.unitsPerCm ?? BASE_WIDTH / 2000;
+  }
+
   private get _selectedOpening(): Opening | null {
     return (
       this._layout.openings.find((o) => o.id === this._selectedOpeningId) ??
@@ -1223,6 +1307,7 @@ export class SpatialContextPanel extends LitElement {
     this._selectedWallId = null;
     this._editingWallId = null;
     this._selectedOpeningId = null;
+    this._selectedFurnitureId = null;
     this._selectedMeshLink = null;
     this._selectedMeshStub = null;
     this._armedEntityId = null;
@@ -1826,6 +1911,8 @@ export class SpatialContextPanel extends LitElement {
     this._mode = this._mode === e.detail.mode ? "select" : e.detail.mode;
     this._armedEntityId = null;
     this._armedOpeningType = null;
+    this._armedFurnitureKind = null;
+    if (this._mode === "place") this._furnitureLibraryOpen = false;
     if (this._mode !== "select") {
       this._editingRoomId = null;
       this._editingWallId = null;
@@ -2003,6 +2090,7 @@ export class SpatialContextPanel extends LitElement {
 
   override updated(changed: Map<string, unknown>): void {
     super.updated(changed);
+    if (changed.has("_layout")) this._refreshLive();
     // Every edit replaces _layout/_propertyLayout with a new object, so
     // this restarts the debounce on each change.
     if (
@@ -2473,6 +2561,7 @@ export class SpatialContextPanel extends LitElement {
       this._mode = "select";
       this._armedEntityId = null;
       this._armedOpeningType = null;
+      this._armedFurnitureKind = null;
       this._armedBuildingKey = null;
       this._propertyMode = "select";
       return;
@@ -2511,11 +2600,13 @@ export class SpatialContextPanel extends LitElement {
         this._selectedRoom ||
         this._selectedPin ||
         this._selectedWall ||
-        this._selectedOpening
+        this._selectedOpening ||
+        this._selectedFurniture
       ) {
         e.preventDefault();
       }
-      if (this._selectedRoom) this._onRoomDelete();
+      if (this._selectedFurniture) this._onFurnitureDelete();
+      else if (this._selectedRoom) this._onRoomDelete();
       else if (this._selectedPin) this._onPinDelete();
       else if (this._selectedWall) this._onWallDelete();
       else if (this._selectedOpening) this._onOpeningDelete();
@@ -2525,6 +2616,46 @@ export class SpatialContextPanel extends LitElement {
     if (e.key === "Enter" && this._mode === "wall") {
       e.preventDefault();
       this._onFinishWall();
+      return;
+    }
+
+    if (this._view !== "floor") return;
+    // Furniture: R rotates (Shift: by 15 degrees) the item being placed or
+    // the selected one; Ctrl/Cmd+D duplicates; arrows nudge.
+    const item = this._selectedFurniture;
+    if (!mod && key === "r") {
+      const step = e.shiftKey ? 15 : 90;
+      if (this._mode === "furniture" && this._armedFurnitureKind) {
+        e.preventDefault();
+        this._armedFurnitureRotation =
+          (this._armedFurnitureRotation + step) % 360;
+      } else if (item && !item.locked) {
+        e.preventDefault();
+        this._patchFurniture(item.id, {
+          rotation_deg: (item.rotation_deg + step) % 360,
+        });
+      }
+      return;
+    }
+    if (mod && key === "d" && item) {
+      e.preventDefault();
+      this._onFurnitureDuplicate();
+      return;
+    }
+    const nudge: Record<string, [number, number]> = {
+      ArrowLeft: [-1, 0],
+      ArrowRight: [1, 0],
+      ArrowUp: [0, -1],
+      ArrowDown: [0, 1],
+    };
+    const dir = nudge[e.key];
+    if (dir && item && !item.locked) {
+      e.preventDefault();
+      const step = (e.shiftKey ? 10 : 1) * this._unitsPerCm;
+      this._patchFurniture(item.id, {
+        x: item.x + dir[0] * step,
+        y: item.y + dir[1] * step,
+      });
     }
   };
 
@@ -2822,6 +2953,11 @@ export class SpatialContextPanel extends LitElement {
         const [x, y] = tp([o.x, o.y]);
         return { ...o, x, y, width: o.width * s };
       }),
+      // Sizes are real-world centimetres, so only positions move.
+      furniture: src.furniture.map((f) => {
+        const [x, y] = tp([f.x, f.y]);
+        return { ...f, x, y };
+      }),
       // Once aligned, both floors share one coordinate system — this
       // floor's own calibration (if it has one) is the authoritative
       // "units per metre" for that shared system now, so it's copied onto
@@ -2849,6 +2985,201 @@ export class SpatialContextPanel extends LitElement {
     // Alignment rewrote another floor in storage and relinked buildings —
     // undoing past it would quietly break that link.
     this._floorHistory.clear();
+  };
+
+  // --- furniture & household items ---------------------------------------
+
+  private _onFurnitureLibraryClick = () => {
+    this._furnitureLibraryOpen = !this._furnitureLibraryOpen;
+    if (!this._furnitureLibraryOpen) {
+      this._disarmFurniture();
+    } else if (this._mode === "place") {
+      this._mode = "select";
+      this._armedEntityId = null;
+    }
+  };
+
+  private _disarmFurniture(): void {
+    this._armedFurnitureKind = null;
+    if (this._mode === "furniture") this._mode = "select";
+  }
+
+  private _onLibraryClose = () => {
+    this._furnitureLibraryOpen = false;
+    this._disarmFurniture();
+  };
+
+  private _onFurnitureDone = () => this._disarmFurniture();
+
+  private _onFurnitureArmed = (e: CustomEvent<{ kind: string | null }>) => {
+    this._armedFurnitureKind = e.detail.kind;
+    this._armedFurnitureRotation = 0;
+    this._mode = e.detail.kind ? "furniture" : "select";
+    this._editingRoomId = null;
+    this._editingWallId = null;
+  };
+
+  private _onFurnitureRotateArmed = () => {
+    this._armedFurnitureRotation = (this._armedFurnitureRotation + 90) % 360;
+  };
+
+  /** Drops the armed item where clicked, at its catalog size, and selects
+   * it. Shift+click keeps it armed for placing another. */
+  private _onFurniturePlace = (
+    e: CustomEvent<{ x: number; y: number; keepArmed: boolean }>,
+  ) => {
+    const entry = this._armedFurnitureKind
+      ? catalogItem(this._armedFurnitureKind)
+      : undefined;
+    if (!entry) return;
+    const item: FurnitureItem = {
+      id: newId("furniture"),
+      kind: entry.id,
+      x: e.detail.x,
+      y: e.detail.y,
+      rotation_deg: this._armedFurnitureRotation,
+      width_cm: entry.w,
+      depth_cm: entry.d,
+      stroke_width: 1.5,
+    };
+    this._updateLayout({ furniture: [...this._layout.furniture, item] });
+    if (!e.detail.keepArmed) {
+      this._disarmFurniture();
+      this._resetSelection();
+      this._selectedFurnitureId = item.id;
+    }
+  };
+
+  private _onFurnitureSelect = (
+    e: CustomEvent<{ furnitureId: string | null }>,
+  ) => {
+    if (e.detail.furnitureId === null) {
+      this._selectedFurnitureId = null;
+      return;
+    }
+    this._resetSelection();
+    this._pinStackIds = null;
+    this._selectedFurnitureId = e.detail.furnitureId;
+  };
+
+  private _patchFurniture(id: string, patch: Partial<FurnitureItem>): void {
+    this._updateLayout({
+      furniture: this._layout.furniture.map((f) =>
+        f.id === id ? { ...f, ...patch } : f,
+      ),
+    });
+  }
+
+  private _onFurnitureUpdate = (
+    e: CustomEvent<{
+      id: string;
+      x: number;
+      y: number;
+      rotation_deg: number;
+      width_cm: number;
+      depth_cm: number;
+    }>,
+  ) => {
+    const { id, ...patch } = e.detail;
+    this._patchFurniture(id, patch);
+  };
+
+  private _onFurnitureChange = (
+    e: CustomEvent<{ patch: Partial<FurnitureItem> }>,
+  ) => {
+    if (this._selectedFurnitureId) {
+      this._patchFurniture(this._selectedFurnitureId, e.detail.patch);
+    }
+  };
+
+  private _onFurnitureDelete = () => {
+    const id = this._selectedFurnitureId;
+    if (!id) return;
+    this._updateLayout({
+      furniture: this._layout.furniture.filter((f) => f.id !== id),
+    });
+    this._selectedFurnitureId = null;
+  };
+
+  /** A copy 30 cm down and to the right, selected. */
+  private _onFurnitureDuplicate = () => {
+    const item = this._selectedFurniture;
+    if (!item) return;
+    const offset = 30 * this._unitsPerCm;
+    const copy: FurnitureItem = {
+      ...item,
+      id: newId("furniture"),
+      x: item.x + offset,
+      y: item.y + offset,
+      locked: false,
+    };
+    this._updateLayout({ furniture: [...this._layout.furniture, copy] });
+    this._selectedFurnitureId = copy.id;
+  };
+
+  /** Draw order: front = drawn last (on top). */
+  private _onFurnitureOrder = (e: CustomEvent<{ front: boolean }>) => {
+    const item = this._selectedFurniture;
+    if (!item) return;
+    const rest = this._layout.furniture.filter((f) => f.id !== item.id);
+    this._updateLayout({
+      furniture: e.detail.front ? [...rest, item] : [item, ...rest],
+    });
+  };
+
+  private _onOverlayToggle = (
+    e: CustomEvent<{ key: keyof OverlayToggles }>,
+  ) => {
+    this._overlays = {
+      ...this._overlays,
+      [e.detail.key]: !this._overlays[e.detail.key],
+    };
+    try {
+      localStorage.setItem(OVERLAYS_STORAGE_KEY, JSON.stringify(this._overlays));
+    } catch {
+      // Not remembered across reloads — the toggle still applies now.
+    }
+  };
+
+  // --- live lights & covers ---------------------------------------------
+
+  private _onRoomLinksChange = (
+    e: CustomEvent<
+      Pick<Room, "linked_area_ids" | "linked_room_ids" | "light_entity_ids">
+    >,
+  ) => {
+    const room = this._selectedRoom;
+    if (!room) return;
+    this._updateLayout({
+      rooms: this._layout.rooms.map((r) =>
+        r.id === room.id ? { ...r, ...e.detail } : r,
+      ),
+    });
+  };
+
+  /** The room card's All on / All off: every light the room follows. */
+  private _onRoomLightsCommand = (e: CustomEvent<{ on: boolean }>) => {
+    const room = this._selectedRoom;
+    const light = room ? this._roomLights.get(room.id) : undefined;
+    if (!light || !this._hass?.callService) return;
+    void this._hass.callService(
+      "light",
+      e.detail.on ? "turn_on" : "turn_off",
+      {},
+      { entity_id: light.entityIds },
+    );
+  };
+
+  private _onOpeningCoverChange = (
+    e: CustomEvent<{ entityId: string | null }>,
+  ) => {
+    const opening = this._selectedOpening;
+    if (!opening) return;
+    this._updateLayout({
+      openings: this._layout.openings.map((o) =>
+        o.id === opening.id ? { ...o, cover_entity_id: e.detail.entityId } : o,
+      ),
+    });
   };
 
   private _onRoomNameChange = (e: CustomEvent<{ name: string }>) => {
@@ -3122,6 +3453,7 @@ export class SpatialContextPanel extends LitElement {
       openings: this._layout.openings.filter((o) => o.id !== opening.id),
     });
     this._selectedOpeningId = null;
+    this._selectedFurnitureId = null;
   };
 
   // --- entity picker ------------------------------------------------------
@@ -3196,6 +3528,7 @@ export class SpatialContextPanel extends LitElement {
       this._selectedWallId = null;
       this._editingWallId = null;
       this._selectedOpeningId = null;
+      this._selectedFurnitureId = null;
       this._selectedMeshLink = null;
       this._selectedMeshStub = null;
     }
@@ -3229,6 +3562,7 @@ export class SpatialContextPanel extends LitElement {
       this._selectedPinId = null;
       this._pinStackIds = null;
       this._selectedOpeningId = null;
+      this._selectedFurnitureId = null;
       this._selectedMeshLink = null;
       this._selectedMeshStub = null;
     }
@@ -3251,6 +3585,7 @@ export class SpatialContextPanel extends LitElement {
   private _onOpeningSelect = (e: CustomEvent<{ openingId: string | null }>) => {
     this._selectedOpeningId = e.detail.openingId;
     if (e.detail.openingId !== null) {
+      this._selectedFurnitureId = null;
       this._selectedRoomId = null;
       this._editingRoomId = null;
       this._selectedPinId = null;
@@ -3304,6 +3639,7 @@ export class SpatialContextPanel extends LitElement {
       this._selectedWallId = null;
       this._editingWallId = null;
       this._selectedOpeningId = null;
+      this._selectedFurnitureId = null;
       this._selectedMeshLink = null;
       this._selectedMeshStub = null;
     }
@@ -3328,6 +3664,7 @@ export class SpatialContextPanel extends LitElement {
       this._selectedWallId = null;
       this._editingWallId = null;
       this._selectedOpeningId = null;
+      this._selectedFurnitureId = null;
       this._selectedMeshLink = null;
       this._selectedMeshStub = null;
     }
@@ -3339,6 +3676,7 @@ export class SpatialContextPanel extends LitElement {
     this._selectedWallId = null;
     this._editingWallId = null;
     this._selectedOpeningId = null;
+    this._selectedFurnitureId = null;
     this._selectedPinId = null;
     this._selectedMeshLink = null;
     this._selectedMeshStub = null;
@@ -3356,6 +3694,7 @@ export class SpatialContextPanel extends LitElement {
       this._selectedWallId = null;
       this._editingWallId = null;
       this._selectedOpeningId = null;
+      this._selectedFurnitureId = null;
       this._selectedMeshStub = null;
     }
   };
@@ -3372,6 +3711,7 @@ export class SpatialContextPanel extends LitElement {
       this._selectedWallId = null;
       this._editingWallId = null;
       this._selectedOpeningId = null;
+      this._selectedFurnitureId = null;
       this._selectedMeshLink = null;
     }
   };
@@ -3997,6 +4337,20 @@ export class SpatialContextPanel extends LitElement {
                     .selectedWallId=${this._selectedWallId}
                     .editingWallId=${this._editingWallId}
                     .selectedOpeningId=${this._selectedOpeningId}
+                    .furniture=${this._layout.furniture}
+                    .selectedFurnitureId=${this._selectedFurnitureId}
+                    .armedFurnitureKind=${this._armedFurnitureKind}
+                    .armedFurnitureRotation=${this._armedFurnitureRotation}
+                    .roomLights=${this._roomLights}
+                    .coverOpenness=${this._coverOpenness}
+                    .pinColors=${this._pinColors}
+                    .showFurniture=${this._overlays.furniture}
+                    .showLights=${this._overlays.lights}
+                    .showCovers=${this._overlays.covers}
+                    @overlay-toggle=${this._onOverlayToggle}
+                    @furniture-place=${this._onFurniturePlace}
+                    @furniture-select=${this._onFurnitureSelect}
+                    @furniture-update=${this._onFurnitureUpdate}
                     .selectedMeshLinkKey=${this._selectedMeshLinkKey}
                     .selectedMeshStubKey=${this._selectedMeshStubKey}
                     @room-trace-complete=${this._onRoomTraceComplete}
@@ -4045,6 +4399,34 @@ export class SpatialContextPanel extends LitElement {
                     .selectedWall=${this._selectedWall}
                     .editingWall=${!!this._editingWallId}
                     .selectedOpening=${this._selectedOpening}
+                    .selectedFurniture=${this._selectedFurniture}
+                    .furnitureLibraryOpen=${this._furnitureLibraryOpen}
+                    .rooms=${this._layout.rooms}
+                    .allAreas=${this._areas}
+                    .lightEntities=${this._selectedRoom ? this._entityOptions("light") : []}
+                    .coverEntities=${this._selectedOpening ? this._entityOptions("cover") : []}
+                    .selectedRoomLight=${
+                      this._selectedRoom
+                        ? (this._roomLights.get(this._selectedRoom.id) ?? null)
+                        : null
+                    }
+                    .selectedCoverOpenness=${
+                      this._selectedOpening
+                        ? (this._coverOpenness.get(this._selectedOpening.id) ??
+                          null)
+                        : null
+                    }
+                    .floorCalibrated=${this._layout.scale !== null}
+                    @furniture-library-click=${this._onFurnitureLibraryClick}
+                    @furniture-done-click=${this._onFurnitureDone}
+                    @furniture-rotate-armed-click=${this._onFurnitureRotateArmed}
+                    @furniture-change=${this._onFurnitureChange}
+                    @furniture-delete-click=${this._onFurnitureDelete}
+                    @furniture-duplicate-click=${this._onFurnitureDuplicate}
+                    @furniture-order-click=${this._onFurnitureOrder}
+                    @room-links-change=${this._onRoomLinksChange}
+                    @room-lights-command=${this._onRoomLightsCommand}
+                    @opening-cover-change=${this._onOpeningCoverChange}
                     .selectedMeshLink=${this._selectedMeshLink}
                     .meshLinks=${this._meshLinksForCurrentFloor}
                     .meshStubs=${this._meshStubsForCurrentFloor}
@@ -4110,7 +4492,14 @@ export class SpatialContextPanel extends LitElement {
                         @entity-armed=${this._onEntityArmed}
                         @clear-all-pins=${this._onClearAllPins}
                       ></entity-picker-sidebar>`
-                    : nothing
+                    : this._furnitureLibraryOpen
+                      ? html`<furniture-library-sidebar
+                          .armedKind=${this._armedFurnitureKind}
+                          .unitSystem=${this._settings.unit_system}
+                          @furniture-armed=${this._onFurnitureArmed}
+                          @library-close=${this._onLibraryClose}
+                        ></furniture-library-sidebar>`
+                      : nothing
                 }
               `
         }

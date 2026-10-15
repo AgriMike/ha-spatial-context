@@ -133,6 +133,53 @@ class ExportTest(unittest.TestCase):
         self.assertIsNone(floor["rooms"][0]["devices"][0]["x_m"])
         self.assertIsNone(floor["walls"][0]["points_m"])
 
+    def test_furniture_exports_with_its_room(self) -> None:
+        layout = dict(
+            LAYOUT,
+            rooms=[
+                {
+                    "id": "r1",
+                    "name": "Lounge",
+                    "points": [[0, 0], [100, 0], [100, 100], [0, 100]],
+                    "linked_area_ids": ["kitchen"],
+                }
+            ],
+            openings=[
+                {
+                    "id": "o1",
+                    "wallId": "w1",
+                    "type": "window",
+                    "x": 50,
+                    "y": 0,
+                    "width": 20,
+                    "cover_entity_id": "cover.lounge_blind",
+                }
+            ],
+            furniture=[
+                {
+                    "id": "f1",
+                    "kind": "sofa_3",
+                    "x": 50,
+                    "y": 50,
+                    "rotation_deg": 90,
+                    "width_cm": 210,
+                    "depth_cm": 90,
+                    "stroke_width": 1.5,
+                }
+            ],
+        )
+        export = _load_export(layout)
+        floor = asyncio.run(export.async_get_map_data(object()))["floors"][0]
+
+        self.assertEqual(floor["rooms"][0]["linked_area_ids"], ["kitchen"])
+        opening = floor["walls"][0]["openings"][0]
+        self.assertEqual(opening["cover_entity_id"], "cover.lounge_blind")
+        item = floor["furniture"][0]
+        self.assertEqual(item["kind"], "sofa_3")
+        self.assertEqual(item["room_name"], "Lounge")
+        self.assertAlmostEqual(item["x_m"], 1.0)
+        self.assertEqual(item["width_cm"], 210)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,7 +17,8 @@
       "window": "Add Window",
       "scale": "Set Scale",
       "place": "Place Device",
-      "align": "Align Floors"
+      "align": "Align Floors",
+      "furniture": "Furniture & household items"
     },
     "snap": {
       "tooltip": "What new points snap onto (hold Shift to place one point freely)",
@@ -36,7 +37,8 @@
       "placeOpening": "Click on a wall to place a {type}.",
       "alignAgainst": "Align against:",
       "noBackground": "That floor has no background image to align against.",
-      "alignDrag": "Drag to move, use +/− to resize, then Apply."
+      "alignDrag": "Drag to move, use +/− to resize, then Apply.",
+      "placeFurniture": "Click to place · R rotates · Shift+click places another"
     },
     "openingType": {
       "door": "door",
@@ -52,7 +54,8 @@
       "finishWall": "Finish Wall",
       "chooseAnother": "Choose another",
       "apply": "Apply",
-      "close": "Close"
+      "close": "Close",
+      "done": "Done"
     },
     "align": {
       "choose": "— Choose a floor —",
@@ -90,7 +93,12 @@
       "width": "Width ({unit})",
       "storedUnits": "stored units",
       "calibrate": "Calibrate Scale for real units",
-      "delete": "Delete"
+      "delete": "Delete",
+      "cover": "Cover",
+      "noCover": "None",
+      "coverState": "Right now",
+      "coverOpen": "{pct}% open",
+      "coverUnavailable": "Unavailable"
     },
     "meshStub": {
       "goToFloor": "Go to floor"
@@ -115,9 +123,24 @@
       "links": "{count} links",
       "noLinks": "No links to other placed devices",
       "hide": "Hide details",
-      "show": "Show details"
+      "show": "Show details",
+      "furniture": "Furniture"
     },
-    "calibrateHint": "Click to set the scale"
+    "calibrateHint": "Click to set the scale",
+    "lights": {
+      "title": "Lights",
+      "count": "{on} of {total} lights on",
+      "none": "No lights in this room's area",
+      "on": "All on",
+      "off": "All off"
+    },
+    "links": {
+      "add": "Add…",
+      "remove": "Remove",
+      "areas": "Also show areas",
+      "rooms": "Also show rooms",
+      "lights": "Also show lights"
+    }
   },
   "mapBackground": {
     "noWebgl": "This browser can't draw the map (WebGL2 is needed).",
@@ -305,7 +328,10 @@
   "canvasControls": {
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
-    "fit": "Fit to screen"
+    "fit": "Fit to screen",
+    "furniture": "Show furniture",
+    "lights": "Show live lights",
+    "covers": "Show cover shading"
   },
   "materials": {
     "timber_frame": "Timber framed (drywall)",
@@ -349,5 +375,46 @@
     "skipped": "{count} doors/windows weren't along any wall in the SVG, so they were left out.",
     "nothingFound": "No rooms, walls, doors or windows were found in that SVG. Name its groups rooms, walls, doors and windows (see the README).",
     "alsoBackground": "Also replace this floor's background with the SVG? (Cancel keeps the current background and only adds the geometry.)"
+  },
+  "furniture": {
+    "libraryTitle": "Furniture & items",
+    "close": "Close",
+    "search": "Search items",
+    "count": "{count} items",
+    "none": "No matching items",
+    "showLabel": "Show name",
+    "width": "Width ({unit})",
+    "depth": "Depth",
+    "calibrate": "Set this floor's scale (Set Scale) for true-to-life sizes.",
+    "rotation": "Rotation (°)",
+    "rotateLeft": "Rotate 90° left",
+    "rotateRight": "Rotate 90° right",
+    "lineThickness": "Line thickness ({px} px)",
+    "fill": "Fill",
+    "mirror": "Mirror",
+    "lock": "Lock in place",
+    "duplicate": "Duplicate (Ctrl+D)",
+    "toFront": "Bring to front",
+    "toBack": "Send to back",
+    "delete": "Delete item",
+    "category": {
+      "all": "All",
+      "living": "Living room",
+      "bedroom": "Bedroom",
+      "kitchen": "Kitchen",
+      "dining": "Dining",
+      "bathroom": "Bathroom",
+      "office": "Office",
+      "laundry": "Laundry & utility",
+      "electronics": "Electronics & smart home",
+      "lighting": "Lighting",
+      "kids": "Kids & nursery",
+      "entry": "Entry & storage",
+      "outdoor": "Outdoor & garden",
+      "garage": "Garage & workshop",
+      "fitness": "Fitness & hobbies",
+      "pets": "Pets",
+      "decor": "Decor & plants"
+    }
   }
 }

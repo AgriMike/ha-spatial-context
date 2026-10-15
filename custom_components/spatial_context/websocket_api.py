@@ -71,6 +71,11 @@ _ROOM_SCHEMA = {
     vol.Optional("label_position"): vol.Any(
         None, vol.All([vol.Coerce(float)], vol.Length(min=2, max=2))
     ),
+    # What the room's live light shading follows besides its own area:
+    # other areas, other rooms on the floor, and specific light entities.
+    vol.Optional("linked_area_ids"): [str],
+    vol.Optional("linked_room_ids"): [str],
+    vol.Optional("light_entity_ids"): [str],
 }
 
 _PIN_SCHEMA = {
@@ -110,6 +115,29 @@ _OPENING_SCHEMA = {
     vol.Required("x"): vol.Coerce(float),
     vol.Required("y"): vol.Coerce(float),
     vol.Required("width"): vol.Coerce(float),
+    # A cover (blind, shade, garage door) hung in this opening.
+    vol.Optional("cover_entity_id"): vol.Any(str, None),
+}
+
+# A piece of furniture/household item: a frontend catalog drawing (`kind`)
+# centred at x/y (stored units) at a real-world size in centimetres.
+_FURNITURE_SCHEMA = {
+    vol.Required("id"): str,
+    vol.Required("kind"): str,
+    vol.Required("x"): vol.Coerce(float),
+    vol.Required("y"): vol.Coerce(float),
+    vol.Required("rotation_deg"): vol.Coerce(float),
+    vol.Required("width_cm"): vol.All(vol.Coerce(float), vol.Range(min=1)),
+    vol.Required("depth_cm"): vol.All(vol.Coerce(float), vol.Range(min=1)),
+    vol.Required("stroke_width"): vol.All(
+        vol.Coerce(float), vol.Range(min=0.1, max=20)
+    ),
+    vol.Optional("color"): vol.Any(vol.Match(r"^#[0-9a-fA-F]{6}$"), None),
+    vol.Optional("fill"): bool,
+    vol.Optional("label"): vol.Any(str, None),
+    vol.Optional("show_label"): bool,
+    vol.Optional("mirrored"): bool,
+    vol.Optional("locked"): bool,
 }
 
 _SCALE_SCHEMA = vol.Any(
@@ -191,6 +219,8 @@ _PLACEMENT_SCHEMA = {
         vol.Required("pins"): [_PIN_SCHEMA],
         vol.Required("walls"): [_WALL_SCHEMA],
         vol.Required("openings"): [_OPENING_SCHEMA],
+        # Optional so a panel older than furniture can still save.
+        vol.Optional("furniture", default=list): [_FURNITURE_SCHEMA],
         vol.Required("scale"): _SCALE_SCHEMA,
     }
 )
@@ -215,6 +245,7 @@ async def ws_save_layout(
         "walls": msg["walls"],
         # Drop any opening whose wall was deleted in this same save.
         "openings": [o for o in msg["openings"] if o["wallId"] in wall_ids],
+        "furniture": msg["furniture"],
         "scale": msg["scale"],
     }
     await async_save_floor_layout(hass, msg["floor_id"], layout)
