@@ -385,6 +385,10 @@ export function emptySettings(): Settings {
     debug_logging: false,
     weather_entity_id: null,
     show_light_count: true,
+    room_border_show: true,
+    room_border_color: null,
+    room_border_width: 2,
+    room_border_opacity: 1,
   };
 }
 

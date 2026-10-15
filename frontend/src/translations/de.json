@@ -64,7 +64,7 @@
     },
     "room": {
       "custom": "— Benutzerdefiniert —",
-      "outdoor": "Außenbereich / keine Etage",
+      "outdoor": "Außenbereich",
       "hide": "Raum ausblenden",
       "show": "Raum einblenden",
       "color": "Raumfarbe",
@@ -74,7 +74,8 @@
       "doneEditing": "Bearbeitung beenden",
       "editVertices": "Eckpunkte bearbeiten",
       "resetLabel": "Beschriftungsposition zurücksetzen",
-      "delete": "Raum löschen"
+      "delete": "Raum löschen",
+      "outdoorHint": "Terrasse, Veranda oder Balkon: Tageslicht durch eine Tür oder ein Fenster dorthin fällt nur nach innen."
     },
     "pin": {
       "setLabel": "Beschriftung festlegen",
@@ -98,7 +99,13 @@
       "noCover": "Keine",
       "coverState": "Gerade",
       "coverOpen": "{pct}% offen",
-      "coverUnavailable": "Nicht verfügbar"
+      "coverUnavailable": "Nicht verfügbar",
+      "coverLeft": "Linke Beschattung",
+      "coverRight": "Rechte Beschattung",
+      "twoCovers": "Zwei Beschattungen (links & rechts)",
+      "swapCovers": "Links und rechts tauschen",
+      "left": "Links",
+      "right": "Rechts"
     },
     "meshStub": {
       "goToFloor": "Zur Etage"
@@ -140,6 +147,15 @@
       "areas": "Auch Bereiche zeigen",
       "rooms": "Auch Räume zeigen",
       "lights": "Auch Lichter zeigen"
+    },
+    "daylight": {
+      "title": "Tageslicht",
+      "show": "Tageslicht zeigen",
+      "strength": "Stärke ({pct} %)",
+      "reach": "Reichweite ({pct} %)",
+      "head": "Höhe Fensteroberkante ({unit})",
+      "shade": "Verschattung draußen ({pct} %)",
+      "reset": "Tageslicht zurücksetzen"
     }
   },
   "mapBackground": {
@@ -196,7 +212,13 @@
     "weatherHint": "Wolken dämpfen das Sonnenlicht durch die Fenster: bei bedecktem Himmel kein Strahl, nur weiches Himmelslicht.",
     "plan": "Plan",
     "lightCount": "Anzahl eingeschalteter Lichter",
-    "lightCountHint": "„2 von 3 Lichtern an“ unter jedem Raumnamen zeigen. Beim Überfahren eines Raums erscheint es immer."
+    "lightCountHint": "„2 von 3 Lichtern an“ unter jedem Raumnamen zeigen. Beim Überfahren eines Raums erscheint es immer.",
+    "roomBorders": "Raumränder",
+    "roomBordersHint": "Der Umriss jedes Raums. Ein ausgewählter Raum zeigt ihn immer.",
+    "roomBorderColor": "Randfarbe",
+    "roomBorderColorRoom": "Raumfarbe",
+    "roomBorderWidth": "Randstärke ({px})",
+    "roomBorderOpacity": "Rand-Deckkraft ({pct} %)"
   },
   "picker": {
     "search": "Geräte suchen…",
@@ -428,7 +450,8 @@
     "entityTitle": "Verknüpfte Entität",
     "entity": "Entität",
     "noEntity": "Keine",
-    "toggle": "Umschalten"
+    "toggle": "Umschalten",
+    "opacity": "Deckkraft ({pct} %)"
   },
   "compass": {
     "title": "Norden relativ zur Oberkante des Plans: {dir}",

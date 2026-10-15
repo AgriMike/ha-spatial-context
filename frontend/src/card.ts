@@ -107,6 +107,12 @@ class SpatialContextCard extends HTMLElement {
   private _weatherSetting: string | null = null;
   /** The panel's Settings → Plan → light count choice. */
   private _lightCountSetting = true;
+  private _roomBorder = {
+    show: true,
+    color: null as string | null,
+    width: 2,
+    opacity: 1,
+  };
 
   constructor() {
     super();
@@ -211,10 +217,20 @@ class SpatialContextCard extends HTMLElement {
         .sendMessagePromise<{
           weather_entity_id?: string | null;
           show_light_count?: boolean;
+          room_border_show?: boolean;
+          room_border_color?: string | null;
+          room_border_width?: number;
+          room_border_opacity?: number;
         }>({ type: "spatial_context/get_settings" })
         .catch(() => null);
       this._weatherSetting = settings?.weather_entity_id ?? null;
       this._lightCountSetting = settings?.show_light_count !== false;
+      this._roomBorder = {
+        show: settings?.room_border_show !== false,
+        color: settings?.room_border_color ?? null,
+        width: settings?.room_border_width ?? 2,
+        opacity: settings?.room_border_opacity ?? 1,
+      };
       this._entities = new Map(entities.map((e) => [e.entity_id, e]));
       this._error = null;
     } catch (err) {
@@ -287,6 +303,7 @@ class SpatialContextCard extends HTMLElement {
     c["showFurniture"] = this._overlays.furniture;
     c["showLights"] = this._overlays.lights;
     c["showCovers"] = this._overlays.covers;
+    c["roomBorder"] = this._roomBorder;
     c["showLightCount"] =
       this._config.show_light_count ?? this._lightCountSetting;
     c["northDeg"] = l.north_deg ?? null;
@@ -365,7 +382,12 @@ class SpatialContextCard extends HTMLElement {
       );
     } else if (e.detail.kind === "opening") {
       const opening = l.openings.find((o) => o.id === e.detail.id);
-      const cover = opening?.cover_entity_id;
+      const cover =
+        opening?.cover_entity_id ?? opening?.cover_right_entity_id ?? null;
+      const both = [
+        opening?.cover_entity_id,
+        opening?.cover_right_entity_id,
+      ].filter((c): c is string => !!c);
       const action = cfg.cover_tap_action ?? "more-info";
       if (!cover || action === "none") return;
       if (action === "toggle") {
@@ -374,7 +396,7 @@ class SpatialContextCard extends HTMLElement {
           "cover",
           open !== null && open > 0 ? "close_cover" : "open_cover",
           {},
-          { entity_id: cover },
+          { entity_id: both },
         );
       } else {
         this._moreInfo(cover);

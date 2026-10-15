@@ -194,8 +194,10 @@ export function computeCoverOpenness(
   if (!hass) return out;
   for (const opening of openings) {
     const id = opening.cover_entity_id;
-    if (!id) continue;
-    out.set(opening.id, coverOpenness(hass, id));
+    if (id) out.set(opening.id, coverOpenness(hass, id));
+    // A second (right-half) cover is keyed "<opening id>:right".
+    const right = opening.cover_right_entity_id;
+    if (right) out.set(`${opening.id}:right`, coverOpenness(hass, right));
   }
   return out;
 }

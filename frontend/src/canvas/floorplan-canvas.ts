@@ -461,12 +461,6 @@ export class FloorplanCanvas extends LitElement {
       :host([dark]) .furniture {
         --fx-color: #d5dae0;
       }
-      .furniture.unavailable {
-        opacity: 0.4;
-      }
-      .furniture.idle {
-        opacity: 0.7;
-      }
       .furniture.linked {
         cursor: pointer;
       }
@@ -638,6 +632,13 @@ export class FloorplanCanvas extends LitElement {
   @property({ type: Boolean }) showCovers = true;
   /** "x of y lights on" under room names (always in the tooltip). */
   @property({ type: Boolean }) showLightCount = true;
+  /** Room outlines for every room (Settings → Plan → Room borders). */
+  @property({ attribute: false }) roomBorder: {
+    show: boolean;
+    color: string | null;
+    width: number;
+    opacity: number;
+  } = { show: true, color: null, width: 2, opacity: 1 };
   /** Compass bearing the top of the plan faces (FloorLayout.north_deg). */
   @property({ attribute: false }) northDeg: number | null = null;
   /** HA's home location, for the sun's position. */
@@ -2524,9 +2525,22 @@ export class FloorplanCanvas extends LitElement {
         fill-opacity=${
           isSelected ? Math.min(1, fillOpacity * (0.32 / 0.18)) : fillOpacity
         }
-        stroke=${borderColor}
-        stroke-opacity=${borderOpacity}
-        stroke-width=${isSelected ? 3 : 2}
+        stroke=${this.roomBorder.color ?? borderColor}
+        stroke-opacity=${
+          // A selected room keeps a visible outline even with borders off.
+          this.roomBorder.show
+            ? borderOpacity * this.roomBorder.opacity
+            : isSelected
+              ? 1
+              : 0
+        }
+        stroke-width=${
+          this.roomBorder.show
+            ? this.roomBorder.width + (isSelected ? 1 : 0)
+            : isSelected
+              ? 2
+              : 0
+        }
       >${lightsText ? svg`<title>${room.name}: ${lightsText}</title>` : nothing}</polygon>
       <text class="room-label" x=${cx} y=${cy}>${room.name}${
         lightsText && this.showLightCount
@@ -3091,9 +3105,14 @@ export class FloorplanCanvas extends LitElement {
     // idle, greyed out while unavailable.
     const live = ghost ? undefined : this.itemStates.get(item.id);
     const color = live?.color ?? item.color;
+    // Its own opacity, dimmed further while a linked entity is idle (70%)
+    // or unavailable (40%).
+    const opacity =
+      (item.opacity ?? 1) *
+      (live?.unavailable ? 0.4 : live && !live.active ? 0.7 : 1);
     const style = `--fx-stroke-width:${item.stroke_width}px;${
       color ? `--fx-color:${color};` : ""
-    }`;
+    }${opacity < 1 ? `opacity:${opacity};` : ""}`;
     const name = item.label || entry?.name || item.kind;
     const label = live ? `${name} · ${live.text}` : name;
     const stateClass = !live
@@ -3259,37 +3278,42 @@ export class FloorplanCanvas extends LitElement {
         svg`<polygon class="cover-patch" points=${pts.map(([x, y]) => `${x},${y}`).join(" ")} fill="url(#${id})" clip-path="url(#${clipId})"></polygon>`,
       );
     };
+    // Rooms marked outdoor (a deck, a patio) count as outside: light
+    // only ever falls into the indoor side of an opening.
+    const indoor = this.rooms.filter(
+      (r) => r.visible !== false && !r.outdoor && r.points.length >= 3,
+    );
     for (const opening of this.openings) {
+      const tune = opening.daylight ?? {};
+      if (tune.enabled === false) continue;
+      const strengthK = tune.strength ?? 1;
+      const reachK = tune.reach ?? 1;
       const linked = this.coverOpenness.has(opening.id);
       if (!linked && !(sun && opening.type === "window")) continue;
-      const openness = linked
-        ? (this.coverOpenness.get(opening.id) ?? null)
-        : 1;
+      const split = !!opening.cover_right_entity_id;
       const ends = this._openingEndpoints(opening);
       if (!ends) continue;
-      const [[x1, y1], [x2, y2]] = ends;
-      const width = distance(x1, y1, x2, y2);
-      if (width <= 0) continue;
-      const tx = (x2 - x1) / width;
-      const ty = (y2 - y1) / width;
-      const cx = (x1 + x2) / 2;
-      const cy = (y1 + y2) / 2;
+      const [[ex1, ey1], [ex2, ey2]] = ends;
+      const fullWidth = distance(ex1, ey1, ex2, ey2);
+      if (fullWidth <= 0) continue;
+      const tx = (ex2 - ex1) / fullWidth;
+      const ty = (ey2 - ey1) / fullWidth;
+      const mx = (ex1 + ex2) / 2;
+      const my = (ey1 + ey2) / 2;
       const probe = Math.max(this._pxToUnits(8), 15 * this.unitsPerCm);
       const sides = [1, -1]
         .map((side) => {
           const nx = -ty * side;
           const ny = tx * side;
-          const room = this.rooms.find(
-            (r) =>
-              r.visible !== false &&
-              r.points.length >= 3 &&
-              pointInPolygon(cx + nx * probe, cy + ny * probe, r.points),
+          const room = indoor.find((r) =>
+            pointInPolygon(mx + nx * probe, my + ny * probe, r.points),
           );
           return room ? { nx, ny, room } : null;
         })
         .filter((v) => v !== null);
       // Light comes in from outside: only through an exterior window or
-      // door, i.e. one with a room on just one side — unless no compass.
+      // door, i.e. one with an indoor room on just one side — unless it
+      // has a cover, or there's no compass.
       if (sun && sides.length !== 1 && !linked) continue;
       for (const { nx, ny, room } of sides) {
         const clipId = `daylight-clip-${room.id}`;
@@ -3299,91 +3323,171 @@ export class FloorplanCanvas extends LitElement {
             svg`<clipPath id=${clipId}><polygon points=${room.points.map(([x, y]) => `${x},${y}`).join(" ")}></polygon></clipPath>`,
           );
         }
-        const reach = (d: number, spread: number): [number, number][] => [
-          [x1, y1],
-          [x2, y2],
-          [x2 + nx * d + tx * spread, y2 + ny * d + ty * spread],
-          [x1 + nx * d - tx * spread, y1 + ny * d - ty * spread],
-        ];
-        const soft = (d: number, color: string, alpha: number) =>
-          patch(
-            reach(d, width * 0.25),
-            [cx, cy],
-            [cx + nx * d, cy + ny * d],
-            color,
-            alpha,
-            clipId,
-          );
-        if (openness === null) {
-          soft(width * 1.2, "#9e9e9e", 0.25);
-          continue;
-        }
-        if (!sun) {
-          // No compass: open = bright, closed = shade.
-          const depth = Math.max(width * 1.6, 1.2 * m);
-          if (openness >= 0.05) soft(depth, "#ffd54f", 0.2 + 0.5 * openness);
-          else soft(depth, "#263238", 0.45);
-          continue;
-        }
-        const day = daylight(sun.elevation);
-        const shade = sides.length === 1 || linked;
-        const depth = Math.max(width * 1.4, 1.2 * m);
-        // Every open window always shows something: a deep-blue night-sky
-        // patch after dark (fading in through twilight), and by day sky
-        // light that turns from warm and pale to a cool blue-grey, like a
-        // soft shadow, as clouds thicken.
-        if (day < 1) soft(depth, NIGHT_COLOR, 0.3 * (1 - day) * openness);
-        // Behind a closed cover: charcoal shade, day or night.
-        if (linked && openness < 0.95) {
-          soft(depth, SHADE_COLOR, 0.45 * (1 - openness));
-        }
-        if (day <= 0) continue;
-        // Clouds: the direct beam fades out as they thicken (gone when
-        // overcast).
-        const clouds = this.sky?.clouds ?? 0;
-        const sunShare = Math.max(0, 1 - clouds / 0.85) ** 1.5;
-        const color = cloudySunColor(sun.elevation, clouds);
-        soft(
-          Math.max(width * 1.3, 1 * m),
-          skyColor(clouds),
-          (0.3 + 0.15 * clouds) * day * openness,
-        );
-        // Direct sun: only through a window facing it.
-        const out = planBearing(-nx, -ny, this.northDeg ?? 0);
-        const facing = Math.cos(((sun.azimuth - out) * Math.PI) / 180);
-        if (facing > 0.04 && sun.elevation > 0.5 && shade && sunShare > 0.02) {
-          const [rx, ry] = planVector(sun.azimuth + 180, this.northDeg ?? 0);
-          // How far the beam reaches across the floor: a ~2.1 m window
-          // head over the sun's height, longer as it sinks (capped).
-          const len =
-            Math.min(
-              7,
-              Math.max(0.6, 2.1 / Math.tan(sun.elevation * (Math.PI / 180))),
-            ) * m;
-          const along = rx * nx + ry * ny; // into-room share of the ray
-          if (along > 0.05) {
-            const dx = rx * len;
-            const dy = ry * len;
-            const strength = Math.min(
-              1,
-              Math.max(0.35, Math.sin(sun.elevation * (Math.PI / 180)) * 1.8),
-            );
+        // Two covers split the opening: left and right as seen from inside
+        // looking out, each half showing its own cover.
+        const leftX = -ny;
+        const leftY = nx;
+        const e1Left = (ex1 - mx) * leftX + (ey1 - my) * leftY > 0;
+        const [lx, ly, rx2, ry2] = e1Left
+          ? [ex1, ey1, ex2, ey2]
+          : [ex2, ey2, ex1, ey1];
+        const segments: {
+          a: [number, number];
+          b: [number, number];
+          openness: number | null;
+          linked: boolean;
+        }[] = split
+          ? [
+              {
+                a: [lx, ly],
+                b: [mx, my],
+                openness: this.coverOpenness.get(opening.id) ?? null,
+                linked: this.coverOpenness.has(opening.id),
+              },
+              {
+                a: [mx, my],
+                b: [rx2, ry2],
+                openness: this.coverOpenness.get(`${opening.id}:right`) ?? null,
+                linked: this.coverOpenness.has(`${opening.id}:right`),
+              },
+            ]
+          : [
+              {
+                a: [ex1, ey1],
+                b: [ex2, ey2],
+                openness: linked
+                  ? (this.coverOpenness.get(opening.id) ?? null)
+                  : 1,
+                linked,
+              },
+            ];
+        for (const seg of segments) {
+          const [x1, y1] = seg.a;
+          const [x2, y2] = seg.b;
+          const width = distance(x1, y1, x2, y2);
+          if (width <= 0) continue;
+          const cx = (x1 + x2) / 2;
+          const cy = (y1 + y2) / 2;
+          const openness = seg.openness;
+          const segLinked = seg.linked;
+          // Light patches scale with the opening's Strength and Reach; the
+          // closed-cover shade (a status, not light) only with Reach.
+          const soft = (
+            d0: number,
+            color: string,
+            alpha: number,
+            isLight = true,
+          ) => {
+            const d = d0 * reachK;
+            const spread = width * 0.25;
             patch(
               [
                 [x1, y1],
                 [x2, y2],
-                [x2 + dx, y2 + dy],
-                [x1 + dx, y1 + dy],
+                [x2 + nx * d + tx * spread, y2 + ny * d + ty * spread],
+                [x1 + nx * d - tx * spread, y1 + ny * d - ty * spread],
               ],
               [cx, cy],
-              [cx + dx, cy + dy],
+              [cx + nx * d, cy + ny * d],
               color,
-              (0.3 + 0.45 * strength) *
-                Math.min(1, facing * 1.6) *
-                openness *
-                sunShare,
+              isLight ? alpha * strengthK : alpha,
               clipId,
             );
+          };
+          // Sizes follow the whole opening, so a half doesn't throw a
+          // stubbier patch than the full window would.
+          const base = Math.max(fullWidth * 1.4, 1.2 * m);
+          if (openness === null) {
+            soft(fullWidth * 1.2, "#9e9e9e", 0.25);
+            continue;
+          }
+          if (!sun) {
+            // No compass: open = bright, closed = shade.
+            const depth = Math.max(fullWidth * 1.6, 1.2 * m);
+            if (openness >= 0.05) soft(depth, "#ffd54f", 0.2 + 0.5 * openness);
+            else soft(depth, "#263238", 0.45, false);
+            continue;
+          }
+          const day = daylight(sun.elevation);
+          // Every open window always shows something: a deep-blue
+          // night-sky patch after dark (fading in through twilight), and by
+          // day sky light that turns from warm and pale to a cool
+          // blue-grey, like a soft shadow, as clouds thicken.
+          if (day < 1) soft(base, NIGHT_COLOR, 0.3 * (1 - day) * openness);
+          // Behind a closed cover: charcoal shade, day or night.
+          if (segLinked && openness < 0.95) {
+            soft(base, SHADE_COLOR, 0.45 * (1 - openness), false);
+          }
+          if (day <= 0) continue;
+          // Clouds: the direct beam fades out as they thicken (gone when
+          // overcast).
+          const clouds = this.sky?.clouds ?? 0;
+          const sunShare = Math.max(0, 1 - clouds / 0.85) ** 1.5;
+          const color = cloudySunColor(sun.elevation, clouds);
+          const out = planBearing(-nx, -ny, this.northDeg ?? 0);
+          const facing = Math.cos(((sun.azimuth - out) * Math.PI) / 180);
+          // Sky light: even an overcast sky is brightest toward the sun,
+          // so a window facing it gets more than one facing away (down to
+          // 40%).
+          soft(
+            Math.max(fullWidth * 1.3, 1 * m),
+            skyColor(clouds),
+            (0.3 + 0.15 * clouds) *
+              day *
+              openness *
+              (0.4 + 0.6 * Math.max(0, facing)),
+          );
+          // Direct sun: only through a window facing it.
+          const outdoorShade = 1 - (tune.shade ?? 0);
+          if (
+            facing > 0.04 &&
+            sun.elevation > 0.5 &&
+            (sides.length === 1 || segLinked) &&
+            sunShare > 0.02 &&
+            outdoorShade > 0.02
+          ) {
+            const [rx, ry] = planVector(sun.azimuth + 180, this.northDeg ?? 0);
+            // How far the beam reaches across the floor: the window's top
+            // (2.1 m unless set) over the sun's height, longer as it sinks
+            // (capped), times the opening's Reach.
+            const len =
+              Math.min(
+                7,
+                Math.max(
+                  0.6,
+                  (tune.head_m ?? 2.1) /
+                    Math.tan(sun.elevation * (Math.PI / 180)),
+                ),
+              ) *
+              m *
+              reachK;
+            const along = rx * nx + ry * ny; // into-room share of the ray
+            if (along > 0.05) {
+              const dx = rx * len;
+              const dy = ry * len;
+              const strength = Math.min(
+                1,
+                Math.max(0.35, Math.sin(sun.elevation * (Math.PI / 180)) * 1.8),
+              );
+              patch(
+                [
+                  [x1, y1],
+                  [x2, y2],
+                  [x2 + dx, y2 + dy],
+                  [x1 + dx, y1 + dy],
+                ],
+                [cx, cy],
+                [cx + dx, cy + dy],
+                color,
+                (0.3 + 0.45 * strength) *
+                  Math.min(1, facing * 1.6) *
+                  openness *
+                  sunShare *
+                  outdoorShade *
+                  strengthK,
+                clipId,
+              );
+            }
           }
         }
       }

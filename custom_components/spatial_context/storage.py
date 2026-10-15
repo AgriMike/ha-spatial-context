@@ -286,6 +286,12 @@ def _empty_settings() -> dict[str, Any]:
         "weather_entity_id": None,
         # Show "x of y lights on" under each room's name on the plan.
         "show_light_count": True,
+        # Room outlines on the plan, for every room: on/off, colour (None =
+        # each room's own colour), width and opacity.
+        "room_border_show": True,
+        "room_border_color": None,
+        "room_border_width": 2.0,
+        "room_border_opacity": 1.0,
     }
 
 

@@ -76,6 +76,8 @@ _ROOM_SCHEMA = {
     vol.Optional("linked_area_ids"): [str],
     vol.Optional("linked_room_ids"): [str],
     vol.Optional("light_entity_ids"): [str],
+    # An outdoor space (deck, patio): counts as outside for daylight.
+    vol.Optional("outdoor"): bool,
 }
 
 _PIN_SCHEMA = {
@@ -117,6 +119,16 @@ _OPENING_SCHEMA = {
     vol.Required("width"): vol.Coerce(float),
     # A cover (blind, shade, garage door) hung in this opening.
     vol.Optional("cover_entity_id"): vol.Any(str, None),
+    # A second cover: then cover_entity_id is the left half, this the right.
+    vol.Optional("cover_right_entity_id"): vol.Any(str, None),
+    # Per-opening daylight fine-tuning (see types.ts's OpeningDaylight).
+    vol.Optional("daylight"): {
+        vol.Optional("enabled"): bool,
+        vol.Optional("strength"): vol.All(vol.Coerce(float), vol.Range(min=0, max=2)),
+        vol.Optional("reach"): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=5)),
+        vol.Optional("head_m"): vol.All(vol.Coerce(float), vol.Range(min=0.3, max=10)),
+        vol.Optional("shade"): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
+    },
 }
 
 # A piece of furniture/household item: a frontend catalog drawing (`kind`)
@@ -138,6 +150,7 @@ _FURNITURE_SCHEMA = {
     vol.Optional("show_label"): bool,
     vol.Optional("mirrored"): bool,
     vol.Optional("locked"): bool,
+    vol.Optional("opacity"): vol.All(vol.Coerce(float), vol.Range(min=0.05, max=1)),
     # An HA entity the item stands for (a lamp's light, say).
     vol.Optional("entity_id"): vol.Any(str, None),
 }
@@ -365,6 +378,16 @@ _SETTINGS_SCHEMA = {
     vol.Optional("debug_logging", default=False): bool,
     vol.Optional("weather_entity_id", default=None): vol.Any(None, str),
     vol.Optional("show_light_count", default=True): bool,
+    vol.Optional("room_border_show", default=True): bool,
+    vol.Optional("room_border_color", default=None): vol.Any(
+        None, vol.Match(r"^#[0-9a-fA-F]{6}$")
+    ),
+    vol.Optional("room_border_width", default=2.0): vol.All(
+        vol.Coerce(float), vol.Range(min=0.25, max=12)
+    ),
+    vol.Optional("room_border_opacity", default=1.0): vol.All(
+        vol.Coerce(float), vol.Range(min=0, max=1)
+    ),
 }
 
 

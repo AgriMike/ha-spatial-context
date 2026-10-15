@@ -27,6 +27,10 @@ export interface Room {
   linked_area_ids?: string[];
   linked_room_ids?: string[];
   light_entity_ids?: string[];
+  /** An outdoor space drawn on the plan (a deck, a patio): it counts as
+   * outside, so daylight through a door or window onto it only falls on
+   * the indoor side. */
+  outdoor?: boolean;
 }
 
 export interface Pin {
@@ -104,6 +108,12 @@ export interface Settings {
   /** Show "x of y lights on" under each room's name on the plan (the
    * room's tooltip shows it either way). Absent = true. */
   show_light_count?: boolean;
+  /** Room outlines, for every room (absent = on, each room's own colour,
+   * width 2, fully opaque); each room's border_opacity applies on top. */
+  room_border_show?: boolean;
+  room_border_color?: string | null;
+  room_border_width?: number;
+  room_border_opacity?: number;
 }
 
 /** What the backend reports for the version handshake (see debug.py). */
@@ -132,6 +142,26 @@ export interface Opening {
   /** A cover (blind, shade, garage door…) hung in this opening — its live
    * position shades the floor behind it. */
   cover_entity_id?: string | null;
+  /** A second cover on the same opening — then `cover_entity_id` is its
+   * left half and this the right, as seen from inside looking out. */
+  cover_right_entity_id?: string | null;
+  /** Fine-tuning for the daylight drawn through this opening (see
+   * floorplan-canvas.ts's _renderDaylight). Every field is optional. */
+  daylight?: OpeningDaylight;
+}
+
+export interface OpeningDaylight {
+  /** false hides this opening's daylight altogether. */
+  enabled?: boolean;
+  /** Brightness multiplier, 0–2 (1 = as computed). */
+  strength?: number;
+  /** How far the light reaches into the room, multiplier 0.25–3. */
+  reach?: number;
+  /** Height of the window's top above the floor, metres — sets how long
+   * the sun's beam is (default 2.1). */
+  head_m?: number;
+  /** Outdoor shade blocking the direct sun (trees, a porch roof), 0–1. */
+  shade?: number;
 }
 
 /** A piece of furniture or household item: a catalog drawing (see
@@ -159,6 +189,8 @@ export interface FurnitureItem {
   mirrored?: boolean;
   /** Can't be dragged, rotated or resized on the canvas. */
   locked?: boolean;
+  /** 0.1–1; how see-through the item is drawn (1 when unset). */
+  opacity?: number;
   /** An HA entity this item stands for (a lamp's light, a TV's media
    * player…) — its live state is drawn on the item (see live-state.ts's
    * computeItemStates), and a dashboard tap toggles it. */

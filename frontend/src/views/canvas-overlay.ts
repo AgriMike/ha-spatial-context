@@ -346,6 +346,8 @@ export class CanvasOverlay extends LitElement {
   @property({ attribute: false }) coverEntities: EntityOption[] = [];
   @property({ attribute: false }) selectedRoomLight: RoomLight | null = null;
   @property({ attribute: false }) selectedCoverOpenness: number | null = null;
+  @property({ attribute: false }) selectedCoverOpennessRight: number | null =
+    null;
   @property({ type: Boolean }) floorCalibrated = false;
   /** Entities a furniture item can be linked to (see LINKABLE_DOMAINS). */
   @property({ attribute: false }) linkableEntities: EntityOption[] = [];
@@ -381,6 +383,9 @@ export class CanvasOverlay extends LitElement {
   @state() private _wallThicknessUnit: SmallSubUnit | null = null;
   @state() private _openingWidthUnit: SmallSubUnit | null = null;
   @state() private _furnitureSizeUnit: SmallSubUnit | null = null;
+  /** The opening whose "two covers" switch was just turned on, before a
+   * right-hand cover has been picked. */
+  @state() private _splitCoverFor: string | null = null;
 
   override willUpdate(changed: PropertyValues<this>) {
     if (
@@ -626,6 +631,220 @@ export class CanvasOverlay extends LitElement {
       </div>`;
     }
     return nothing;
+  }
+
+  private _coverStateText(opening: Opening): string {
+    const pct = (o: number | null) =>
+      o === null
+        ? localize("canvas.opening.coverUnavailable")
+        : localize("canvas.opening.coverOpen", { pct: Math.round(o * 100) });
+    if (!opening.cover_right_entity_id) return pct(this.selectedCoverOpenness);
+    return `${localize("canvas.opening.left")} ${pct(this.selectedCoverOpenness)} · ${localize("canvas.opening.right")} ${pct(this.selectedCoverOpennessRight)}`;
+  }
+
+  /** One cover, or a left and a right cover (as seen from inside looking
+   * out) on a wide door or window, with a swap if they're the wrong way
+   * round. */
+  private _renderCoverPickers(opening: Opening) {
+    const two =
+      opening.cover_right_entity_id !== undefined &&
+      opening.cover_right_entity_id !== null
+        ? true
+        : this._splitCoverFor === opening.id;
+    const picker = (
+      icon: string,
+      label: string,
+      value: string | null | undefined,
+      side: "left" | "right",
+    ) =>
+      this._fieldRow(
+        icon,
+        label,
+        this._selectWrap(
+          html`<select
+            @change=${(e: Event) =>
+              this._fire("opening-cover-change", {
+                entityId: (e.target as HTMLSelectElement).value || null,
+                side,
+              })}
+          >
+            <option value="" ?selected=${!value}>
+              ${localize("canvas.opening.noCover")}
+            </option>
+            ${this.coverEntities.map(
+              (c) =>
+                html`<option
+                  value=${c.entity_id}
+                  ?selected=${c.entity_id === value}
+                >
+                  ${c.name}
+                </option>`,
+            )}
+          </select>`,
+        ),
+      );
+    return html`
+      ${picker(
+        "mdi:blinds",
+        two
+          ? localize("canvas.opening.coverLeft")
+          : localize("canvas.opening.cover"),
+        opening.cover_entity_id,
+        "left",
+      )}
+      ${two ? picker("mdi:blinds", localize("canvas.opening.coverRight"), opening.cover_right_entity_id, "right") : nothing}
+      ${this._fieldRow(
+        "mdi:arrow-split-vertical",
+        localize("canvas.opening.twoCovers"),
+        html`<input
+          type="checkbox"
+          class="switch"
+          role="switch"
+          .checked=${two}
+          @change=${(e: Event) => {
+            const on = (e.target as HTMLInputElement).checked;
+            this._splitCoverFor = on ? opening.id : null;
+            if (!on)
+              this._fire("opening-cover-change", {
+                entityId: null,
+                side: "right",
+              });
+            this.requestUpdate();
+          }}
+        />`,
+      )}
+      ${
+        two && (opening.cover_entity_id || opening.cover_right_entity_id)
+          ? this._actionRow(
+              "mdi:swap-horizontal",
+              localize("canvas.opening.swapCovers"),
+              () => this._fire("opening-cover-swap"),
+            )
+          : nothing
+      }
+    `;
+  }
+
+  /** The opening's daylight fine-tuning: on/off, strength, reach, window
+   * top height and outdoor shade. */
+  private _renderOpeningDaylight(opening: Opening) {
+    const t = opening.daylight ?? {};
+    const change = (patch: Partial<NonNullable<Opening["daylight"]>>) =>
+      this._fire("opening-daylight-change", { patch });
+    const imperial = this.unitSystem === "imperial";
+    const head = t.head_m ?? 2.1;
+    const slider = (
+      icon: string,
+      label: string,
+      value: number,
+      min: number,
+      max: number,
+      step: number,
+      onInput: (v: number) => void,
+    ) =>
+      this._fieldRow(
+        icon,
+        label,
+        html`<input
+          type="range"
+          class="stroke-range"
+          min=${min}
+          max=${max}
+          step=${step}
+          style="--pct:${((value - min) / (max - min)) * 100}%"
+          .value=${String(value)}
+          @input=${(e: Event) =>
+            onInput(Number((e.target as HTMLInputElement).value))}
+        />`,
+      );
+    const enabled = t.enabled !== false;
+    return html`
+      <div class="info-group-title">${localize("canvas.daylight.title")}</div>
+      ${this._fieldRow(
+        "mdi:white-balance-sunny",
+        localize("canvas.daylight.show"),
+        html`<input
+          type="checkbox"
+          class="switch"
+          role="switch"
+          .checked=${enabled}
+          @change=${(e: Event) =>
+            change({ enabled: (e.target as HTMLInputElement).checked })}
+        />`,
+      )}
+      ${
+        enabled
+          ? html`
+              ${slider(
+                "mdi:brightness-6",
+                localize("canvas.daylight.strength", {
+                  pct: Math.round((t.strength ?? 1) * 100),
+                }),
+                t.strength ?? 1,
+                0,
+                2,
+                0.05,
+                (strength) => change({ strength }),
+              )}
+              ${slider(
+                "mdi:arrow-expand-vertical",
+                localize("canvas.daylight.reach", {
+                  pct: Math.round((t.reach ?? 1) * 100),
+                }),
+                t.reach ?? 1,
+                0.25,
+                3,
+                0.05,
+                (reach) => change({ reach }),
+              )}
+              ${this._fieldRow(
+                "mdi:window-maximize",
+                localize("canvas.daylight.head", {
+                  unit: imperial ? "ft" : "m",
+                }),
+                html`<input
+                  type="number"
+                  class="furniture-size"
+                  min=${imperial ? 1 : 0.3}
+                  max=${imperial ? 30 : 10}
+                  step=${imperial ? 0.5 : 0.1}
+                  .value=${String(
+                    Math.round((imperial ? head / 0.3048 : head) * 10) / 10,
+                  )}
+                  @change=${(e: Event) => {
+                    const v = Number((e.target as HTMLInputElement).value);
+                    if (!Number.isFinite(v) || v <= 0) return;
+                    change({ head_m: imperial ? v * 0.3048 : v });
+                  }}
+                />`,
+              )}
+              ${slider(
+                "mdi:tree-outline",
+                localize("canvas.daylight.shade", {
+                  pct: Math.round((t.shade ?? 0) * 100),
+                }),
+                t.shade ?? 0,
+                0,
+                1,
+                0.05,
+                (shade) => change({ shade }),
+              )}
+              ${
+                opening.daylight
+                  ? this._actionRow(
+                      "mdi:restore",
+                      localize("canvas.daylight.reset"),
+                      () =>
+                        this._fire("opening-daylight-change", {
+                          reset: true,
+                        }),
+                    )
+                  : nothing
+              }
+            `
+          : nothing
+      }
+    `;
   }
 
   /** A list of linked things as removable chips, plus a dropdown adding
@@ -935,6 +1154,25 @@ export class CanvasOverlay extends LitElement {
         </div>
         <div class="info-group">
           <div class="info-group-title">${localize("canvas.card.style")}</div>
+          ${this._fieldRow(
+            "mdi:opacity",
+            localize("furniture.opacity", {
+              pct: Math.round((item.opacity ?? 1) * 100),
+            }),
+            html`<input
+              type="range"
+              class="stroke-range"
+              min="0.1"
+              max="1"
+              step="0.05"
+              style="--pct:${(((item.opacity ?? 1) - 0.1) / 0.9) * 100}%"
+              .value=${String(item.opacity ?? 1)}
+              @input=${(e: Event) =>
+                change({
+                  opacity: Number((e.target as HTMLInputElement).value),
+                })}
+            />`,
+          )}
           ${this._fieldRow(
             "mdi:format-line-weight",
             localize("furniture.lineThickness", {
@@ -1265,6 +1503,21 @@ export class CanvasOverlay extends LitElement {
                 : nothing
             }
             ${this._fieldRow(
+              "mdi:home-export-outline",
+              localize("canvas.room.outdoor"),
+              html`<input
+                type="checkbox"
+                class="switch"
+                role="switch"
+                title=${localize("canvas.room.outdoorHint")}
+                .checked=${!!room.outdoor}
+                @change=${(e: Event) =>
+                  this._fire("room-outdoor-change", {
+                    outdoor: (e.target as HTMLInputElement).checked,
+                  })}
+              />`,
+            )}
+            ${this._fieldRow(
               "mdi:eye",
               localize("canvas.card.visible"),
               html`<input
@@ -1509,45 +1762,14 @@ export class CanvasOverlay extends LitElement {
                 </div>`
               : nothing
           }
-          ${this._fieldRow(
-            "mdi:blinds",
-            localize("canvas.opening.cover"),
-            this._selectWrap(
-              html`<select
-                @change=${(e: Event) =>
-                  this._fire("opening-cover-change", {
-                    entityId: (e.target as HTMLSelectElement).value || null,
-                  })}
-              >
-                <option value="" ?selected=${!opening.cover_entity_id}>
-                  ${localize("canvas.opening.noCover")}
-                </option>
-                ${this.coverEntities.map(
-                  (c) =>
-                    html`<option
-                      value=${c.entity_id}
-                      ?selected=${c.entity_id === opening.cover_entity_id}
-                    >
-                      ${c.name}
-                    </option>`,
-                )}
-              </select>`,
-            ),
-          )}
+          ${this._renderCoverPickers(opening)}
+          ${this._renderOpeningDaylight(opening)}
           ${
-            opening.cover_entity_id
+            opening.cover_entity_id || opening.cover_right_entity_id
               ? this._fieldRow(
                   "mdi:weather-sunny",
                   localize("canvas.opening.coverState"),
-                  html`<span
-                    >${
-                      this.selectedCoverOpenness === null
-                        ? localize("canvas.opening.coverUnavailable")
-                        : localize("canvas.opening.coverOpen", {
-                            pct: Math.round(this.selectedCoverOpenness * 100),
-                          })
-                    }</span
-                  >`,
+                  html`<span>${this._coverStateText(opening)}</span>`,
                 )
               : nothing
           }

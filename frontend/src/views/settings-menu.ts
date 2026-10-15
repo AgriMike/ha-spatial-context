@@ -166,7 +166,20 @@ export class SettingsMenu extends LitElement {
         width: 64px;
         text-align: right;
       }
-    `,
+          .border-color {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .border-reset {
+        height: 28px;
+        padding: 0 8px;
+        border: 1px solid var(--sc-divider);
+        border-radius: var(--sc-r-control);
+        font-size: 12px;
+        color: var(--sc-fg-secondary);
+      }
+`,
   ];
 
   @property({ attribute: false }) settings!: Settings;
@@ -369,6 +382,85 @@ export class SettingsMenu extends LitElement {
             ),
             localize("settings.lightCountHint"),
           )}
+          ${this._row(
+            localize("settings.roomBorders"),
+            this._switch(
+              s.room_border_show !== false,
+              localize("settings.roomBorders"),
+              (room_border_show) => this._change({ room_border_show }),
+            ),
+            localize("settings.roomBordersHint"),
+          )}
+          ${
+            s.room_border_show !== false
+              ? html`
+                  ${this._row(
+                    localize("settings.roomBorderColor"),
+                    html`<span class="border-color">
+                      ${
+                        s.room_border_color
+                          ? html`<button
+                              class="border-reset"
+                              @click=${() =>
+                                this._change({ room_border_color: null })}
+                            >
+                              ${localize("settings.roomBorderColorRoom")}
+                            </button>`
+                          : html`<span class="description"
+                              >${localize("settings.roomBorderColorRoom")}</span
+                            >`
+                      }
+                      <input
+                        type="color"
+                        aria-label=${localize("settings.roomBorderColor")}
+                        .value=${s.room_border_color ?? "#03a9f4"}
+                        @input=${(e: Event) =>
+                          this._change({
+                            room_border_color: (e.target as HTMLInputElement)
+                              .value,
+                          })}
+                      />
+                    </span>`,
+                  )}
+                  ${this._row(
+                    localize("settings.roomBorderWidth", {
+                      px: (s.room_border_width ?? 2).toFixed(1),
+                    }),
+                    html`<input
+                      type="range"
+                      min="0.25"
+                      max="8"
+                      step="0.25"
+                      .value=${String(s.room_border_width ?? 2)}
+                      @input=${(e: Event) =>
+                        this._change({
+                          room_border_width: Number(
+                            (e.target as HTMLInputElement).value,
+                          ),
+                        })}
+                    />`,
+                  )}
+                  ${this._row(
+                    localize("settings.roomBorderOpacity", {
+                      pct: Math.round((s.room_border_opacity ?? 1) * 100),
+                    }),
+                    html`<input
+                      type="range"
+                      min="0.05"
+                      max="1"
+                      step="0.05"
+                      .value=${String(s.room_border_opacity ?? 1)}
+                      @input=${(e: Event) =>
+                        this._change({
+                          room_border_opacity: Number(
+                            (e.target as HTMLInputElement).value,
+                          ),
+                        })}
+                    />`,
+                  )}
+                `
+              : nothing
+          }
         </div>
 
         <div class="section">

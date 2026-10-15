@@ -115,6 +115,21 @@ import type { PropertyBuilding } from "./views/property-overlay";
  * or come back empty; fall back to snapping onto everything. */
 const SNAP_MODE_STORAGE_KEY = "spatial-context-snap-mode";
 
+/** The room-border settings, with defaults filled in. */
+function roomBorderOf(s: Settings): {
+  show: boolean;
+  color: string | null;
+  width: number;
+  opacity: number;
+} {
+  return {
+    show: s.room_border_show !== false,
+    color: s.room_border_color ?? null,
+    width: s.room_border_width ?? 2,
+    opacity: s.room_border_opacity ?? 1,
+  };
+}
+
 const OVERLAYS_STORAGE_KEY = "spatial_context_overlays";
 
 interface OverlayToggles {
@@ -3367,14 +3382,65 @@ export class SpatialContextPanel extends LitElement {
     );
   };
 
-  private _onOpeningCoverChange = (
-    e: CustomEvent<{ entityId: string | null }>,
+  /** The window card's daylight fine-tuning (or `reset` back to the
+   * defaults). */
+  private _onOpeningDaylightChange = (
+    e: CustomEvent<{
+      patch?: Partial<NonNullable<Opening["daylight"]>>;
+      reset?: boolean;
+    }>,
   ) => {
     const opening = this._selectedOpening;
     if (!opening) return;
     this._updateLayout({
+      openings: this._layout.openings.map((o) => {
+        if (o.id !== opening.id) return o;
+        if (e.detail.reset) {
+          const { daylight: _drop, ...rest } = o;
+          return rest;
+        }
+        return { ...o, daylight: { ...o.daylight, ...e.detail.patch } };
+      }),
+    });
+  };
+
+  private _onOpeningCoverChange = (
+    e: CustomEvent<{ entityId: string | null; side?: "left" | "right" }>,
+  ) => {
+    const opening = this._selectedOpening;
+    if (!opening) return;
+    const key =
+      e.detail.side === "right" ? "cover_right_entity_id" : "cover_entity_id";
+    this._updateLayout({
       openings: this._layout.openings.map((o) =>
-        o.id === opening.id ? { ...o, cover_entity_id: e.detail.entityId } : o,
+        o.id === opening.id ? { ...o, [key]: e.detail.entityId } : o,
+      ),
+    });
+  };
+
+  /** Swaps an opening's left and right covers. */
+  private _onOpeningCoverSwap = () => {
+    const opening = this._selectedOpening;
+    if (!opening) return;
+    this._updateLayout({
+      openings: this._layout.openings.map((o) =>
+        o.id === opening.id
+          ? {
+              ...o,
+              cover_entity_id: o.cover_right_entity_id ?? null,
+              cover_right_entity_id: o.cover_entity_id ?? null,
+            }
+          : o,
+      ),
+    });
+  };
+
+  private _onRoomOutdoorChange = (e: CustomEvent<{ outdoor: boolean }>) => {
+    const room = this._selectedRoom;
+    if (!room) return;
+    this._updateLayout({
+      rooms: this._layout.rooms.map((r) =>
+        r.id === room.id ? { ...r, outdoor: e.detail.outdoor } : r,
       ),
     });
   };
@@ -4548,6 +4614,7 @@ export class SpatialContextPanel extends LitElement {
                     .showLights=${this._overlays.lights}
                     .showCovers=${this._overlays.covers}
                     .showLightCount=${this._settings.show_light_count !== false}
+                    .roomBorder=${roomBorderOf(this._settings)}
                     .northDeg=${this._layout.north_deg}
                     .location=${this._location}
                     .sunTime=${this._sunTime}
@@ -4640,6 +4707,16 @@ export class SpatialContextPanel extends LitElement {
                     @room-links-change=${this._onRoomLinksChange}
                     @room-lights-command=${this._onRoomLightsCommand}
                     @opening-cover-change=${this._onOpeningCoverChange}
+                    @opening-daylight-change=${this._onOpeningDaylightChange}
+                    @opening-cover-swap=${this._onOpeningCoverSwap}
+                    @room-outdoor-change=${this._onRoomOutdoorChange}
+                    .selectedCoverOpennessRight=${
+                      this._selectedOpening
+                        ? (this._coverOpenness.get(
+                            `${this._selectedOpening.id}:right`,
+                          ) ?? null)
+                        : null
+                    }
                     .selectedMeshLink=${this._selectedMeshLink}
                     .meshLinks=${this._meshLinksForCurrentFloor}
                     .meshStubs=${this._meshStubsForCurrentFloor}

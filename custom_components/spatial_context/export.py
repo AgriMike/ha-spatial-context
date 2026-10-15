@@ -122,6 +122,7 @@ async def async_get_map_data(hass: HomeAssistant) -> dict[str, Any]:
                 "linked_area_ids": room.get("linked_area_ids", []),
                 "linked_room_ids": room.get("linked_room_ids", []),
                 "light_entity_ids": room.get("light_entity_ids", []),
+                "outdoor": room.get("outdoor", False),
                 "devices": room_devices.get(room["id"], []),
             }
             for room in layout.get("rooms", [])
@@ -142,6 +143,7 @@ async def async_get_map_data(hass: HomeAssistant) -> dict[str, Any]:
                     "y_m": opening["y"] * floor_mpu if floor_mpu else None,
                     "width_m": opening["width"] * floor_mpu if floor_mpu else None,
                     "cover_entity_id": opening.get("cover_entity_id"),
+                    "cover_right_entity_id": opening.get("cover_right_entity_id"),
                 }
             )
 

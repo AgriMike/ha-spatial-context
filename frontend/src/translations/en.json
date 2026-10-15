@@ -64,7 +64,7 @@
     },
     "room": {
       "custom": "— Custom —",
-      "outdoor": "Outdoor / no floor",
+      "outdoor": "Outdoor space",
       "hide": "Hide room",
       "show": "Show room",
       "color": "Room color",
@@ -74,7 +74,8 @@
       "doneEditing": "Done editing",
       "editVertices": "Edit vertices",
       "resetLabel": "Reset label position",
-      "delete": "Delete room"
+      "delete": "Delete room",
+      "outdoorHint": "A deck, patio or porch: daylight through a door or window onto it only falls indoors."
     },
     "pin": {
       "setLabel": "Set label",
@@ -98,7 +99,13 @@
       "noCover": "None",
       "coverState": "Right now",
       "coverOpen": "{pct}% open",
-      "coverUnavailable": "Unavailable"
+      "coverUnavailable": "Unavailable",
+      "coverLeft": "Left cover",
+      "coverRight": "Right cover",
+      "twoCovers": "Two covers (left & right)",
+      "swapCovers": "Swap left and right",
+      "left": "Left",
+      "right": "Right"
     },
     "meshStub": {
       "goToFloor": "Go to floor"
@@ -140,6 +147,15 @@
       "areas": "Also show areas",
       "rooms": "Also show rooms",
       "lights": "Also show lights"
+    },
+    "daylight": {
+      "title": "Daylight",
+      "show": "Show daylight",
+      "strength": "Strength ({pct}%)",
+      "reach": "Reach ({pct}%)",
+      "head": "Window top height ({unit})",
+      "shade": "Outdoor shade ({pct}%)",
+      "reset": "Reset daylight to defaults"
     }
   },
   "mapBackground": {
@@ -196,7 +212,13 @@
     "weatherHint": "Clouds dim the sunlight through windows: no beam when it's overcast, just soft sky light.",
     "plan": "Plan",
     "lightCount": "Lights-on count",
-    "lightCountHint": "Show \"2 of 3 lights on\" under each room's name. Hovering a room shows it either way."
+    "lightCountHint": "Show \"2 of 3 lights on\" under each room's name. Hovering a room shows it either way.",
+    "roomBorders": "Room borders",
+    "roomBordersHint": "The outline around every room. A selected room always shows one.",
+    "roomBorderColor": "Border colour",
+    "roomBorderColorRoom": "Room colour",
+    "roomBorderWidth": "Border thickness ({px})",
+    "roomBorderOpacity": "Border opacity ({pct}%)"
   },
   "picker": {
     "search": "Search devices…",
@@ -428,7 +450,8 @@
     "entityTitle": "Linked entity",
     "entity": "Entity",
     "noEntity": "None",
-    "toggle": "Toggle"
+    "toggle": "Toggle",
+    "opacity": "Opacity ({pct}%)"
   },
   "compass": {
     "title": "North is {dir} of the plan's top",
