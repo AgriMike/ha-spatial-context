@@ -72,11 +72,26 @@ Changes save automatically a few seconds after each edit.
 
 ### Getting a background image
 
-Each floor traces over an image (PNG, JPEG or GIF, uploaded through HA's own image storage). If you're starting from an architect's PDF, rasterise it first:
+Each floor traces over an image (PNG, JPEG, GIF or SVG, uploaded through HA's own image storage). If you're starting from an architect's PDF, rasterise it first:
 
 ```
 pdftoppm -png -r 150 your-floor-plan.pdf your-floor-plan
 ```
+
+### Importing an SVG floor plan
+
+An **SVG** background is converted to a PNG for HA's image storage, and on a floor its rooms, walls, doors and windows can be imported as well, so there's nothing to trace. After the upload you're asked whether to add them, then how long one unit of the drawing is (enter `1` if it was drawn in your display unit, or leave it blank to set the scale yourself). That answer also calibrates the floor and sets each wall's thickness from its stroke width. Rooms whose name or id matches an HA area are linked to it.
+
+Elements are recognised by whole words in their `id`, `class` or Inkscape layer name, and a group passes its meaning on to everything inside it:
+
+| Words | Imported as |
+|---|---|
+| `room`, `rooms`, `space` | A room, from each closed shape (`rect`, `polygon`, closed `path`). Named from its `<title>`, Inkscape label, `id`, or a text label inside it. |
+| `wall`, `walls`, `ext`, `int`, `exterior`, `interior` | A wall, from each line, polyline, polygon or path. |
+| `door`, `window`, `win` | A door or window on the wall it lies along. A group (a leaf line plus its swing arc) is one opening. A gap left between two straight walls for it is closed up into one wall. |
+| `fixtures`, `furniture`, `labels`, `dim`, `rail`, … | Skipped (background only). |
+
+Anything else stays background only.
 
 ## The panel
 

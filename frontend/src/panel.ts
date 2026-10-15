@@ -71,6 +71,13 @@ import {
 } from "./styles";
 import "./canvas/floorplan-canvas";
 import type { AlignOverlay, FloorplanCanvas } from "./canvas/floorplan-canvas";
+import { BASE_WIDTH } from "./canvas/floorplan-canvas";
+import {
+  buildSvgLayout,
+  isSvgFile,
+  parseSvgFloorplan,
+  rasterizeSvg,
+} from "./canvas/svg-import";
 import "./canvas/property-canvas";
 import {
   DEFAULT_PLACEMENT_HEIGHT,
@@ -2539,6 +2546,10 @@ export class SpatialContextPanel extends LitElement {
    * bypasses the <input accept> restriction entirely, so the MIME check has
    * to live here rather than only on the input element. */
   private async _handleBackgroundFile(file: File): Promise<void> {
+    if (isSvgFile(file)) {
+      await this._handleSvgBackground(file);
+      return;
+    }
     if (!SpatialContextPanel._ACCEPTED_BACKGROUND_TYPES.has(file.type)) {
       window.alert(localize("errors.bgType"));
       return;
@@ -2552,6 +2563,79 @@ export class SpatialContextPanel extends LitElement {
       window.alert(
         localize("errors.bgUpload", { error: (err as Error).message }),
       );
+    }
+  }
+
+  /** An SVG floor plan: rasterised to a PNG for the background (HA's image
+   * storage won't take SVG), and — on a floor — its rooms, walls, doors and
+   * windows offered as real geometry, so there's nothing to trace. The
+   * background, geometry and calibration land as one undo step. */
+  private async _handleSvgBackground(file: File): Promise<void> {
+    let patch: Partial<FloorLayout>;
+    let skipped = 0;
+    try {
+      const text = await file.text();
+      const plan = parseSvgFloorplan(text);
+      const png = await rasterizeSvg(text, plan.viewBox, file.name);
+      const imageId = await this._client.uploadBackgroundImage(png);
+      patch = { background_image_id: imageId, background_opacity: 0.85 };
+      if (this._view === "property") {
+        this._updatePropertyLayout(patch);
+        return;
+      }
+      const found =
+        plan.rooms.length + plan.walls.length + plan.openings.length > 0;
+      if (
+        found &&
+        window.confirm(
+          localize("svgImport.confirm", {
+            rooms: plan.rooms.length,
+            walls: plan.walls.length,
+            openings: plan.openings.length,
+          }),
+        )
+      ) {
+        const system = this._settings.unit_system;
+        const unit = localize(
+          system === "imperial" ? "units.feet" : "units.metres",
+        );
+        const input = window.prompt(localize("svgImport.unitPrompt", { unit }));
+        const meters = input?.trim() ? parseLarge(input.trim(), system) : null;
+        const metersPerUnit =
+          meters !== null && Number.isFinite(meters) && meters > 0
+            ? meters
+            : null;
+        const layout = this._layout;
+        const result = buildSvgLayout(
+          plan,
+          {
+            x: layout.background_offset_x,
+            y: layout.background_offset_y,
+            width: BASE_WIDTH * layout.background_scale,
+          },
+          this._areasForCurrentFloor,
+          metersPerUnit,
+        );
+        const rooms = [...layout.rooms, ...result.rooms];
+        patch = {
+          ...patch,
+          rooms,
+          pins: reassignPinRooms(rooms, layout.pins),
+          walls: [...layout.walls, ...result.walls],
+          openings: [...layout.openings, ...result.openings],
+          ...(result.scale ? { scale: result.scale } : {}),
+        };
+        skipped = result.skippedOpenings;
+      }
+    } catch (err) {
+      window.alert(
+        localize("errors.svgImport", { error: (err as Error).message }),
+      );
+      return;
+    }
+    this._updateLayout(patch);
+    if (skipped > 0) {
+      window.alert(localize("svgImport.skipped", { count: skipped }));
     }
   }
 
@@ -3357,7 +3441,7 @@ export class SpatialContextPanel extends LitElement {
           id="file-input"
           class="hidden-file-input"
           type="file"
-          accept="image/png,image/jpeg,image/gif"
+          accept="image/png,image/jpeg,image/gif,image/svg+xml,.svg"
           @change=${this._onFileInputChange}
         />
         <button class="menu-item" @click=${() => this._fileInput?.click()}>
