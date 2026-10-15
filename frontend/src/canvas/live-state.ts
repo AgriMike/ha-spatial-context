@@ -23,7 +23,7 @@ export interface RoomLight {
   unavailable: number;
 }
 
-const WARM_WHITE: [number, number, number] = [255, 205, 120];
+const WARM_WHITE: [number, number, number] = [255, 196, 107]; // 2700 K
 
 /** Every light entity in each area, by the entity's own area or its
  * device's. */
@@ -75,15 +75,69 @@ function toHex([r, g, b]: [number, number, number]): string {
   return `#${h(r)}${h(g)}${h(b)}`;
 }
 
+/** White-temperature tints, warm amber through cream to a faint cool
+ * white — the same palette as the home-flat dashboard's mh-tile card, so
+ * a lamp on the plan matches its tile. HA's own rgb_color for a cool white
+ * is near-pure white, which would vanish against a light plan. */
+const CT: [number, string][] = [
+  [2000, "#FFA24A"],
+  [2700, "#FFC46B"],
+  [3500, "#FFD38F"],
+  [4200, "#FFE2B3"],
+  [5000, "#EBEFF6"],
+  [5700, "#E2E9F4"],
+  [6500, "#D6E0F1"],
+];
+
+function fromHex(h: string): [number, number, number] {
+  return [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)) as [
+    number,
+    number,
+    number,
+  ];
+}
+
+function ctColor(kelvin: number): [number, number, number] {
+  const first = CT[0]!;
+  if (kelvin <= first[0]) return fromHex(first[1]);
+  for (let i = 1; i < CT.length; i++) {
+    const [k1, c1] = CT[i - 1]!;
+    const [k2, c2] = CT[i]!;
+    if (kelvin <= k2) {
+      const a = fromHex(c1);
+      const b = fromHex(c2);
+      const t = (kelvin - k1) / (k2 - k1);
+      return [0, 1, 2].map((j) => a[j]! + (b[j]! - a[j]!) * t) as [
+        number,
+        number,
+        number,
+      ];
+    }
+  }
+  return fromHex(CT[CT.length - 1]![1]);
+}
+
+/** A light's colour as the mh-tile card shows it: its white temperature
+ * in color_temp mode, else its rgb colour lifted 30% toward white, else
+ * a plain warm white. */
 function lightColor(attrs: Record<string, unknown>): [number, number, number] {
+  const kelvin =
+    typeof attrs["color_temp_kelvin"] === "number"
+      ? (attrs["color_temp_kelvin"] as number)
+      : typeof attrs["color_temp"] === "number"
+        ? 1e6 / (attrs["color_temp"] as number)
+        : null;
+  if (attrs["color_mode"] === "color_temp" && kelvin) return ctColor(kelvin);
   const rgb = attrs["rgb_color"];
   if (
     Array.isArray(rgb) &&
     rgb.length === 3 &&
     rgb.every((v) => typeof v === "number")
   ) {
-    return rgb as [number, number, number];
+    const [r, g, b] = rgb as [number, number, number];
+    return [r * 0.7 + 255 * 0.3, g * 0.7 + 255 * 0.3, b * 0.7 + 255 * 0.3];
   }
+  if (kelvin) return ctColor(kelvin);
   return WARM_WHITE;
 }
 

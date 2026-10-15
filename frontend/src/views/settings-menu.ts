@@ -359,6 +359,19 @@ export class SettingsMenu extends LitElement {
         </div>
 
         <div class="section">
+          <div class="section-title">${localize("settings.plan")}</div>
+          ${this._row(
+            localize("settings.lightCount"),
+            this._switch(
+              s.show_light_count !== false,
+              localize("settings.lightCount"),
+              (show_light_count) => this._change({ show_light_count }),
+            ),
+            localize("settings.lightCountHint"),
+          )}
+        </div>
+
+        <div class="section">
           <div class="section-title">${localize("settings.daylight")}</div>
           ${this._row(
             localize("settings.weather"),

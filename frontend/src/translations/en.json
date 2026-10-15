@@ -193,7 +193,10 @@
     "weather": "Weather for cloud cover",
     "weatherAuto": "Automatic",
     "weatherNone": "Ignore the weather",
-    "weatherHint": "Clouds dim the sunlight through windows: no beam when it's overcast, just soft sky light."
+    "weatherHint": "Clouds dim the sunlight through windows: no beam when it's overcast, just soft sky light.",
+    "plan": "Plan",
+    "lightCount": "Lights-on count",
+    "lightCountHint": "Show \"2 of 3 lights on\" under each room's name. Hovering a room shows it either way."
   },
   "picker": {
     "search": "Search devices…",
@@ -419,7 +422,8 @@
       "garage": "Garage & workshop",
       "fitness": "Fitness & hobbies",
       "pets": "Pets",
-      "decor": "Decor & plants"
+      "decor": "Decor & plants",
+      "icons": "Icons"
     },
     "entityTitle": "Linked entity",
     "entity": "Entity",

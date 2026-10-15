@@ -146,7 +146,7 @@ export class FurnitureLibrarySidebar extends LitElement {
       .item svg {
         width: 100%;
         height: 64px;
-        color: var(--sc-fg-secondary);
+        color: var(--sc-fg);
         --fx-stroke-width: 1px;
       }
       .name {

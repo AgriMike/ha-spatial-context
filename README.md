@@ -164,6 +164,7 @@ New points snap to nearby walls and room edges and line up with your last point,
 | **Shift** | Places or drags a point with no snapping. Frees a furniture item's rotation (normally 15° steps) and size (normally whole centimetres). |
 | **R**, **Shift+R** | Rotates the selected furniture item, or the one being placed, by 90° (Shift: 15°). |
 | **Ctrl/Cmd+D** | Duplicates the selected furniture item. |
+| **Ctrl/Cmd+C**, **X**, **V** | Copy, cut and paste a furniture item (onto any floor; pastes under the pointer). |
 | **Arrow keys** | Nudge the selected furniture item 1 cm (Shift: 10 cm). |
 
 None of these fire while you're typing in a field.
@@ -198,9 +199,9 @@ The cog in the header opens **Settings**. They're shared by everyone who uses th
 
 ## Furniture and household items
 
-The sofa button in the toolbar opens a library of **780 furniture and household items** in 16 categories: living room, bedroom, kitchen, dining, bathroom, office, laundry & utility, electronics & smart home, lighting, kids & nursery, entry & storage, outdoor & garden, garage & workshop, fitness & hobbies, pets, and decor & plants. Search it or pick a category, click an item to arm it, and click the plan to drop it at its real size. **R** turns it before you place it, and **Shift+click** places another.
+The sofa button in the toolbar opens a library of **over 800 furniture and household items** in 16 categories: living room, bedroom, kitchen, dining, bathroom, office, laundry & utility, electronics & smart home, lighting (including long, stretchable baseboard, cove and under-cabinet strips), kids & nursery, entry & storage, outdoor & garden, garage & workshop, fitness & hobbies, pets, and decor & plants (including top-down houseplants: monstera, bird of paradise, snake plant, pothos, fern, peace lily, ZZ, pilea and more). An **Icons** category adds 410 single-colour line icons (a bulb, a thermometer, a router…), handy for linking to entities. Search it or pick a category, click an item to arm it, and click the plan to drop it at its real size. **R** turns it before you place it, and **Shift+click** places another.
 
-Each item is a simple plan-view line drawing that redraws at whatever size you give it, so a longer dining table gets more room between its chairs instead of stretched ones. Select one to drag it, turn it with the round handle, or resize it with the square handles. Sizes are real centimetres, so they're only true to life once the floor's scale is set. The sofa, bulb and blinds buttons beside the zoom controls show or hide furniture, live lights and cover shading.
+Each item is a simple plan-view line drawing that redraws at whatever size you give it, so a longer dining table gets more room between its chairs instead of stretched ones. Select one to drag it, turn it with the round handle, or resize it with the square handles. A small item gets a roomier selection box and a four-way grip below it to drag by. While you drag, an item's edges and centre snap to other items and to wall faces, with pink guide lines like PowerPoint's (Shift drags freely). **Ctrl/Cmd+C**, **X** and **V** copy, cut and paste items, onto any floor; a paste lands under the pointer. Sizes are real centimetres, so they're only true to life once the floor's scale is set. The sofa, bulb and blinds buttons beside the zoom controls show or hide furniture, live lights and cover shading.
 
 ## Items linked to entities
 
@@ -208,13 +209,13 @@ Any furniture or item can stand for an HA entity: a floor lamp for its light, a 
 
 ## Live lights and covers
 
-A room shows its lights live on the plan: filled in the lights' own colour and brighter with their brightness, or shaded dark with them all off. By default a room follows the lights in its HA area. Its card can add **other areas** (an open-plan space spanning two), **other rooms** (a dining room that should show the kitchen's lights too), and **individual lights**.
+A room shows its lights live on the plan: filled in the lights' own colour (white-temperature lights from warm amber to cool white, on the same palette as the home-flat dashboard's tiles) and brighter with their brightness, or shaded dark with them all off. By default a room follows the lights in its HA area. Its card can add **other areas** (an open-plan space spanning two), **other rooms** (a dining room that should show the kitchen's lights too), and **individual lights**.
 
 Link a **cover** to a door or window from its card, and the floor behind it shows a daylight patch reaching into the room. The patch is brighter the more the cover is open, and turns to shade when it's closed.
 
 ### Daylight that follows the sun
 
-Tell a floor which way it faces (**Background → Top of plan faces**, one of 16 compass points or an exact bearing) and, with your home location set in Home Assistant, daylight through every exterior window follows the real sun. A window facing the sun gets a beam across the floor at the sun's actual angle: long and orange at sunrise and sunset, short and near-white at midday. Other windows get soft sky light, and at night there's none. A cover dims the light by how far it's closed, so open and closed covers stay easy to tell apart, even at night. A compass and the sun's position show in the corner of the plan, and **Daylight at** previews any time of day. Clouds count too: the light follows a weather entity's cloud cover (picked automatically, or chosen in **Settings → Daylight**). A partly cloudy sky softens the beam, and an overcast or rainy one leaves only soft, grey sky light. Dashboard cards follow the same sun and sky, and a card can use its own `weather_entity` (or `none`). Device pins are tinted by their device's live state too: lights in their colour, switches and fans amber, open covers blue, motion or open doors red.
+Tell a floor which way it faces (**Background → Top of plan faces**, one of 16 compass points or an exact bearing) and, with your home location set in Home Assistant, daylight through every exterior window follows the real sun. A window facing the sun gets a beam across the floor at the sun's actual angle: long and orange at sunrise and sunset, short and near-white at midday. Other windows get soft sky light, and at night there's none. An open window always shows something: a deep-blue night-sky patch after dark, and a cool blue-grey, shadow-like patch under heavy cloud. A closed cover shows charcoal shade, day or night, and dims the light by how far it's closed. A compass and the sun's position show in the corner of the plan, and **Daylight at** previews any time of day. Clouds count too: the light follows a weather entity's cloud cover (picked automatically, or chosen in **Settings → Daylight**). A partly cloudy sky softens the beam, and an overcast or rainy one leaves only soft, grey sky light. Dashboard cards follow the same sun and sky, and a card can use its own `weather_entity` (or `none`). Device pins are tinted by their device's live state too: lights in their colour, switches and fans amber, open covers blue, motion or open doors red.
 
 ## Dashboard card
 

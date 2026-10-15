@@ -101,6 +101,9 @@ export interface Settings {
    * picks one automatically, "none" ignores the weather. Absent from a
    * backend older than this field — treat as null. */
   weather_entity_id?: string | null;
+  /** Show "x of y lights on" under each room's name on the plan (the
+   * room's tooltip shows it either way). Absent = true. */
+  show_light_count?: boolean;
 }
 
 /** What the backend reports for the version handshake (see debug.py). */

@@ -62,6 +62,8 @@ import {
   cloudySunColor,
   compassName,
   daylight,
+  NIGHT_COLOR,
+  SHADE_COLOR,
   skyColor,
   type Sky,
   planBearing,
@@ -96,6 +98,10 @@ const PIN_RADIUS_PX = 12;
 const FALLBACK_UNITS_PER_CM = BASE_WIDTH / 2000;
 const FURNITURE_ROTATE_HANDLE_PX = 26;
 const FURNITURE_MIN_CM = 5;
+/** Items smaller than this on screen get a padded selection box, handles
+ * that don't crowd each other, and a separate move grip. */
+const FURNITURE_SMALL_PX = 48;
+const FURNITURE_GUIDE_PX = 8;
 const MESH_STUB_RADIUS_PX = 10;
 
 /** What's currently being vertex-edited — a room (closed ring, min 3 points)
@@ -115,7 +121,23 @@ export interface AlignOverlay {
   opacity: number;
 }
 
-type FurnitureHandle = "rotate" | "corner" | "right" | "bottom";
+type FurnitureHandle = "rotate" | "corner" | "right" | "bottom" | "move";
+
+/** Alignment guides while dragging an item: the line it snapped to, drawn
+ * from `a` to `b` across both boxes (like PowerPoint's smart guides). */
+interface Guide {
+  pos: number;
+  a: number;
+  b: number;
+}
+
+/** An item's axis-aligned box in stored units. */
+interface Box {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
 
 /** A furniture item mid-drag/rotate/resize, before it's committed. */
 interface FurnitureEdit {
@@ -152,7 +174,13 @@ type Gesture =
   | { kind: "roomMove"; roomId: string; startX: number; startY: number }
   | { kind: "openingMove"; openingId: string }
   | { kind: "furnitureMove"; id: string; startX: number; startY: number }
-  | { kind: "furnitureHandle"; id: string; handle: FurnitureHandle }
+  | {
+      kind: "furnitureHandle";
+      id: string;
+      handle: FurnitureHandle;
+      start: FurnitureItem;
+      startLocal: [number, number];
+    }
   | { kind: "openingHandle"; openingId: string; whichEnd: 0 | 1 }
   | {
       kind: "pinch";
@@ -427,11 +455,11 @@ export class FloorplanCanvas extends LitElement {
       ${scaleStyles}
       ${unsafeCSS(FURNITURE_STYLES)}
       .furniture {
-        --fx-color: #546e7a;
+        --fx-color: #2f343a;
         cursor: pointer;
       }
       :host([dark]) .furniture {
-        --fx-color: #b0bec5;
+        --fx-color: #d5dae0;
       }
       .furniture.unavailable {
         opacity: 0.4;
@@ -468,6 +496,24 @@ export class FloorplanCanvas extends LitElement {
       }
       .furniture-handle.corner {
         cursor: nwse-resize;
+      }
+      .furniture-handle.move {
+        cursor: move;
+      }
+      .furniture-move-arrows {
+        fill: none;
+        stroke: var(--sc-accent);
+        stroke-width: 1.5px;
+        stroke-linecap: round;
+        vector-effect: non-scaling-stroke;
+        pointer-events: none;
+      }
+      .smart-guide {
+        stroke: #ff4081;
+        stroke-width: 1px;
+        stroke-dasharray: 4 3;
+        vector-effect: non-scaling-stroke;
+        pointer-events: none;
       }
       .furniture-label {
         fill: var(--sc-fg);
@@ -590,6 +636,8 @@ export class FloorplanCanvas extends LitElement {
   @property({ type: Boolean }) showFurniture = true;
   @property({ type: Boolean }) showLights = true;
   @property({ type: Boolean }) showCovers = true;
+  /** "x of y lights on" under room names (always in the tooltip). */
+  @property({ type: Boolean }) showLightCount = true;
   /** Compass bearing the top of the plan faces (FloorLayout.north_deg). */
   @property({ attribute: false }) northDeg: number | null = null;
   /** HA's home location, for the sun's position. */
@@ -666,6 +714,13 @@ export class FloorplanCanvas extends LitElement {
   } | null = null;
   @state() private _selectedVertexIndex: number | null = null;
   @state() private _liveFurniture: FurnitureEdit | null = null;
+  @state() private _furnitureGuides: { x: Guide | null; y: Guide | null } = {
+    x: null,
+    y: null,
+  };
+  /** Where the pointer last was over the plan (stored units) — where a
+   * pasted item lands. */
+  lastPointer: { x: number; y: number } | null = null;
   /** Wall-clock time the daylight is drawn for, ticking each minute. */
   @state() private _now = Date.now();
   private _clock: ReturnType<typeof setInterval> | null = null;
@@ -1082,14 +1137,16 @@ export class FloorplanCanvas extends LitElement {
     linkedOnly = false,
   ): FurnitureItem | null {
     const tol = this._pxToUnits(3) / this.unitsPerCm;
+    // A tiny item is still easy to click: at least ~24px across.
+    const minHalf = this._pxToUnits(12) / this.unitsPerCm;
     let best: FurnitureItem | null = null;
     for (const raw of this.furniture) {
       if (linkedOnly && !raw.entity_id) continue;
       const item = this._effectiveFurniture(raw);
       const [lx, ly] = this._imageToFurniture(item, x, y);
       if (
-        Math.abs(lx) <= item.width_cm / 2 + tol &&
-        Math.abs(ly) <= item.depth_cm / 2 + tol &&
+        Math.abs(lx) <= Math.max(item.width_cm / 2, minHalf) + tol &&
+        Math.abs(ly) <= Math.max(item.depth_cm / 2, minHalf) + tol &&
         (!best || item.width_cm * item.depth_cm < best.width_cm * best.depth_cm)
       ) {
         best = raw;
@@ -1098,18 +1155,132 @@ export class FloorplanCanvas extends LitElement {
     return best;
   }
 
+  /** Half-size of an item's selection box, centimetres — padded out for
+   * small items so handles don't sit on top of each other — and whether
+   * it's small enough to need a separate move grip. */
+  private _furnitureFrame(item: FurnitureItem): {
+    w: number;
+    d: number;
+    small: boolean;
+  } {
+    const k = this.unitsPerCm;
+    const min = this._pxToUnits(FURNITURE_SMALL_PX) / k;
+    return {
+      w: Math.max(item.width_cm, min) / 2,
+      d: Math.max(item.depth_cm, min) / 2,
+      small: Math.min(item.width_cm, item.depth_cm) < min,
+    };
+  }
+
   private _furnitureHandles(
     raw: FurnitureItem,
-  ): Record<FurnitureHandle, [number, number]> {
+  ): Partial<Record<FurnitureHandle, [number, number]>> {
     const item = this._effectiveFurniture(raw);
-    const w = item.width_cm / 2;
-    const d = item.depth_cm / 2;
-    const above = this._pxToUnits(FURNITURE_ROTATE_HANDLE_PX) / this.unitsPerCm;
+    const { w, d, small } = this._furnitureFrame(item);
+    const off = this._pxToUnits(FURNITURE_ROTATE_HANDLE_PX) / this.unitsPerCm;
     return {
-      rotate: this._furnitureToImage(item, 0, -d - above),
+      rotate: this._furnitureToImage(item, 0, -d - off),
       corner: this._furnitureToImage(item, w, d),
       right: this._furnitureToImage(item, w, 0),
       bottom: this._furnitureToImage(item, 0, d),
+      ...(small ? { move: this._furnitureToImage(item, 0, d + off) } : {}),
+    };
+  }
+
+  /** An item's axis-aligned bounding box (stored units). */
+  private _furnitureBox(item: FurnitureItem): Box {
+    const k = this.unitsPerCm;
+    const r = (item.rotation_deg * Math.PI) / 180;
+    const c = Math.abs(Math.cos(r));
+    const s = Math.abs(Math.sin(r));
+    const ex = ((item.width_cm * c + item.depth_cm * s) / 2) * k;
+    const ey = ((item.width_cm * s + item.depth_cm * c) / 2) * k;
+    return {
+      x1: item.x - ex,
+      y1: item.y - ey,
+      x2: item.x + ex,
+      y2: item.y + ey,
+    };
+  }
+
+  /** Smart guides: a dragged item's edges and centre snap to other items'
+   * edges and centres and to wall faces, each axis on its own, with a
+   * guide line drawn across both. Shift drags freely. */
+  private _snapFurnitureMove(
+    item: FurnitureItem,
+    x: number,
+    y: number,
+  ): { x: number; y: number; guides: { x: Guide | null; y: Guide | null } } {
+    const radius = this._pxToUnits(FURNITURE_GUIDE_PX);
+    const box = this._furnitureBox({ ...item, x, y });
+    const xs: { v: number; a: number; b: number; k: number }[] = [];
+    const ys: { v: number; a: number; b: number; k: number }[] = [];
+    for (const other of this.furniture) {
+      if (other.id === item.id) continue;
+      const o = this._furnitureBox(other);
+      [o.x1, (o.x1 + o.x2) / 2, o.x2].forEach((v, k) =>
+        xs.push({ v, a: o.y1, b: o.y2, k }),
+      );
+      [o.y1, (o.y1 + o.y2) / 2, o.y2].forEach((v, k) =>
+        ys.push({ v, a: o.x1, b: o.x2, k }),
+      );
+    }
+    for (const wall of this.walls) {
+      const half = (wallThicknessCm(wall) / 2) * this.unitsPerCm;
+      for (const [px, py] of wall.points) {
+        for (const v of [px - half, px + half])
+          xs.push({ v, a: py, b: py, k: -1 });
+        for (const v of [py - half, py + half])
+          ys.push({ v, a: px, b: px, k: -1 });
+      }
+    }
+    // Like-for-like first (centre to centre, edge to same edge, any edge to
+    // a wall face), as PowerPoint does; touching edges still snap, but
+    // only when they're clearly the closer fit.
+    const best = (
+      edges: number[],
+      cands: { v: number; a: number; b: number; k: number }[],
+    ) => {
+      let hit: { shift: number; v: number; a: number; b: number } | null = null;
+      let hitScore = Infinity;
+      edges.forEach((e, ek) => {
+        for (const c of cands) {
+          const shift = c.v - e;
+          if (Math.abs(shift) > radius) continue;
+          const score =
+            Math.abs(shift) + (c.k === -1 || c.k === ek ? 0 : radius * 0.6);
+          if (score < hitScore) {
+            hitScore = score;
+            hit = { shift, v: c.v, a: c.a, b: c.b };
+          }
+        }
+      });
+      return hit as { shift: number; v: number; a: number; b: number } | null;
+    };
+    const hx = best([box.x1, (box.x1 + box.x2) / 2, box.x2], xs);
+    const hy = best([box.y1, (box.y1 + box.y2) / 2, box.y2], ys);
+    const nx = x + (hx?.shift ?? 0);
+    const ny = y + (hy?.shift ?? 0);
+    const moved = this._furnitureBox({ ...item, x: nx, y: ny });
+    return {
+      x: nx,
+      y: ny,
+      guides: {
+        x: hx
+          ? {
+              pos: hx.v,
+              a: Math.min(hx.a, moved.y1),
+              b: Math.max(hx.b, moved.y2),
+            }
+          : null,
+        y: hy
+          ? {
+              pos: hy.v,
+              a: Math.min(hy.a, moved.x1),
+              b: Math.max(hy.b, moved.x2),
+            }
+          : null,
+      },
     };
   }
 
@@ -1119,6 +1290,7 @@ export class FloorplanCanvas extends LitElement {
   private _furnitureHandleEdit(
     item: FurnitureItem,
     handle: FurnitureHandle,
+    startLocal: [number, number],
     image: { x: number; y: number },
     free: boolean,
   ): FurnitureEdit {
@@ -1136,12 +1308,19 @@ export class FloorplanCanvas extends LitElement {
       if (!free) deg = Math.round(deg / 15) * 15;
       return { ...base, rotation_deg: ((deg % 360) + 360) % 360 };
     }
+    // Relative to where the handle was grabbed, so a handle sitting out on
+    // a small item's padded box doesn't jump the size on the first move.
     const [lx, ly] = this._imageToFurniture(item, image.x, image.y);
     const snap = (v: number) =>
       Math.max(FURNITURE_MIN_CM, free ? v : Math.round(v));
     const w =
-      handle === "bottom" ? item.width_cm : snap(lx + item.width_cm / 2);
-    const d = handle === "right" ? item.depth_cm : snap(ly + item.depth_cm / 2);
+      handle === "bottom"
+        ? item.width_cm
+        : snap(item.width_cm + lx - startLocal[0]);
+    const d =
+      handle === "right"
+        ? item.depth_cm
+        : snap(item.depth_cm + ly - startLocal[1]);
     const [x, y] = this._furnitureToImage(
       item,
       (w - item.width_cm) / 2,
@@ -1292,8 +1471,16 @@ export class FloorplanCanvas extends LitElement {
       );
       if (selected && !selected.locked) {
         const handles = this._furnitureHandles(selected);
-        for (const handle of ["rotate", "corner", "right", "bottom"] as const) {
-          const [hx, hy] = handles[handle];
+        for (const handle of [
+          "move",
+          "rotate",
+          "corner",
+          "right",
+          "bottom",
+        ] as const) {
+          const at = handles[handle];
+          if (!at) continue;
+          const [hx, hy] = at;
           if (distance(hx, hy, image.x, image.y) <= hitR) {
             return { type: "furnitureHandle", item: selected, handle };
           }
@@ -1373,6 +1560,7 @@ export class FloorplanCanvas extends LitElement {
   };
 
   private _onPointerMove = (e: PointerEvent): void => {
+    this.lastPointer = this._clientToImage(e.clientX, e.clientY);
     if (!this._pointers.has(e.pointerId)) {
       // A bare hover (no button down, so never registered in _pointers) —
       // the only thing this component does with it is preview where a
@@ -1485,10 +1673,16 @@ export class FloorplanCanvas extends LitElement {
       const gesture = this._gesture;
       const item = this.furniture.find((f) => f.id === gesture.id);
       if (item) {
+        let x = item.x + image.x - gesture.startX;
+        let y = item.y + image.y - gesture.startY;
+        let guides: { x: Guide | null; y: Guide | null } = { x: null, y: null };
+        if (!e.shiftKey)
+          ({ x, y, guides } = this._snapFurnitureMove(item, x, y));
+        this._furnitureGuides = guides;
         this._liveFurniture = {
           id: item.id,
-          x: item.x + image.x - gesture.startX,
-          y: item.y + image.y - gesture.startY,
+          x,
+          y,
           rotation_deg: item.rotation_deg,
           width_cm: item.width_cm,
           depth_cm: item.depth_cm,
@@ -1499,8 +1693,9 @@ export class FloorplanCanvas extends LitElement {
       const item = this.furniture.find((f) => f.id === gesture.id);
       if (item) {
         this._liveFurniture = this._furnitureHandleEdit(
-          item,
+          gesture.start,
           gesture.handle,
+          gesture.startLocal,
           image,
           e.shiftKey,
         );
@@ -1592,11 +1787,26 @@ export class FloorplanCanvas extends LitElement {
     // _downHit is always "empty" in any non-select mode).
     if (this.mode === "align") return { kind: "alignDrag" };
     if (this.readOnly) return { kind: "pan" };
-    if (this._downHit?.type === "furnitureHandle") {
+    if (this._downHit?.type === "furnitureHandle" && this._lastImage) {
+      const { item, handle } = this._downHit;
+      if (handle === "move") {
+        return {
+          kind: "furnitureMove",
+          id: item.id,
+          startX: this._lastImage.x,
+          startY: this._lastImage.y,
+        };
+      }
       return {
         kind: "furnitureHandle",
-        id: this._downHit.item.id,
-        handle: this._downHit.handle,
+        id: item.id,
+        handle,
+        start: item,
+        startLocal: this._imageToFurniture(
+          item,
+          this._lastImage.x,
+          this._lastImage.y,
+        ),
       };
     }
     if (
@@ -1649,6 +1859,7 @@ export class FloorplanCanvas extends LitElement {
   }
 
   private _onPointerLeave = (): void => {
+    this.lastPointer = null;
     this._hoverSnap = null;
     this._hoverImage = null;
   };
@@ -1704,6 +1915,7 @@ export class FloorplanCanvas extends LitElement {
     ) {
       const edit = this._liveFurniture;
       this._liveFurniture = null;
+      this._furnitureGuides = { x: null, y: null };
       const item = this.furniture.find((f) => f.id === edit.id);
       const changed =
         !item ||
@@ -2087,6 +2299,7 @@ export class FloorplanCanvas extends LitElement {
     this._liveRoomLabel = null;
     this._liveOpeningEdit = null;
     this._liveFurniture = null;
+    this._furnitureGuides = { x: null, y: null };
     this._gesture = null;
     this._gestureCancelled = true;
     this._svg.style.cursor = "";
@@ -2316,7 +2529,7 @@ export class FloorplanCanvas extends LitElement {
         stroke-width=${isSelected ? 3 : 2}
       >${lightsText ? svg`<title>${room.name}: ${lightsText}</title>` : nothing}</polygon>
       <text class="room-label" x=${cx} y=${cy}>${room.name}${
-        lightsText
+        lightsText && this.showLightCount
           ? svg`<tspan class="room-lights" x=${cx} dy="1.2em">${lightsText}</tspan>`
           : nothing
       }</text>
@@ -2910,7 +3123,10 @@ export class FloorplanCanvas extends LitElement {
         <g transform=${inner}>${renderPrims(prims, !!item.fill || !!live?.active)}</g>
         ${
           selected
-            ? svg`<rect class="furniture-outline" x=${-item.width_cm / 2} y=${-item.depth_cm / 2} width=${item.width_cm} height=${item.depth_cm}></rect>`
+            ? (() => {
+                const f = this._furnitureFrame(item);
+                return svg`<rect class="furniture-outline" x=${-f.w} y=${-f.d} width=${f.w * 2} height=${f.d * 2}></rect>`;
+              })()
             : nothing
         }
         <title>${label}</title>
@@ -2931,14 +3147,46 @@ export class FloorplanCanvas extends LitElement {
     if (!item || item.locked) return nothing;
     const h = this._furnitureHandles(item);
     const live = this._effectiveFurniture(item);
-    const top = this._furnitureToImage(live, 0, -live.depth_cm / 2);
+    const frame = this._furnitureFrame(live);
+    const top = this._furnitureToImage(live, 0, -frame.d);
     const r = this._pxToUnits(VERTEX_RADIUS_PX);
+    const square = (
+      at: [number, number] | undefined,
+      size: number,
+      cls = "",
+    ) =>
+      at
+        ? svg`<rect class="furniture-handle ${cls}" x=${at[0] - size} y=${at[1] - size} width=${size * 2} height=${size * 2}></rect>`
+        : nothing;
+    const rotate = h.rotate!;
+    const move = h.move;
+    // A four-way arrow grip for items too small to grab comfortably.
+    const g = r * 1.5;
+    const a = g * 0.62;
+    const moveGrip = move
+      ? svg`<g class="furniture-move" transform="translate(${move[0]} ${move[1]})">
+          <circle class="furniture-handle move" r=${g}></circle>
+          <path class="furniture-move-arrows" d="M0 ${-a} L${a * 0.35} ${-a * 0.55} M0 ${-a} L${-a * 0.35} ${-a * 0.55} M0 ${-a} V${a} M0 ${a} L${a * 0.35} ${a * 0.55} M0 ${a} L${-a * 0.35} ${a * 0.55} M${-a} 0 H${a} M${-a} 0 L${-a * 0.55} ${a * 0.35} M${-a} 0 L${-a * 0.55} ${-a * 0.35} M${a} 0 L${a * 0.55} ${a * 0.35} M${a} 0 L${a * 0.55} ${-a * 0.35}"></path>
+        </g>`
+      : nothing;
     return svg`
-      <line class="furniture-outline" x1=${top[0]} y1=${top[1]} x2=${h.rotate[0]} y2=${h.rotate[1]}></line>
-      <circle class="furniture-handle rotate" cx=${h.rotate[0]} cy=${h.rotate[1]} r=${r}></circle>
-      <rect class="furniture-handle" x=${h.right[0] - r * 0.8} y=${h.right[1] - r * 0.8} width=${r * 1.6} height=${r * 1.6}></rect>
-      <rect class="furniture-handle" x=${h.bottom[0] - r * 0.8} y=${h.bottom[1] - r * 0.8} width=${r * 1.6} height=${r * 1.6}></rect>
-      <rect class="furniture-handle corner" x=${h.corner[0] - r} y=${h.corner[1] - r} width=${r * 2} height=${r * 2}></rect>
+      <line class="furniture-outline" x1=${top[0]} y1=${top[1]} x2=${rotate[0]} y2=${rotate[1]}></line>
+      <circle class="furniture-handle rotate" cx=${rotate[0]} cy=${rotate[1]} r=${r}></circle>
+      ${square(h.right, r * 0.8)}
+      ${square(h.bottom, r * 0.8)}
+      ${square(h.corner, r, "corner")}
+      ${moveGrip}
+    `;
+  }
+
+  /** PowerPoint-style alignment guides while an item is dragged. */
+  private _renderFurnitureGuides() {
+    const { x, y } = this._furnitureGuides;
+    if (!x && !y) return nothing;
+    const pad = this._pxToUnits(12);
+    return svg`
+      ${x ? svg`<line class="smart-guide" x1=${x.pos} y1=${x.a - pad} x2=${x.pos} y2=${x.b + pad}></line>` : nothing}
+      ${y ? svg`<line class="smart-guide" x1=${y.a - pad} y1=${y.pos} x2=${y.b + pad} y2=${y.pos}></line>` : nothing}
     `;
   }
 
@@ -3004,6 +3252,7 @@ export class FloorplanCanvas extends LitElement {
       defs.push(svg`
         <linearGradient id=${id} gradientUnits="userSpaceOnUse" x1=${from[0]} y1=${from[1]} x2=${to[0]} y2=${to[1]}>
           <stop offset="0" stop-color=${color} stop-opacity=${Math.min(0.85, alpha)}></stop>
+          <stop offset="0.55" stop-color=${color} stop-opacity=${Math.min(0.85, alpha) * 0.55}></stop>
           <stop offset="1" stop-color=${color} stop-opacity="0"></stop>
         </linearGradient>`);
       patches.push(
@@ -3078,22 +3327,26 @@ export class FloorplanCanvas extends LitElement {
         }
         const day = daylight(sun.elevation);
         const shade = sides.length === 1 || linked;
-        if (day <= 0) {
-          // Night: a faint glow through an open cover, shade if closed.
-          if (linked && openness >= 0.05)
-            soft(width * 1.2, "#90caf9", 0.14 * openness);
-          else if (linked) soft(width * 1.4, "#263238", 0.35);
-          continue;
+        const depth = Math.max(width * 1.4, 1.2 * m);
+        // Every open window always shows something: a deep-blue night-sky
+        // patch after dark (fading in through twilight), and by day sky
+        // light that turns from warm and pale to a cool blue-grey, like a
+        // soft shadow, as clouds thicken.
+        if (day < 1) soft(depth, NIGHT_COLOR, 0.3 * (1 - day) * openness);
+        // Behind a closed cover: charcoal shade, day or night.
+        if (linked && openness < 0.95) {
+          soft(depth, SHADE_COLOR, 0.45 * (1 - openness));
         }
+        if (day <= 0) continue;
         // Clouds: the direct beam fades out as they thicken (gone when
-        // overcast); diffuse sky light stays, greyer and a touch brighter.
+        // overcast).
         const clouds = this.sky?.clouds ?? 0;
         const sunShare = Math.max(0, 1 - clouds / 0.85) ** 1.5;
         const color = cloudySunColor(sun.elevation, clouds);
         soft(
           Math.max(width * 1.3, 1 * m),
           skyColor(clouds),
-          0.18 * (1 + 0.4 * clouds) * day * openness,
+          (0.3 + 0.15 * clouds) * day * openness,
         );
         // Direct sun: only through a window facing it.
         const out = planBearing(-nx, -ny, this.northDeg ?? 0);
@@ -3132,13 +3385,6 @@ export class FloorplanCanvas extends LitElement {
               clipId,
             );
           }
-        }
-        if (linked && openness < 0.95) {
-          soft(
-            Math.max(width * 1.4, 1.2 * m),
-            "#263238",
-            0.4 * (1 - openness) * day,
-          );
         }
       }
     }
@@ -3365,7 +3611,7 @@ export class FloorplanCanvas extends LitElement {
           ${this.showFurniture ? this.furniture.map((item) => this._renderFurniture(item)) : nothing}
           ${this.walls.map((wall) => this._renderWall(wall))}
           ${this.openings.map((opening) => this._renderOpening(opening))}
-          ${this._renderFurnitureHandles()}
+          ${this._renderFurnitureGuides()} ${this._renderFurnitureHandles()}
           ${this.meshLinks.map((link) => this._renderMeshLink(link))}
           ${this.meshStubs.map((stub) => this._renderMeshStubLine(stub))}
           ${this._renderMeshStubMarkers()}

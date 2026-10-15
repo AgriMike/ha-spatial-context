@@ -272,6 +272,10 @@ export class SpatialContextPanel extends LitElement {
   @state() private _armedFurnitureKind: string | null = null;
   @state() private _armedFurnitureRotation = 0;
   @state() private _furnitureLibraryOpen = false;
+  /** Ctrl/Cmd+C'd furniture item, and how many times it's been pasted
+   * (each paste without a pointer lands a step further along). */
+  private _furnitureClipboard: FurnitureItem | null = null;
+  private _pasteCount = 0;
   /** Canvas overlays (furniture, live lights, cover shading) — a
    * per-browser preference. */
   @state() private _overlays: OverlayToggles = readStoredOverlays();
@@ -2787,6 +2791,19 @@ export class SpatialContextPanel extends LitElement {
       this._onFurnitureDuplicate();
       return;
     }
+    // Copy / cut / paste furniture — works across floors.
+    if (mod && (key === "c" || key === "x") && item) {
+      e.preventDefault();
+      this._furnitureClipboard = { ...item };
+      this._pasteCount = 0;
+      if (key === "x") this._onFurnitureDelete();
+      return;
+    }
+    if (mod && key === "v" && this._furnitureClipboard) {
+      e.preventDefault();
+      this._pasteFurniture();
+      return;
+    }
     const nudge: Record<string, [number, number]> = {
       ArrowLeft: [-1, 0],
       ArrowRight: [1, 0],
@@ -3273,6 +3290,26 @@ export class SpatialContextPanel extends LitElement {
     this._updateLayout({ furniture: [...this._layout.furniture, copy] });
     this._selectedFurnitureId = copy.id;
   };
+
+  /** Pastes the copied item under the pointer when it's over the plan,
+   * else a little further along from the original each time. */
+  private _pasteFurniture(): void {
+    const source = this._furnitureClipboard;
+    if (!source) return;
+    this._pasteCount += 1;
+    const at = this._canvas?.lastPointer;
+    const step = 30 * this._unitsPerCm * this._pasteCount;
+    const copy: FurnitureItem = {
+      ...source,
+      id: newId("furniture"),
+      x: at ? at.x : source.x + step,
+      y: at ? at.y : source.y + step,
+      locked: false,
+    };
+    this._updateLayout({ furniture: [...this._layout.furniture, copy] });
+    this._resetSelection();
+    this._selectedFurnitureId = copy.id;
+  }
 
   /** Draw order: front = drawn last (on top). */
   private _onFurnitureOrder = (e: CustomEvent<{ front: boolean }>) => {
@@ -4510,6 +4547,7 @@ export class SpatialContextPanel extends LitElement {
                     .showFurniture=${this._overlays.furniture}
                     .showLights=${this._overlays.lights}
                     .showCovers=${this._overlays.covers}
+                    .showLightCount=${this._settings.show_light_count !== false}
                     .northDeg=${this._layout.north_deg}
                     .location=${this._location}
                     .sunTime=${this._sunTime}

@@ -43,6 +43,9 @@ export interface SpatialContextCardConfig {
   show_background?: boolean;
   /** Zoom and overlay buttons on the plan. */
   show_controls?: boolean;
+  /** "x of y lights on" under room names; defaults to the panel's
+   * setting. */
+  show_light_count?: boolean;
   room_tap_action?: TapAction;
   cover_tap_action?: TapAction;
   device_tap_action?: "more-info" | "none";
@@ -102,6 +105,8 @@ class SpatialContextCard extends HTMLElement {
   private _overlays = { furniture: true, lights: true, covers: true };
   /** The panel's weather setting (Settings → Daylight). */
   private _weatherSetting: string | null = null;
+  /** The panel's Settings → Plan → light count choice. */
+  private _lightCountSetting = true;
 
   constructor() {
     super();
@@ -202,12 +207,14 @@ class SpatialContextCard extends HTMLElement {
         loadCanvas(),
       ]);
       this._layout = { ...layout, furniture: layout.furniture ?? [] };
-      this._weatherSetting = await hass.connection
-        .sendMessagePromise<{ weather_entity_id?: string | null }>({
-          type: "spatial_context/get_settings",
-        })
-        .then((s) => s.weather_entity_id ?? null)
+      const settings = await hass.connection
+        .sendMessagePromise<{
+          weather_entity_id?: string | null;
+          show_light_count?: boolean;
+        }>({ type: "spatial_context/get_settings" })
         .catch(() => null);
+      this._weatherSetting = settings?.weather_entity_id ?? null;
+      this._lightCountSetting = settings?.show_light_count !== false;
       this._entities = new Map(entities.map((e) => [e.entity_id, e]));
       this._error = null;
     } catch (err) {
@@ -280,6 +287,8 @@ class SpatialContextCard extends HTMLElement {
     c["showFurniture"] = this._overlays.furniture;
     c["showLights"] = this._overlays.lights;
     c["showCovers"] = this._overlays.covers;
+    c["showLightCount"] =
+      this._config.show_light_count ?? this._lightCountSetting;
     c["northDeg"] = l.north_deg ?? null;
     const conf = this._hass?.config;
     c["location"] =
@@ -447,6 +456,7 @@ class SpatialContextCardEditor extends HTMLElement {
       ["show_devices", "Devices"],
       ["show_background", "Background image"],
       ["show_controls", "Zoom & overlay buttons"],
+      ["show_light_count", "Lights-on count under room names"],
     ];
     const option = (
       value: string,

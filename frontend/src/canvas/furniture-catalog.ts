@@ -4,6 +4,7 @@
  * stored in saved layouts (FurnitureItem.kind), so never rename one. */
 
 import type { Opts } from "./furniture-draw";
+import { UI_ICONS } from "./ui-icons";
 
 export type FurnitureCategory =
   | "living"
@@ -21,7 +22,8 @@ export type FurnitureCategory =
   | "garage"
   | "fitness"
   | "pets"
-  | "decor";
+  | "decor"
+  | "icons";
 
 export const FURNITURE_CATEGORIES: { id: FurnitureCategory; icon: string }[] = [
   { id: "living", icon: "mdi:sofa" },
@@ -40,6 +42,7 @@ export const FURNITURE_CATEGORIES: { id: FurnitureCategory; icon: string }[] = [
   { id: "fitness", icon: "mdi:dumbbell" },
   { id: "pets", icon: "mdi:paw" },
   { id: "decor", icon: "mdi:flower" },
+  { id: "icons", icon: "mdi:shape-outline" },
 ];
 
 export interface CatalogItem {
@@ -1216,6 +1219,96 @@ const LIGHTING: Row[] = [
   ["smart_bulb_lamp", "Smart bulb lamp", 25, 25, "lamp"],
   ["string_lights", "String lights", 300, 4, "trackLight"],
   ["night_light", "Night light", 8, 8, "puck"],
+  ["baseboard_light", "Baseboard lighting", 300, 4, "linearLight"],
+  ["cove_light", "Cove lighting", 300, 8, "linearLight", { cove: true }],
+  ["under_cabinet_light", "Under-cabinet light bar", 90, 3, "linearLight"],
+  ["toe_kick_light", "Toe-kick lighting", 240, 3, "linearLight"],
+  ["stair_led_strip", "Stair step LED strip", 100, 3, "linearLight"],
+  ["handrail_light", "Handrail lighting", 300, 5, "linearLight", { pitch: 12 }],
+  [
+    "led_panel_60",
+    "LED panel 60×60",
+    60,
+    60,
+    "panelLight",
+    { cols: 2, rows: 2 },
+  ],
+  [
+    "led_troffer_60x120",
+    "LED troffer 60×120",
+    60,
+    120,
+    "panelLight",
+    { cols: 2, rows: 4 },
+  ],
+  [
+    "led_panel_30x120",
+    "LED panel 30×120",
+    30,
+    120,
+    "panelLight",
+    { cols: 1, rows: 4 },
+  ],
+  ["shop_light", "LED shop light", 120, 15, "shopLight"],
+  ["shop_light_long", "LED shop light (2.4 m)", 240, 15, "shopLight"],
+  ["recessed_gimbal", "Gimbal recessed light", 12, 12, "gimbal"],
+  ["wafer_light", "Wafer (canless) light", 15, 15, "wafer"],
+  ["spotlight", "Spotlight", 15, 45, "spotlight"],
+  ["flood_light", "Flood light", 30, 20, "flood"],
+  ["flood_light_twin", "Twin-head flood light", 40, 20, "flood", { heads: 2 }],
+  [
+    "motion_flood",
+    "Motion flood light",
+    35,
+    22,
+    "flood",
+    { heads: 2, sensor: true },
+  ],
+  ["path_light", "Path light", 20, 20, "pathLight"],
+  ["bollard_light", "Bollard light", 20, 20, "bollard"],
+  ["step_light", "Step light", 12, 6, "stepLight"],
+  [
+    "vanity_light_3",
+    "Vanity light (3 bulbs)",
+    60,
+    12,
+    "vanityBar",
+    { bulbs: 3 },
+  ],
+  [
+    "vanity_light_5",
+    "Vanity light (5 bulbs)",
+    120,
+    12,
+    "vanityBar",
+    { bulbs: 5 },
+  ],
+  ["picture_light", "Picture light", 50, 10, "pictureLight"],
+  ["lantern_outdoor", "Outdoor lantern", 25, 25, "lantern"],
+  ["linear_pendant", "Linear pendant", 120, 20, "linearPendant"],
+  [
+    "island_pendants_3",
+    "Island pendants (3)",
+    180,
+    40,
+    "pendantRow",
+    { lights: 3 },
+  ],
+  ["puck_lights_3", "Puck lights (3)", 60, 8, "pendantRow", { lights: 3 }],
+  ["light_bar_play", "Light bar (Play)", 25, 8, "lightBar"],
+  ["neon_sign", "Neon sign", 80, 6, "neon"],
+  ["track_monorail", "Monorail track lighting", 200, 20, "monorail"],
+  [
+    "sputnik_chandelier",
+    "Sputnik chandelier",
+    90,
+    90,
+    "chandelier",
+    { arms: 12 },
+  ],
+  ["ceiling_fan_light", "Ceiling fan with light", 132, 132, "fanLight"],
+  ["floor_uplight", "Floor uplight", 25, 25, "uplight"],
+  ["exit_sign", "Exit sign", 30, 6, "exitSign"],
 ];
 
 const KIDS: Row[] = [
@@ -1609,10 +1702,71 @@ const DECOR: Row[] = [
   ["plant_small", "Plant (small)", 35, 35, "plant", { leaves: 6 }],
   ["plant_medium", "Plant (medium)", 55, 55, "plant"],
   ["plant_large", "Plant (large)", 80, 80, "plant", { leaves: 9 }],
-  ["fiddle_leaf_fig", "Fiddle-leaf fig", 70, 70, "plant", { leaves: 8 }],
-  ["palm", "Palm", 100, 100, "plant", { leaves: 10 }],
-  ["monstera", "Monstera", 90, 90, "plant", { leaves: 7 }],
-  ["snake_plant", "Snake plant", 35, 35, "cactus"],
+  [
+    "fiddle_leaf_fig",
+    "Fiddle-leaf fig",
+    70,
+    70,
+    "houseplant",
+    { kind: "fiddle" },
+  ],
+  ["palm", "Palm", 100, 100, "houseplant", { kind: "palm" }],
+  ["monstera", "Monstera", 100, 100, "houseplant", { kind: "monstera" }],
+  ["snake_plant", "Snake plant", 40, 40, "houseplant", { kind: "snake" }],
+  [
+    "plant_bird_of_paradise",
+    "Bird of paradise",
+    120,
+    120,
+    "houseplant",
+    { kind: "bird" },
+  ],
+  ["plant_pothos", "Pothos", 70, 70, "houseplant", { kind: "pothos" }],
+  [
+    "plant_pothos_hanging",
+    "Hanging pothos",
+    60,
+    60,
+    "houseplant",
+    { kind: "pothosHanging" },
+  ],
+  ["plant_boston_fern", "Boston fern", 70, 70, "houseplant", { kind: "fern" }],
+  ["plant_peace_lily", "Peace lily", 55, 55, "houseplant", { kind: "peace" }],
+  ["plant_zz", "ZZ plant", 55, 55, "houseplant", { kind: "zz" }],
+  ["plant_rubber", "Rubber plant", 70, 70, "houseplant", { kind: "rubber" }],
+  [
+    "plant_philodendron",
+    "Philodendron",
+    60,
+    60,
+    "houseplant",
+    { kind: "philodendron" },
+  ],
+  ["plant_spider", "Spider plant", 50, 50, "houseplant", { kind: "spider" }],
+  ["plant_aloe", "Aloe vera", 35, 35, "houseplant", { kind: "aloe" }],
+  ["plant_succulent", "Succulent", 20, 20, "houseplant", { kind: "succulent" }],
+  [
+    "plant_pilea",
+    "Pilea (pancake plant)",
+    30,
+    30,
+    "houseplant",
+    { kind: "pilea" },
+  ],
+  ["plant_calathea", "Calathea", 55, 55, "houseplant", { kind: "calathea" }],
+  ["plant_parlor_palm", "Parlor palm", 65, 65, "houseplant", { kind: "palm" }],
+  ["plant_orchid", "Orchid", 35, 35, "houseplant", { kind: "orchid" }],
+  ["plant_dracaena", "Dracaena", 55, 55, "houseplant", { kind: "dracaena" }],
+  ["plant_jade", "Jade plant", 35, 35, "houseplant", { kind: "jade" }],
+  [
+    "plant_olive_tree",
+    "Olive tree (indoor)",
+    90,
+    90,
+    "houseplant",
+    { kind: "olive" },
+  ],
+  ["plant_herb_pots", "Herb pots", 60, 20, "houseplant", { kind: "herbs" }],
   ["cactus", "Cactus", 30, 30, "cactus"],
   ["bonsai", "Bonsai", 30, 25, "tree", { lobes: 6 }],
   ["hanging_plant", "Hanging plant", 35, 35, "plant", { leaves: 6 }],
@@ -1686,6 +1840,17 @@ const DECOR: Row[] = [
   ["recycle_station", "Recycling station", 90, 35, "cubby", { cols: 3 }],
 ];
 
+/** The line-icon set (ui-icons.ts), as placeable 40 cm items — a light
+ * bulb to link to a light, a thermometer to a sensor… */
+const ICONS: Row[] = Object.entries(UI_ICONS).map(([name, icon]) => [
+  `icon_${name}`,
+  icon.label,
+  40,
+  40,
+  "icon",
+  { icon: name },
+]);
+
 const ROWS: [FurnitureCategory, Row[]][] = [
   ["living", LIVING],
   ["bedroom", BEDROOM],
@@ -1703,6 +1868,7 @@ const ROWS: [FurnitureCategory, Row[]][] = [
   ["fitness", FITNESS],
   ["pets", PETS],
   ["decor", DECOR],
+  ["icons", ICONS],
 ];
 
 export const FURNITURE_CATALOG: CatalogItem[] = ROWS.flatMap(

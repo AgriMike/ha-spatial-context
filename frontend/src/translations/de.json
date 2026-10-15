@@ -193,7 +193,10 @@
     "weather": "Wetter für Bewölkung",
     "weatherAuto": "Automatisch",
     "weatherNone": "Wetter ignorieren",
-    "weatherHint": "Wolken dämpfen das Sonnenlicht durch die Fenster: bei bedecktem Himmel kein Strahl, nur weiches Himmelslicht."
+    "weatherHint": "Wolken dämpfen das Sonnenlicht durch die Fenster: bei bedecktem Himmel kein Strahl, nur weiches Himmelslicht.",
+    "plan": "Plan",
+    "lightCount": "Anzahl eingeschalteter Lichter",
+    "lightCountHint": "„2 von 3 Lichtern an“ unter jedem Raumnamen zeigen. Beim Überfahren eines Raums erscheint es immer."
   },
   "picker": {
     "search": "Geräte suchen…",
@@ -419,7 +422,8 @@
       "garage": "Garage & Werkstatt",
       "fitness": "Fitness & Hobby",
       "pets": "Haustiere",
-      "decor": "Deko & Pflanzen"
+      "decor": "Deko & Pflanzen",
+      "icons": "Symbole"
     },
     "entityTitle": "Verknüpfte Entität",
     "entity": "Entität",

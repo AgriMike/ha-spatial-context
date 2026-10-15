@@ -184,10 +184,18 @@ export function skyFromWeather(
   return { clouds: Math.max(0, Math.min(1, clouds)), condition };
 }
 
-/** Grey-white of light from an overcast sky. */
+/** Diffuse light through a window: warm and pale under a clear sky,
+ * turning to a cool blue-grey (reading like a soft shadow on the floor) as
+ * clouds thicken. */
 export function skyColor(clouds: number): string {
-  return mix("#fffbe6", "#e6ebef", clouds);
+  return mix("#fff3c4", "#90a4ae", clouds);
 }
+
+/** The night sky through an open window. */
+export const NIGHT_COLOR = "#3949ab";
+
+/** Behind a closed cover. */
+export const SHADE_COLOR = "#263238";
 
 /** Sunlight, washed toward grey as clouds thicken. */
 export function cloudySunColor(elevation: number, clouds: number): string {

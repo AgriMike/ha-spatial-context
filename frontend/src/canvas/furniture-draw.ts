@@ -10,6 +10,8 @@
  * (what "Fill" shades). */
 
 import { svg, type SVGTemplateResult } from "lit";
+import { unsafeSVG } from "lit/directives/unsafe-svg.js";
+import { UI_ICONS } from "./ui-icons";
 
 export type Pt = [number, number];
 
@@ -21,6 +23,8 @@ export type Prim =
       w: number;
       h: number;
       r?: number | undefined;
+      /** Degrees about the rect's own centre. */
+      rot?: number | undefined;
       dash?: boolean | undefined;
     }
   | {
@@ -41,7 +45,15 @@ export type Prim =
       dash?: boolean | undefined;
     }
   | { t: "poly"; points: Pt[]; closed: boolean; dash?: boolean | undefined }
-  | { t: "path"; d: string; dash?: boolean | undefined };
+  | { t: "path"; d: string; dash?: boolean | undefined }
+  /** A 64x64 single-colour icon (see ui-icons.ts), fitted into w x d. */
+  | {
+      t: "icon";
+      name: string;
+      w: number;
+      d: number;
+      dash?: boolean | undefined;
+    };
 
 export type Opts = Record<string, number | string | boolean | undefined>;
 type Template = (w: number, d: number, o: Opts) => Prim[];
@@ -108,14 +120,28 @@ function chairAt(cx: number, cy: number, angle: number, size = 42): Prim[] {
     cx + lx * c - ly * s,
     cy + lx * s + ly * c,
   ];
+  // A soft, rounded seat with its back rest behind it.
+  const deg = (angle * 180) / Math.PI;
+  const [bx, by] = at(-h - 3.5, 0);
   return [
-    poly([at(-h, -h), at(h, -h), at(h, h), at(-h, h)]),
-    poly([
-      at(-h, -h + 1),
-      at(-h, h - 1),
-      at(-h - 6, h - 3),
-      at(-h - 6, -h + 3),
-    ]),
+    {
+      t: "rect",
+      x: cx - h,
+      y: cy - h,
+      w: size,
+      h: size,
+      r: size * 0.28,
+      rot: deg,
+    },
+    {
+      t: "rect",
+      x: bx - 3,
+      y: by - (h - 3),
+      w: 6,
+      h: size - 6,
+      r: 3,
+      rot: deg,
+    },
   ];
 }
 
@@ -126,6 +152,453 @@ function crossX(x: number, y: number, w: number, h: number): Prim[] {
 /** A burner/hob ring. */
 function burner(cx: number, cy: number, r: number): Prim[] {
   return [circ(cx, cy, r), circ(cx, cy, r * 0.45)];
+}
+
+// --- houseplants -------------------------------------------------------------
+
+type LeafShape = "lance" | "heart" | "blade" | "oval";
+
+/** A leaf seen from above as an SVG path: its base `start` along the
+ * direction `deg` from (cx, cy), reaching `len` further, `wid` across. */
+function leafPath(
+  cx: number,
+  cy: number,
+  deg: number,
+  start: number,
+  len: number,
+  wid: number,
+  shape: LeafShape,
+): string {
+  const a = (deg * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const P = (x: number, y: number) =>
+    `${(cx + x * c - y * s).toFixed(2)},${(cy + x * s + y * c).toFixed(2)}`;
+  const b = start;
+  const t = start + len;
+  switch (shape) {
+    case "heart":
+      return `M${P(b, 0)} C${P(b + len * 0.02, -wid * 1.25)} ${P(b + len * 0.85, -wid * 1.05)} ${P(t, 0)} C${P(b + len * 0.85, wid * 1.05)} ${P(b + len * 0.02, wid * 1.25)} ${P(b, 0)} Z`;
+    case "blade":
+      return `M${P(b, -wid * 0.45)} Q${P(b + len * 0.65, -wid)} ${P(t, 0)} Q${P(b + len * 0.65, wid)} ${P(b, wid * 0.45)} Z`;
+    case "oval":
+      return `M${P(b, 0)} C${P(b + len * 0.1, -wid * 1.1)} ${P(b + len * 0.9, -wid * 1.1)} ${P(t, 0)} C${P(b + len * 0.9, wid * 1.1)} ${P(b + len * 0.1, wid * 1.1)} ${P(b, 0)} Z`;
+    default:
+      return `M${P(b, 0)} Q${P(b + len / 2, -wid)} ${P(t, 0)} Q${P(b + len / 2, wid)} ${P(b, 0)} Z`;
+  }
+}
+
+/** A straight vein/stem line along a leaf's direction. */
+function ray(
+  cx: number,
+  cy: number,
+  deg: number,
+  from: number,
+  to: number,
+): Prim {
+  const a = (deg * Math.PI) / 180;
+  return line(
+    cx + Math.cos(a) * from,
+    cy + Math.sin(a) * from,
+    cx + Math.cos(a) * to,
+    cy + Math.sin(a) * to,
+  );
+}
+
+/** Evenly spread angles, nudged so a ring of leaves doesn't look stamped. */
+function spread(n: number, offset = 0, jitter = 9): number[] {
+  return Array.from(
+    { length: n },
+    (_, i) => offset + (i * 360) / n + (((i * 37) % 3) - 1) * jitter,
+  );
+}
+
+function pot(cx: number, cy: number, r: number): Prim[] {
+  return [circ(cx, cy, r), circ(cx, cy, r * 0.78, true)];
+}
+
+/** A trailing vine from (x0, y0) curving out, small leaves along it. */
+function vine(
+  x0: number,
+  y0: number,
+  deg: number,
+  len: number,
+  leaf: number,
+  bend: number,
+): Prim[] {
+  const a = (deg * Math.PI) / 180;
+  const ex = x0 + Math.cos(a) * len;
+  const ey = y0 + Math.sin(a) * len;
+  const qx = (x0 + ex) / 2 - Math.sin(a) * len * bend;
+  const qy = (y0 + ey) / 2 + Math.cos(a) * len * bend;
+  const out: Prim[] = [path(`M${x0},${y0} Q${qx},${qy} ${ex},${ey}`)];
+  for (let i = 1; i <= 4; i++) {
+    const t = i / 4.4;
+    const x = (1 - t) ** 2 * x0 + 2 * (1 - t) * t * qx + t * t * ex;
+    const y = (1 - t) ** 2 * y0 + 2 * (1 - t) * t * qy + t * t * ey;
+    const dx = 2 * (1 - t) * (qx - x0) + 2 * t * (ex - qx);
+    const dy = 2 * (1 - t) * (qy - y0) + 2 * t * (ey - qy);
+    const tangent = (Math.atan2(dy, dx) * 180) / Math.PI;
+    out.push(
+      path(
+        leafPath(
+          x,
+          y,
+          tangent + (i % 2 ? 55 : -55),
+          0,
+          leaf,
+          leaf * 0.42,
+          "heart",
+        ),
+      ),
+    );
+  }
+  return out;
+}
+
+/** Top-down houseplants, by `kind`. Leaves first (so "Fill" shades the
+ * foliage), pot rim drawn where it would show. */
+function houseplant(w: number, d: number, kind: string): Prim[] {
+  const cx = w / 2;
+  const cy = d / 2;
+  const R = Math.min(w, d) / 2;
+  const out: Prim[] = [];
+  const leaves = (
+    n: number,
+    shape: LeafShape,
+    start: number,
+    len: number,
+    wid: number,
+    veins = true,
+    offset = 0,
+  ) => {
+    for (const deg of spread(n, offset)) {
+      out.push(path(leafPath(cx, cy, deg, start, len, wid, shape)));
+      if (veins) out.push(ray(cx, cy, deg, start, start + len * 0.85));
+    }
+  };
+  switch (kind) {
+    case "monstera": {
+      // Big split heart leaves, their slits cut in from the edges.
+      for (const deg of spread(6, 15, 12)) {
+        const len = R * 0.72;
+        const wid = R * 0.34;
+        const st = R * 0.24;
+        out.push(path(leafPath(cx, cy, deg, st, len, wid, "heart")));
+        out.push(ray(cx, cy, deg, st, st + len * 0.9));
+        const a = (deg * Math.PI) / 180;
+        for (const f of [0.3, 0.52, 0.72]) {
+          for (const side of [-1, 1]) {
+            const along = st + len * f;
+            const edge =
+              wid * 0.95 * Math.sin(Math.PI * Math.min(0.95, f + 0.1));
+            const x1 = cx + Math.cos(a) * along - Math.sin(a) * side * edge;
+            const y1 = cy + Math.sin(a) * along + Math.cos(a) * side * edge;
+            const x2 =
+              cx +
+              Math.cos(a) * (along - len * 0.05) -
+              Math.sin(a) * side * wid * 0.3;
+            const y2 =
+              cy +
+              Math.sin(a) * (along - len * 0.05) +
+              Math.cos(a) * side * wid * 0.3;
+            out.push(line(x1, y1, x2, y2));
+          }
+        }
+        out.push(ray(cx, cy, deg, R * 0.16, st));
+      }
+      out.push(...pot(cx, cy, R * 0.26));
+      break;
+    }
+    case "bird": {
+      // Long paddle leaves on bare stems, fanned out.
+      for (const deg of spread(7, 0, 6)) {
+        out.push(ray(cx, cy, deg, R * 0.14, R * 0.42));
+        out.push(
+          path(leafPath(cx, cy, deg, R * 0.42, R * 0.56, R * 0.13, "oval")),
+        );
+        out.push(ray(cx, cy, deg, R * 0.42, R * 0.94));
+      }
+      out.push(...pot(cx, cy, R * 0.2));
+      break;
+    }
+    case "snake": {
+      // Upright, banded sword leaves fanning out of the pot.
+      out.push(...pot(cx, cy, R * 0.42));
+      for (const deg of spread(7, 10, 16)) {
+        const a = (deg * Math.PI) / 180;
+        const st = R * 0.1;
+        const len = R * (0.68 + ((deg * 7) % 3) * 0.08);
+        out.push(path(leafPath(cx, cy, deg, st, len, R * 0.16, "blade")));
+        for (const f of [0.3, 0.5, 0.7]) {
+          const x = cx + Math.cos(a) * (st + len * f);
+          const y = cy + Math.sin(a) * (st + len * f);
+          const hw = R * 0.16 * 0.8 * (1 - f * 0.5);
+          out.push(
+            line(
+              x - Math.sin(a) * hw,
+              y + Math.cos(a) * hw,
+              x + Math.sin(a) * hw * 0.4,
+              y - Math.cos(a) * hw * 0.4,
+            ),
+          );
+        }
+      }
+      break;
+    }
+    case "pothos":
+    case "pothosHanging": {
+      const hanging = kind === "pothosHanging";
+      const pr = R * (hanging ? 0.34 : 0.4);
+      out.push(...pot(cx, cy, pr));
+      leaves(5, "heart", pr * 0.15, pr * 0.75, pr * 0.32, false, 20);
+      for (const deg of spread(hanging ? 6 : 4, 40, 15)) {
+        const a = (deg * Math.PI) / 180;
+        out.push(
+          ...vine(
+            cx + Math.cos(a) * pr,
+            cy + Math.sin(a) * pr,
+            deg,
+            R - pr,
+            R * 0.16,
+            deg % 2 ? 0.25 : -0.25,
+          ),
+        );
+      }
+      if (hanging)
+        for (const deg of [30, 150, 270])
+          out.push(ray(cx, cy, deg, pr, R * 0.5));
+      break;
+    }
+    case "fern":
+      for (const deg of spread(14, 0, 8)) {
+        out.push(ray(cx, cy, deg, R * 0.1, R * 0.96));
+        const a = (deg * Math.PI) / 180;
+        for (let f = 0.25; f < 0.95; f += 0.12) {
+          const x = cx + Math.cos(a) * R * f;
+          const y = cy + Math.sin(a) * R * f;
+          const l = R * 0.1 * (1 - f * 0.6);
+          out.push(
+            line(x, y, x + Math.cos(a + 0.9) * l, y + Math.sin(a + 0.9) * l),
+          );
+          out.push(
+            line(x, y, x + Math.cos(a - 0.9) * l, y + Math.sin(a - 0.9) * l),
+          );
+        }
+      }
+      out.push(circ(cx, cy, R * 0.12));
+      break;
+    case "peace":
+      leaves(8, "lance", R * 0.15, R * 0.8, R * 0.2);
+      for (const deg of [60, 200, 320]) {
+        out.push(
+          path(leafPath(cx, cy, deg, R * 0.25, R * 0.4, R * 0.13, "oval")),
+        );
+      }
+      out.push(circ(cx, cy, R * 0.15));
+      break;
+    case "zz":
+      for (const deg of spread(7, 5, 10)) {
+        out.push(ray(cx, cy, deg, R * 0.1, R * 0.95));
+        const a = (deg * Math.PI) / 180;
+        for (let f = 0.3; f < 0.95; f += 0.16) {
+          for (const side of [-1, 1]) {
+            const x = cx + Math.cos(a) * R * f;
+            const y = cy + Math.sin(a) * R * f;
+            out.push(
+              path(
+                leafPath(x, y, deg + side * 50, 0, R * 0.18, R * 0.07, "oval"),
+              ),
+            );
+          }
+        }
+      }
+      out.push(circ(cx, cy, R * 0.12));
+      break;
+    case "rubber":
+      leaves(7, "oval", R * 0.2, R * 0.75, R * 0.24);
+      out.push(...pot(cx, cy, R * 0.22));
+      break;
+    case "fiddle":
+      leaves(9, "heart", R * 0.18, R * 0.72, R * 0.3, true, 12);
+      out.push(circ(cx, cy, R * 0.14));
+      break;
+    case "philodendron":
+      leaves(7, "heart", R * 0.18, R * 0.7, R * 0.26, true, 25);
+      out.push(...pot(cx, cy, R * 0.22));
+      break;
+    case "spider":
+      for (const deg of spread(16, 0, 6)) {
+        const a = (deg * Math.PI) / 180;
+        const ex = cx + Math.cos(a) * R * 0.95;
+        const ey = cy + Math.sin(a) * R * 0.95;
+        const qx = cx + Math.cos(a + 0.35) * R * 0.6;
+        const qy = cy + Math.sin(a + 0.35) * R * 0.6;
+        out.push(path(`M${cx},${cy} Q${qx},${qy} ${ex},${ey}`));
+      }
+      out.push(...pot(cx, cy, R * 0.25));
+      break;
+    case "aloe":
+      for (const deg of spread(9, 0, 8)) {
+        out.push(
+          path(leafPath(cx, cy, deg, R * 0.08, R * 0.88, R * 0.14, "blade")),
+        );
+      }
+      out.push(circ(cx, cy, R * 0.12));
+      break;
+    case "succulent":
+      for (const [n, r0, r1] of [
+        [10, 0.45, 0.95],
+        [7, 0.25, 0.62],
+        [5, 0.05, 0.32],
+      ] as [number, number, number][]) {
+        for (const deg of spread(n, n * 9, 0))
+          out.push(
+            path(
+              leafPath(
+                cx,
+                cy,
+                deg,
+                R * r0,
+                R * (r1 - r0),
+                R * (r1 - r0) * 0.45,
+                "oval",
+              ),
+            ),
+          );
+      }
+      break;
+    case "pilea":
+      for (const deg of spread(9, 0, 10)) {
+        const a = (deg * Math.PI) / 180;
+        const r = R * 0.62;
+        out.push(ray(cx, cy, deg, R * 0.12, r - R * 0.22));
+        out.push(circ(cx + Math.cos(a) * r, cy + Math.sin(a) * r, R * 0.22));
+      }
+      out.push(circ(cx, cy, R * 0.12));
+      break;
+    case "calathea":
+      for (const deg of spread(8, 0, 10)) {
+        out.push(
+          path(leafPath(cx, cy, deg, R * 0.15, R * 0.8, R * 0.25, "oval")),
+        );
+        out.push(ray(cx, cy, deg, R * 0.15, R * 0.92));
+        const a = (deg * Math.PI) / 180;
+        for (const f of [0.35, 0.55, 0.75]) {
+          const x = cx + Math.cos(a) * R * f;
+          const y = cy + Math.sin(a) * R * f;
+          out.push(
+            line(
+              x - Math.sin(a) * R * 0.12,
+              y + Math.cos(a) * R * 0.12,
+              x + Math.sin(a) * R * 0.12,
+              y - Math.cos(a) * R * 0.12,
+            ),
+          );
+        }
+      }
+      break;
+    case "palm":
+      for (const deg of spread(9, 0, 8)) {
+        out.push(ray(cx, cy, deg, R * 0.1, R * 0.97));
+        const a = (deg * Math.PI) / 180;
+        for (let f = 0.3; f < 0.95; f += 0.1) {
+          const x = cx + Math.cos(a) * R * f;
+          const y = cy + Math.sin(a) * R * f;
+          const l = R * 0.2 * Math.sin(Math.PI * f);
+          out.push(
+            line(x, y, x + Math.cos(a + 0.6) * l, y + Math.sin(a + 0.6) * l),
+          );
+          out.push(
+            line(x, y, x + Math.cos(a - 0.6) * l, y + Math.sin(a - 0.6) * l),
+          );
+        }
+      }
+      out.push(...pot(cx, cy, R * 0.18));
+      break;
+    case "orchid":
+      for (const deg of [20, 200, 110]) {
+        out.push(
+          path(leafPath(cx, cy, deg, R * 0.1, R * 0.72, R * 0.2, "oval")),
+        );
+      }
+      out.push(
+        path(
+          `M${cx},${cy} Q${cx + R * 0.2},${cy - R * 0.6} ${cx + R * 0.7},${cy - R * 0.55}`,
+        ),
+      );
+      for (const f of [0.45, 0.65, 0.85]) {
+        const x = cx + R * 0.7 * f;
+        const y = cy - R * 0.62 * Math.sin(Math.PI * f * 0.6) - R * 0.1;
+        out.push(circ(x, y, R * 0.12), circ(x, y, R * 0.04));
+      }
+      out.push(...pot(cx, cy, R * 0.28));
+      break;
+    case "dracaena":
+      for (const deg of spread(12, 0, 10)) {
+        out.push(
+          path(leafPath(cx, cy, deg, R * 0.12, R * 0.85, R * 0.08, "lance")),
+        );
+      }
+      out.push(circ(cx, cy, R * 0.12));
+      break;
+    case "jade":
+      for (const deg of spread(6, 0, 15)) {
+        const a = (deg * Math.PI) / 180;
+        out.push(ray(cx, cy, deg, R * 0.15, R * 0.7));
+        for (const f of [0.45, 0.75]) {
+          const x = cx + Math.cos(a) * R * f;
+          const y = cy + Math.sin(a) * R * f;
+          out.push(
+            path(leafPath(x, y, deg + 40, 0, R * 0.26, R * 0.12, "oval")),
+          );
+          out.push(
+            path(leafPath(x, y, deg - 40, 0, R * 0.26, R * 0.12, "oval")),
+          );
+        }
+      }
+      out.push(...pot(cx, cy, R * 0.18));
+      break;
+    case "olive":
+      out.push(path(scallopPath(cx, cy, R * 0.92, 11), true));
+      for (const deg of spread(18, 0, 12)) {
+        const a = (deg * Math.PI) / 180;
+        const r = R * (0.35 + ((deg * 13) % 7) * 0.07);
+        out.push(
+          path(
+            leafPath(
+              cx + Math.cos(a) * r,
+              cy + Math.sin(a) * r,
+              deg + 30,
+              0,
+              R * 0.22,
+              R * 0.05,
+              "lance",
+            ),
+          ),
+        );
+      }
+      out.push(circ(cx, cy, R * 0.08));
+      break;
+    case "herbs": {
+      const n = 3;
+      for (let i = 0; i < n; i++) {
+        const px = (w * (i + 0.5)) / n;
+        const pr = Math.min(w / n, d) * 0.42;
+        out.push(circ(px, d / 2, pr));
+        for (const deg of spread(6, i * 20, 10))
+          out.push(
+            path(
+              leafPath(px, d / 2, deg, pr * 0.1, pr * 0.75, pr * 0.22, "oval"),
+            ),
+          );
+      }
+      break;
+    }
+    default:
+      out.push(...pot(cx, cy, R * 0.4));
+  }
+  return out;
 }
 
 function scallopPath(cx: number, cy: number, r: number, lobes: number): string {
@@ -1007,6 +1480,200 @@ const T: Record<string, Template> = {
     path(`M0,${d * 0.3} Q${w / 2},${d * 1.4} ${w},${d * 0.3}`),
   ],
 
+  // Light fixtures
+  /** A long, thin light — baseboard, cove, under-cabinet, toe-kick: a slim
+   * channel with its LEDs dotted along it, however long it's stretched. */
+  linearLight: (w, d, o) => {
+    const out: Prim[] = [rect(0, 0, w, d, Math.min(d / 2, 3))];
+    const pitch = num(o, "pitch", 8);
+    for (let x = pitch / 2; x < w; x += pitch)
+      out.push(circ(x, d / 2, Math.max(0.6, Math.min(d * 0.28, 1.6))));
+    if (flag(o, "cove")) out.push(line(0, -3, w, -3, true));
+    return out;
+  },
+  panelLight: (w, d, o) => {
+    const out = [rect(0, 0, w, d, 1), rect(3, 3, w - 6, d - 6)];
+    const cols = num(o, "cols", 2);
+    const rows = num(o, "rows", Math.max(2, Math.round(d / (w / cols))));
+    for (const x of dividers(3, w - 3, cols - 1))
+      out.push(line(x, 3, x, d - 3, true));
+    for (const y of dividers(3, d - 3, rows - 1))
+      out.push(line(3, y, w - 3, y, true));
+    return out;
+  },
+  shopLight: (w, d) => [
+    rect(0, 0, w, d, 2),
+    line(4, d * 0.33, w - 4, d * 0.33),
+    line(4, d * 0.67, w - 4, d * 0.67),
+    rect(-1, d * 0.2, 3, d * 0.6),
+    rect(w - 2, d * 0.2, 3, d * 0.6),
+  ],
+  gimbal: (w, d) => [
+    circ(w / 2, d / 2, min(w, d) / 2),
+    circ(w / 2, d / 2, min(w, d) * 0.36),
+    circ(w * 0.58, d * 0.44, min(w, d) * 0.18),
+  ],
+  wafer: (w, d) => [
+    circ(w / 2, d / 2, min(w, d) / 2),
+    circ(w / 2, d / 2, min(w, d) * 0.43, true),
+  ],
+  /** A directional spot: its head at the back, beam spreading forward. */
+  spotlight: (w, d) => [
+    circ(w / 2, w / 2, w / 2.2),
+    poly(
+      [
+        [w * 0.3, w * 0.8],
+        [w * 0.7, w * 0.8],
+        [w, d],
+        [0, d],
+      ],
+      true,
+      true,
+    ),
+  ],
+  flood: (w, d, o) => {
+    const heads = num(o, "heads", 1);
+    const out: Prim[] = [rect(0, 0, w, d * 0.45, 2)];
+    for (const x of centres(0, w, heads)) {
+      out.push(
+        rect(x - w / heads / 2 + 2, d * 0.45, w / heads - 4, d * 0.4, 2),
+      );
+      out.push(
+        line(x, d * 0.85, x - w / heads / 2, d, true),
+        line(x, d * 0.85, x + w / heads / 2, d, true),
+      );
+    }
+    if (flag(o, "sensor"))
+      out.push(circ(w / 2, d * 0.22, Math.min(w, d) * 0.12));
+    return out;
+  },
+  pathLight: (w, d) => {
+    const r = min(w, d) / 2;
+    const out: Prim[] = [
+      circ(w / 2, d / 2, r * 0.4),
+      circ(w / 2, d / 2, r * 0.15),
+    ];
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      out.push(
+        line(
+          w / 2 + Math.cos(a) * r * 0.55,
+          d / 2 + Math.sin(a) * r * 0.55,
+          w / 2 + Math.cos(a) * r,
+          d / 2 + Math.sin(a) * r,
+          true,
+        ),
+      );
+    }
+    return out;
+  },
+  bollard: (w, d) => [
+    circ(w / 2, d / 2, min(w, d) / 2),
+    circ(w / 2, d / 2, min(w, d) * 0.3),
+    line(w * 0.15, d / 2, w * 0.85, d / 2),
+    line(w / 2, d * 0.15, w / 2, d * 0.85),
+  ],
+  stepLight: (w, d) => {
+    const out = [rect(0, 0, w, d, 1)];
+    for (const x of dividers(0, w, 3)) out.push(line(x, d * 0.2, x, d * 0.8));
+    return out;
+  },
+  vanityBar: (w, d, o) => {
+    const bulbs = num(o, "bulbs", 3);
+    const out: Prim[] = [rect(0, d * 0.3, w, d * 0.4, d * 0.2)];
+    for (const x of centres(0, w, bulbs))
+      out.push(circ(x, d / 2, Math.min(d / 2, w / bulbs / 3)));
+    return out;
+  },
+  pictureLight: (w, d) => [
+    rect(0, 0, w, d * 0.4, 1),
+    path(`M0,${d * 0.4} Q${w / 2},${d * 1.1} ${w},${d * 0.4}`, true),
+    line(w / 2, 0, w / 2, -d * 0.4),
+  ],
+  lantern: (w, d) => {
+    const pts: Pt[] = Array.from({ length: 8 }, (_, i) => [
+      w / 2 + Math.cos(((i + 0.5) * Math.PI) / 4) * (w / 2),
+      d / 2 + Math.sin(((i + 0.5) * Math.PI) / 4) * (d / 2),
+    ]);
+    return [
+      poly(pts),
+      circ(w / 2, d / 2, min(w, d) * 0.25),
+      ...pts
+        .filter((_, i) => i % 2 === 0)
+        .map(([x, y]) => line(w / 2, d / 2, x, y, true)),
+    ];
+  },
+  linearPendant: (w, d) => [
+    rect(0, d * 0.25, w, d * 0.5, d * 0.25),
+    line(d * 0.4, d / 2, w - d * 0.4, d / 2, true),
+    circ(w * 0.15, d / 2, d * 0.12),
+    circ(w * 0.85, d / 2, d * 0.12),
+  ],
+  pendantRow: (w, d, o) => {
+    const n = num(o, "lights", 3);
+    const out: Prim[] = [line(0, d / 2, w, d / 2, true)];
+    const r = Math.min(d / 2, w / n / 2.4);
+    for (const x of centres(0, w, n))
+      out.push(circ(x, d / 2, r), circ(x, d / 2, r * 0.4));
+    out.unshift(rect(0, 0, w, d, 0, true));
+    return out;
+  },
+  lightBar: (w, d) => [
+    rect(0, 0, w, d, d / 3),
+    rect(2, d * 0.3, w - 4, d * 0.4, d * 0.2),
+    line(-3, d / 2, -1, d / 2),
+    line(w + 1, d / 2, w + 3, d / 2),
+  ],
+  neon: (w, d) => {
+    let p = `M0,${d / 2}`;
+    const waves = Math.max(2, Math.round(w / 15));
+    for (let i = 0; i < waves; i++) {
+      const x = (w * (i + 0.5)) / waves;
+      const y = i % 2 ? d : 0;
+      p += ` Q${x},${y} ${(w * (i + 1)) / waves},${d / 2}`;
+    }
+    return [rect(0, 0, w, d, 1, true), path(p)];
+  },
+  monorail: (w, d) => {
+    const out: Prim[] = [
+      path(
+        `M0,${d / 2} C${w * 0.25},0 ${w * 0.5},${d} ${w * 0.75},${d / 2} S${w},${d * 0.2} ${w},${d * 0.3}`,
+      ),
+    ];
+    for (const t of [0.15, 0.4, 0.65, 0.9])
+      out.push(
+        circ(
+          w * t,
+          d / 2 + Math.sin(t * Math.PI * 2) * d * 0.25,
+          Math.min(d * 0.2, 4),
+        ),
+      );
+    out.unshift(rect(0, 0, w, d, 0, true));
+    return out;
+  },
+  uplight: (w, d) => [
+    circ(w / 2, d / 2, min(w, d) / 2),
+    circ(w / 2, d / 2, min(w, d) * 0.3),
+    circ(w / 2, d / 2, min(w, d) * 0.42, true),
+  ],
+  fanLight: (w, d) => [
+    circ(w / 2, d / 2, min(w, d) * 0.16),
+    circ(w / 2, d / 2, min(w, d) * 0.08),
+    ...T["ceilingFan"]!(w, d, { blades: 5 }).slice(1),
+  ],
+  exitSign: (w, d) => [
+    rect(0, 0, w, d, 1),
+    rect(w * 0.15, d * 0.2, w * 0.7, d * 0.6, 1),
+    line(w * 0.25, d / 2, w * 0.75, d / 2),
+  ],
+
+  /** One of the line icons (opts.icon, see ui-icons.ts), single colour. */
+  icon: (w, d, o) => [{ t: "icon", name: String(o["icon"] ?? ""), w, d }],
+
+  /** A houseplant seen from above, by opts.kind (monstera, bird, snake,
+   * pothos, fern, …). */
+  houseplant: (w, d, o) => houseplant(w, d, String(o["kind"] ?? "")),
+
   // Plants & decor
   plant: (w, d, o) => {
     const n = num(o, "leaves", 7);
@@ -1590,6 +2257,7 @@ function offset(p: Prim, dx: number, dy: number): Prim {
     case "poly":
       return { ...p, points: p.points.map(([x, y]): Pt => [x + dx, y + dy]) };
     case "path":
+    case "icon":
       return p; // only used for leaf ellipses (see planter)
   }
 }
@@ -1621,8 +2289,22 @@ export function renderPrims(
   return prims.map((p, i) => {
     const cls = `${p.dash ? "fx dash" : "fx"}${fillFirst && i === 0 ? " body" : ""}`;
     switch (p.t) {
-      case "rect":
-        return svg`<rect class=${cls} x=${p.x} y=${p.y} width=${max(0.01, p.w)} height=${max(0.01, p.h)} rx=${p.r ?? 0}></rect>`;
+      case "rect": {
+        // Friendlier than square: every box gets soft corners (a pill when
+        // thin), whatever radius its template asked for at least.
+        const w = max(0.01, p.w);
+        const h = max(0.01, p.h);
+        const rx = max(p.r ?? 0, Math.min(Math.min(w, h) * 0.22, 6));
+        return p.rot
+          ? svg`<rect class=${cls} x=${p.x} y=${p.y} width=${w} height=${h} rx=${Math.min(rx, Math.min(w, h) / 2)} transform="rotate(${p.rot} ${p.x + w / 2} ${p.y + h / 2})"></rect>`
+          : svg`<rect class=${cls} x=${p.x} y=${p.y} width=${w} height=${h} rx=${Math.min(rx, Math.min(w, h) / 2)}></rect>`;
+      }
+      case "icon": {
+        const icon = UI_ICONS[p.name];
+        if (!icon) return svg``;
+        const s = Math.min(p.w, p.d) / 64;
+        return svg`<g class="fx-icon" transform="translate(${(p.w - 64 * s) / 2} ${(p.d - 64 * s) / 2}) scale(${s})">${unsafeSVG(icon.svg)}</g>`;
+      }
       case "ellipse":
         return p.rot
           ? svg`<ellipse class=${cls} cx=${p.cx} cy=${p.cy} rx=${max(0.01, p.rx)} ry=${max(0.01, p.ry)} transform="rotate(${p.rot} ${p.cx} ${p.cy})"></ellipse>`
@@ -1653,5 +2335,14 @@ export const FURNITURE_STYLES = `
     vector-effect: non-scaling-stroke;
   }
   .fx.dash { stroke-dasharray: 4 3; }
+  .fx-icon {
+    fill: none;
+    color: var(--fx-color, currentColor);
+    stroke: var(--fx-color, currentColor);
+    stroke-width: var(--fx-stroke-width, 1.5px);
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .fx-icon * { vector-effect: non-scaling-stroke; }
   .fx.body { fill: var(--fx-color, currentColor); fill-opacity: 0.16; }
 `;

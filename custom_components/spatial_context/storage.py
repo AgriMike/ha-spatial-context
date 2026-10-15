@@ -284,6 +284,8 @@ def _empty_settings() -> dict[str, Any]:
         # Weather entity whose cloud cover dims sunlight through windows:
         # None = pick one automatically, "none" = ignore the weather.
         "weather_entity_id": None,
+        # Show "x of y lights on" under each room's name on the plan.
+        "show_light_count": True,
     }
 
 

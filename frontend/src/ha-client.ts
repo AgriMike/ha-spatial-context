@@ -384,6 +384,7 @@ export function emptySettings(): Settings {
     auto_save: true,
     debug_logging: false,
     weather_entity_id: null,
+    show_light_count: true,
   };
 }
 
