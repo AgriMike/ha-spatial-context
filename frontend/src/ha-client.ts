@@ -36,12 +36,10 @@ export class HaClient {
   }
 
   async getLayout(floorId: string): Promise<FloorLayout> {
-    const layout = await this.hass.connection.sendMessagePromise<FloorLayout>(
-      {
-        type: "spatial_context/get_layout",
-        floor_id: floorId,
-      },
-    );
+    const layout = await this.hass.connection.sendMessagePromise<FloorLayout>({
+      type: "spatial_context/get_layout",
+      floor_id: floorId,
+    });
     return { ...layout, furniture: layout.furniture ?? [] };
   }
 

@@ -6,6 +6,8 @@ DOMAIN = "spatial_context"
 
 URL_BASE = "/spatial_context"
 PANEL_FILENAME = "spatial-context-panel.js"
+# The dashboard card (custom:spatial-context-card), loaded on every dashboard.
+CARD_FILENAME = "spatial-context-card.js"
 
 SIDEBAR_TITLE = "Spatial Context"
 # A standard Material Design icon, so the sidebar entry matches HA's own.

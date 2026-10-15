@@ -71,7 +71,11 @@ function toHex([r, g, b]: [number, number, number]): string {
 
 function lightColor(attrs: Record<string, unknown>): [number, number, number] {
   const rgb = attrs["rgb_color"];
-  if (Array.isArray(rgb) && rgb.length === 3 && rgb.every((v) => typeof v === "number")) {
+  if (
+    Array.isArray(rgb) &&
+    rgb.length === 3 &&
+    rgb.every((v) => typeof v === "number")
+  ) {
     return rgb as [number, number, number];
   }
   return WARM_WHITE;
@@ -143,7 +147,8 @@ export function coverOpenness(
   const st = hass.states[entityId];
   if (!st || st.state === "unavailable" || st.state === "unknown") return null;
   const position = st.attributes["current_position"];
-  if (typeof position === "number") return Math.max(0, Math.min(1, position / 100));
+  if (typeof position === "number")
+    return Math.max(0, Math.min(1, position / 100));
   const tilt = st.attributes["current_tilt_position"];
   if (typeof tilt === "number") return Math.max(0, Math.min(1, tilt / 100));
   return st.state === "open" || st.state === "opening" ? 1 : 0;
@@ -181,17 +186,36 @@ export function computePinColors(
   }
   for (const pin of pins) {
     if (!pin.device_id) continue;
-    const ids = byDevice.get(pin.device_id) ?? [];
-    const primary = STATUS_DOMAINS.map((domain) =>
-      ids.find((id) => id.startsWith(`${domain}.`)),
-    ).find(Boolean);
+    const primary = statusEntity(byDevice.get(pin.device_id) ?? []);
     if (!primary) continue;
     const st = hass.states[primary];
     if (!st) continue;
-    const color = statusColor(primary.split(".")[0]!, st.state ?? "", st.attributes);
+    const color = statusColor(
+      primary.split(".")[0]!,
+      st.state ?? "",
+      st.attributes,
+    );
     if (color) out.set(pin.id, color);
   }
   return out;
+}
+
+function statusEntity(ids: string[]): string | undefined {
+  return STATUS_DOMAINS.map((domain) =>
+    ids.find((id) => id.startsWith(`${domain}.`)),
+  ).find(Boolean);
+}
+
+/** The entity a tap on a device should open: its status entity (see
+ * STATUS_DOMAINS), else its first entity. */
+export function primaryEntityForDevice(
+  hass: HomeAssistant,
+  deviceId: string,
+): string | null {
+  const ids = Object.entries(hass.entities ?? {})
+    .filter(([, entry]) => entry?.device_id === deviceId)
+    .map(([id]) => id);
+  return statusEntity(ids) ?? ids[0] ?? null;
 }
 
 function statusColor(
@@ -231,8 +255,12 @@ export function liveSignature(
   pins: Map<string, string>,
 ): string {
   const parts: string[] = [];
-  for (const [id, l] of lights) parts.push(`${id}:${l.on}:${l.level.toFixed(2)}:${l.color}:${l.unavailable}:${l.entityIds.length}`);
-  for (const [id, o] of covers) parts.push(`${id}:${o === null ? "x" : o.toFixed(2)}`);
+  for (const [id, l] of lights)
+    parts.push(
+      `${id}:${l.on}:${l.level.toFixed(2)}:${l.color}:${l.unavailable}:${l.entityIds.length}`,
+    );
+  for (const [id, o] of covers)
+    parts.push(`${id}:${o === null ? "x" : o.toFixed(2)}`);
   for (const [id, c] of pins) parts.push(`${id}:${c}`);
   return parts.join("|");
 }

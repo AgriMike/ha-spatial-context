@@ -1011,8 +1011,7 @@ export class FloorplanCanvas extends LitElement {
     const item = this._effectiveFurniture(raw);
     const w = item.width_cm / 2;
     const d = item.depth_cm / 2;
-    const above =
-      this._pxToUnits(FURNITURE_ROTATE_HANDLE_PX) / this.unitsPerCm;
+    const above = this._pxToUnits(FURNITURE_ROTATE_HANDLE_PX) / this.unitsPerCm;
     return {
       rotate: this._furnitureToImage(item, 0, -d - above),
       corner: this._furnitureToImage(item, w, d),
@@ -1049,8 +1048,7 @@ export class FloorplanCanvas extends LitElement {
       Math.max(FURNITURE_MIN_CM, free ? v : Math.round(v));
     const w =
       handle === "bottom" ? item.width_cm : snap(lx + item.width_cm / 2);
-    const d =
-      handle === "right" ? item.depth_cm : snap(ly + item.depth_cm / 2);
+    const d = handle === "right" ? item.depth_cm : snap(ly + item.depth_cm / 2);
     const [x, y] = this._furnitureToImage(
       item,
       (w - item.width_cm) / 2,
@@ -2908,16 +2906,17 @@ export class FloorplanCanvas extends LitElement {
       key: "furniture" | "lights" | "covers",
       on: boolean,
       icon: string,
-    ) => html`<button
-      class=${on ? "active" : "off"}
-      title=${localize(`canvasControls.${key}`)}
-      @click=${() =>
-        this.dispatchEvent(
-          new CustomEvent("overlay-toggle", { detail: { key } }),
-        )}
-    >
-      <ha-icon icon=${icon}></ha-icon>
-    </button>`;
+    ) =>
+      html`<button
+        class=${on ? "active" : "off"}
+        title=${localize(`canvasControls.${key}`)}
+        @click=${() =>
+          this.dispatchEvent(
+            new CustomEvent("overlay-toggle", { detail: { key } }),
+          )}
+      >
+        <ha-icon icon=${icon}></ha-icon>
+      </button>`;
     return html`
       ${button("furniture", this.showFurniture, "mdi:sofa-outline")}
       ${button("lights", this.showLights, "mdi:lightbulb-group-outline")}

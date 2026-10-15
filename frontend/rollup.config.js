@@ -145,4 +145,41 @@ const panel = {
   ].filter(Boolean),
 };
 
-export default [panel, mapModule];
+/** The dashboard card: a small loader around the panel bundle's
+ * <floorplan-canvas> (see src/card.ts), registered on every dashboard by
+ * frontend.py. */
+const card = {
+  input: "src/card.ts",
+  output: {
+    file: "../custom_components/spatial_context/www/spatial-context-card.js",
+    format: "iife",
+    name: "SpatialContextCardBundle",
+    sourcemap: isDev,
+    banner: `/*! spatial-context-card v${pkg.version} | ${pkg.license} */`,
+  },
+  plugins: [
+    replace({
+      preventAssignment: true,
+      values: {
+        __VERSION__: JSON.stringify(pkg.version),
+        __BUILD_ID__: JSON.stringify(buildId),
+      },
+    }),
+    nodeResolve({ browser: true, extensions: [".js", ".ts", ".mjs"] }),
+    json(),
+    typescript({
+      tsconfig: "./tsconfig.json",
+      noEmitOnError: !isDev,
+      compilerOptions: {
+        noEmit: false,
+        declaration: false,
+        sourceMap: isDev,
+        outDir: "../custom_components/spatial_context/www",
+      },
+      outputToFilesystem: false,
+    }),
+    !isDev && terser({ format: { comments: /^!/ } }),
+  ].filter(Boolean),
+};
+
+export default [panel, mapModule, card];

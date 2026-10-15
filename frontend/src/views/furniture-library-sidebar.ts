@@ -117,6 +117,7 @@ export class FurnitureLibrarySidebar extends LitElement {
       }
       .grid {
         flex: 1;
+        min-height: 0;
         overflow-y: auto;
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
@@ -243,14 +244,15 @@ export class FurnitureLibrarySidebar extends LitElement {
           ${localize("furniture.category.all")}
         </button>
         ${FURNITURE_CATEGORIES.map(
-          (c) => html`<button
-            class="chip ${this._category === c.id ? "active" : ""}"
-            @click=${() =>
-              (this._category = this._category === c.id ? null : c.id)}
-          >
-            <ha-icon icon=${c.icon}></ha-icon>
-            ${localize(`furniture.category.${c.id}`)}
-          </button>`,
+          (c) =>
+            html`<button
+              class="chip ${this._category === c.id ? "active" : ""}"
+              @click=${() =>
+                (this._category = this._category === c.id ? null : c.id)}
+            >
+              <ha-icon icon=${c.icon}></ha-icon>
+              ${localize(`furniture.category.${c.id}`)}
+            </button>`,
         )}
       </div>
       <div class="count">
@@ -261,18 +263,19 @@ export class FurnitureLibrarySidebar extends LitElement {
           items.length === 0
             ? html`<div class="empty">${localize("furniture.none")}</div>`
             : items.map(
-                (item) => html`<button
-                  class="item ${this.armedKind === item.id ? "armed" : ""}"
-                  title=${item.name}
-                  @click=${() =>
-                    this._fire("furniture-armed", {
-                      kind: this.armedKind === item.id ? null : item.id,
-                    })}
-                >
-                  ${this._thumb(item)}
-                  <span class="name">${item.name}</span>
-                  <span class="size">${this._size(item)}</span>
-                </button>`,
+                (item) =>
+                  html`<button
+                    class="item ${this.armedKind === item.id ? "armed" : ""}"
+                    title=${item.name}
+                    @click=${() =>
+                      this._fire("furniture-armed", {
+                        kind: this.armedKind === item.id ? null : item.id,
+                      })}
+                  >
+                    ${this._thumb(item)}
+                    <span class="name">${item.name}</span>
+                    <span class="size">${this._size(item)}</span>
+                  </button>`,
               )
         }
       </div>

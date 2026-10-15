@@ -124,7 +124,9 @@ function readStoredOverlays(): OverlayToggles {
   const defaults = { furniture: true, lights: true, covers: true };
   try {
     const raw = localStorage.getItem(OVERLAYS_STORAGE_KEY);
-    return raw ? { ...defaults, ...(JSON.parse(raw) as Partial<OverlayToggles>) } : defaults;
+    return raw
+      ? { ...defaults, ...(JSON.parse(raw) as Partial<OverlayToggles>) }
+      : defaults;
   } catch {
     return defaults;
   }
@@ -3135,7 +3137,10 @@ export class SpatialContextPanel extends LitElement {
       [e.detail.key]: !this._overlays[e.detail.key],
     };
     try {
-      localStorage.setItem(OVERLAYS_STORAGE_KEY, JSON.stringify(this._overlays));
+      localStorage.setItem(
+        OVERLAYS_STORAGE_KEY,
+        JSON.stringify(this._overlays),
+      );
     } catch {
       // Not remembered across reloads — the toggle still applies now.
     }

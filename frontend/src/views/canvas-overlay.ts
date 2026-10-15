@@ -316,7 +316,8 @@ export class CanvasOverlay extends LitElement {
   @property({ attribute: false }) entityLookup: Map<string, PlaceableEntity> =
     new Map();
   @property({ attribute: false }) selectedOpening: Opening | null = null;
-  @property({ attribute: false }) selectedFurniture: FurnitureItem | null = null;
+  @property({ attribute: false }) selectedFurniture: FurnitureItem | null =
+    null;
   @property({ type: Boolean }) furnitureLibraryOpen = false;
   /** Every room on the floor (for linking one room's lights to another). */
   @property({ attribute: false }) rooms: Room[] = [];
@@ -639,14 +640,15 @@ export class CanvasOverlay extends LitElement {
         linked.length
           ? html`<div class="link-chips">
               ${linked.map(
-                (l) => html`<span class="link-chip"
-                  ><span>${l.label}</span
-                  ><button
-                    title=${localize("canvas.links.remove")}
-                    @click=${() => onChange(ids.filter((id) => id !== l.id))}
-                  >
-                    <ha-icon icon="mdi:close"></ha-icon></button
-                ></span>`,
+                (l) =>
+                  html`<span class="link-chip"
+                    ><span>${l.label}</span
+                    ><button
+                      title=${localize("canvas.links.remove")}
+                      @click=${() => onChange(ids.filter((id) => id !== l.id))}
+                    >
+                      <ha-icon icon="mdi:close"></ha-icon></button
+                  ></span>`,
               )}
             </div>`
           : nothing
@@ -728,22 +730,24 @@ export class CanvasOverlay extends LitElement {
 
   private _renderFurnitureCard(item: FurnitureItem) {
     const entry = catalogItem(item.kind);
-    const unit = this._furnitureSizeUnit ?? defaultSmallSubUnit(this.unitSystem);
+    const unit =
+      this._furnitureSizeUnit ?? defaultSmallSubUnit(this.unitSystem);
     const change = (patch: Partial<FurnitureItem>) =>
       this._fire("furniture-change", { patch });
-    const sizeInput = (key: "width_cm" | "depth_cm") => html`<input
-      type="number"
-      class="furniture-size"
-      min="0"
-      step=${unit === "cm" || unit === "in" ? "1" : "0.01"}
-      .value=${formatSmallAs(item[key], unit)}
-      @change=${(e: Event) => {
-        const cm = parseSmallAs((e.target as HTMLInputElement).value, unit);
-        if (cm !== null && Number.isFinite(cm) && cm >= 1) {
-          change({ [key]: Math.round(cm * 10) / 10 });
-        }
-      }}
-    />`;
+    const sizeInput = (key: "width_cm" | "depth_cm") =>
+      html`<input
+        type="number"
+        class="furniture-size"
+        min="0"
+        step=${unit === "cm" || unit === "in" ? "1" : "0.01"}
+        .value=${formatSmallAs(item[key], unit)}
+        @change=${(e: Event) => {
+          const cm = parseSmallAs((e.target as HTMLInputElement).value, unit);
+          if (cm !== null && Number.isFinite(cm) && cm >= 1) {
+            change({ [key]: Math.round(cm * 10) / 10 });
+          }
+        }}
+      />`;
     const toggle = (
       icon: string,
       label: string,
@@ -893,8 +897,10 @@ export class CanvasOverlay extends LitElement {
           ${toggle("mdi:lock-outline", localize("furniture.lock"), "locked")}
         </div>
         <div class="info-group">
-          ${this._actionRow("mdi:content-copy", localize("furniture.duplicate"), () =>
-            this._fire("furniture-duplicate-click"),
+          ${this._actionRow(
+            "mdi:content-copy",
+            localize("furniture.duplicate"),
+            () => this._fire("furniture-duplicate-click"),
           )}
           ${this._actionRow(
             "mdi:arrange-bring-to-front",

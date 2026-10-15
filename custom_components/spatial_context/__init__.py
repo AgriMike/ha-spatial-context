@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 
 from .debug import async_record_loaded_version
 from .frontend import (
+    async_register_card,
     async_register_sidebar_panel,
     async_register_static_paths,
 )
@@ -35,6 +36,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     try:
         await async_register_static_paths(hass)
         async_register_sidebar_panel(hass)
+        async_register_card(hass)
     except Exception:  # noqa: BLE001 - never block HA startup over frontend registration
         _LOGGER.warning("Failed to register Spatial Context frontend panel", exc_info=True)
 

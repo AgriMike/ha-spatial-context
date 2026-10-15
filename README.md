@@ -93,6 +93,8 @@ Elements are recognised by whole words in their `id`, `class` or Inkscape layer 
 
 Anything else stays background only.
 
+**Replacing a background** (Background → Replace background) only ever swaps the image: rooms, walls, devices and everything else stay where they are, and so does the opacity. An SVG used that way offers its geometry only when the floor has nothing drawn yet. To add an SVG's rooms and walls to a floor that already has some, use **Background → Import rooms & walls from SVG**, which also asks whether to replace the background with it.
+
 ## The panel
 
 ![The panel: header with the floor tabs, the controls row with the tools, and the canvas with its scale bar and zoom controls](docs/screenshot-panel-v2.jpeg)
@@ -140,10 +142,11 @@ New points snap to nearby walls and room edges and line up with your last point,
 
 | Selection | You can |
 |---|---|
-| **Room** | Set its HA **area** (including areas on no floor, such as a deck), **name** it, **edit its corners**, reset a dragged label, **show or hide** it, and style it with a **colour** from Home Assistant's own colour list (or a custom one), **fill opacity** and **border opacity**. |
+| **Room** | Set its HA **area** (including areas on no floor, such as a deck), **name** it, **edit its corners**, reset a dragged label, **show or hide** it, and style it with a **colour** from Home Assistant's own colour list (or a custom one), **fill opacity** and **border opacity**. Its **Lights** section shows how many of its lights are on, turns them all on or off, and links it to **other areas**, **other rooms** and **specific lights**. |
 | **Device** | Set a **label**, a custom **icon** (search every Material Design icon), and a mounting **height**, and see its **network links** while a Connectivity Map layer is on. |
 | **Wall** | Set its **material** and **thickness**, and edit its corners. |
-| **Door / window** | Set its **width**. |
+| **Door / window** | Set its **width**, and link a **cover** (blind, shade, garage door) hung in it. See [Live lights and covers](#live-lights-and-covers). |
+| **Furniture / item** | **Name** it and show the name on the plan, set its real **width**, **depth** and **rotation**, **line thickness**, **colour** and **fill**, **mirror** it, **lock** it in place, **duplicate** it, and bring it to the front or send it to the back. |
 | **Connectivity link** | See both ends and the signal quality. A link to a device on another floor can jump to that floor. |
 | **Devices on one spot** | Choose which to select, or remove one from the spot. |
 
@@ -158,7 +161,10 @@ New points snap to nearby walls and room edges and line up with your last point,
 | **Backspace** or **Ctrl/Cmd+Z** while tracing | Removes the last point. |
 | **Delete** / **Backspace** | Deletes the selection, after asking. |
 | **Enter** | Finishes a wall trace. |
-| **Shift** | Places or drags a point with no snapping. |
+| **Shift** | Places or drags a point with no snapping. Frees a furniture item's rotation (normally 15° steps) and size (normally whole centimetres). |
+| **R**, **Shift+R** | Rotates the selected furniture item, or the one being placed, by 90° (Shift: 15°). |
+| **Ctrl/Cmd+D** | Duplicates the selected furniture item. |
+| **Arrow keys** | Nudge the selected furniture item 1 cm (Shift: 10 cm). |
 
 None of these fire while you're typing in a field.
 
@@ -189,6 +195,40 @@ The cog in the header opens **Settings**. They're shared by everyone who uses th
 - **About**: the installed version and a link to this repository.
 
 ![The Settings dialog](docs/screenshot-settings-v2.jpeg)
+
+## Furniture and household items
+
+The sofa button in the toolbar opens a library of **780 furniture and household items** in 16 categories: living room, bedroom, kitchen, dining, bathroom, office, laundry & utility, electronics & smart home, lighting, kids & nursery, entry & storage, outdoor & garden, garage & workshop, fitness & hobbies, pets, and decor & plants. Search it or pick a category, click an item to arm it, and click the plan to drop it at its real size. **R** turns it before you place it, and **Shift+click** places another.
+
+Each item is a simple plan-view line drawing that redraws at whatever size you give it, so a longer dining table gets more room between its chairs instead of stretched ones. Select one to drag it, turn it with the round handle, or resize it with the square handles. Sizes are real centimetres, so they're only true to life once the floor's scale is set. The sofa, bulb and blinds buttons beside the zoom controls show or hide furniture, live lights and cover shading.
+
+## Live lights and covers
+
+A room shows its lights live on the plan: filled in the lights' own colour and brighter with their brightness, or shaded dark with them all off. By default a room follows the lights in its HA area. Its card can add **other areas** (an open-plan space spanning two), **other rooms** (a dining room that should show the kitchen's lights too), and **individual lights**.
+
+Link a **cover** to a door or window from its card, and the floor behind it shows a daylight patch reaching into the room. The patch is brighter the more the cover is open, and turns to shade when it's closed. Device pins are tinted by their device's live state too: lights in their colour, switches and fans amber, open covers blue, motion or open doors red.
+
+## Dashboard card
+
+Everything above also works on a dashboard: add the **Spatial Context floor plan** card (it's in the card picker; no resource to add), or in YAML:
+
+```yaml
+type: custom:spatial-context-card
+floor_id: main_level        # optional: defaults to the first floor with a plan
+title: Main level           # optional: defaults to the floor's name
+height: 450                 # px
+show_lights: true
+show_covers: true
+show_furniture: true
+show_devices: true
+show_background: true
+show_controls: true         # zoom and overlay buttons
+room_tap_action: toggle     # toggle | more-info | none
+cover_tap_action: more-info # more-info | toggle | none
+device_tap_action: more-info
+```
+
+The card opens at the view you last saved for that floor. Tap a room to toggle its lights, a covered window or door to open its details (or open and close it), and a device to open its more-info dialog.
 
 ## Placing devices
 

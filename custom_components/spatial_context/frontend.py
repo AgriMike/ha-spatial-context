@@ -1,8 +1,10 @@
-"""Frontend static path + sidebar panel registration for Spatial Context.
+"""Frontend static path, sidebar panel and dashboard card registration
+for Spatial Context.
 
 Mirrors voice_satellite/frontend.py's sidebar-panel half (the
-"browser_mod pattern") — Spatial Context has no Lovelace card, only a
-full-page panel, so the Lovelace-resource half of that file doesn't apply.
+"browser_mod pattern"). The dashboard card (custom:spatial-context-card) is
+added to every frontend page with add_extra_js_url, so it needs no manual
+Lovelace resource.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ import logging
 from pathlib import Path
 
 from homeassistant.components.frontend import (
+    add_extra_js_url,
     async_register_built_in_panel,
 )
 from aiohttp import web
@@ -19,6 +22,7 @@ from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.core import HomeAssistant
 
 from .const import (
+    CARD_FILENAME,
     FRONTEND_URL_PATH,
     PANEL_FILENAME,
     SIDEBAR_ICON,
@@ -103,3 +107,12 @@ def async_register_sidebar_panel(hass: HomeAssistant) -> None:
         },
     )
     _LOGGER.debug("Spatial Context sidebar panel registered")
+
+
+def async_register_card(hass: HomeAssistant) -> None:
+    """Load the dashboard card's script on every frontend page, so
+    `type: custom:spatial-context-card` works without adding a resource."""
+    add_extra_js_url(
+        hass, f"{URL_BASE}/{CARD_FILENAME}?v={_cache_bust_token(CARD_FILENAME)}"
+    )
+    _LOGGER.debug("Spatial Context dashboard card registered")
