@@ -166,7 +166,7 @@ export class SettingsMenu extends LitElement {
         width: 64px;
         text-align: right;
       }
-          .border-color {
+      .border-color {
         display: flex;
         align-items: center;
         gap: 8px;
@@ -179,7 +179,7 @@ export class SettingsMenu extends LitElement {
         font-size: 12px;
         color: var(--sc-fg-secondary);
       }
-`,
+    `,
   ];
 
   @property({ attribute: false }) settings!: Settings;
@@ -381,6 +381,56 @@ export class SettingsMenu extends LitElement {
               (show_light_count) => this._change({ show_light_count }),
             ),
             localize("settings.lightCountHint"),
+          )}
+          ${this._row(
+            localize("settings.labelSize", {
+              size: Math.round(s.room_label_size ?? 16),
+            }),
+            html`<input
+              type="range"
+              min="6"
+              max="48"
+              step="1"
+              .value=${String(s.room_label_size ?? 16)}
+              @input=${(e: Event) =>
+                this._change({
+                  room_label_size: Number((e.target as HTMLInputElement).value),
+                })}
+            />`,
+          )}
+          ${this._row(
+            localize("settings.labelColor"),
+            html`<span class="border-color">
+              ${
+                s.room_label_color
+                  ? html`<button
+                      class="border-reset"
+                      @click=${() => this._change({ room_label_color: null })}
+                    >
+                      ${localize("settings.labelColorTheme")}
+                    </button>`
+                  : html`<span class="description"
+                      >${localize("settings.labelColorTheme")}</span
+                    >`
+              }
+              <input
+                type="color"
+                aria-label=${localize("settings.labelColor")}
+                .value=${s.room_label_color ?? "#2f343a"}
+                @input=${(e: Event) =>
+                  this._change({
+                    room_label_color: (e.target as HTMLInputElement).value,
+                  })}
+              />
+            </span>`,
+          )}
+          ${this._row(
+            localize("settings.labelBold"),
+            this._switch(
+              s.room_label_bold === true,
+              localize("settings.labelBold"),
+              (room_label_bold) => this._change({ room_label_bold }),
+            ),
           )}
           ${this._row(
             localize("settings.roomBorders"),

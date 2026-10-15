@@ -292,6 +292,11 @@ def _empty_settings() -> dict[str, Any]:
         "room_border_color": None,
         "room_border_width": 2.0,
         "room_border_opacity": 1.0,
+        # Room name labels: size (plan units), colour (None = theme text
+        # colour) and bold.
+        "room_label_size": 16.0,
+        "room_label_color": None,
+        "room_label_bold": False,
     }
 
 

@@ -20,6 +20,13 @@ export interface Room {
   /** Where the room's name label sits, when dragged there by hand (#33).
    * Null/undefined = automatic (see geometry.ts's roomLabelPoint). */
   label_position?: [number, number] | null;
+  /** The name label's look: hidden when show_label is false; size as a
+   * multiple of the plan's label size; rotation in degrees; its own colour
+   * (null = the plan's label colour). */
+  show_label?: boolean;
+  label_size?: number;
+  label_rotation?: number;
+  label_color?: string | null;
   /** What this room's live light shading follows, besides its own
    * `area_id`: other HA areas (an open-plan space spanning two), other
    * rooms on this floor (whose lights it shows too), and specific light
@@ -114,6 +121,11 @@ export interface Settings {
   room_border_color?: string | null;
   room_border_width?: number;
   room_border_opacity?: number;
+  /** Room name labels on the plan: size (plan units, absent = 16), colour
+   * (null = the theme's text colour) and bold. */
+  room_label_size?: number;
+  room_label_color?: string | null;
+  room_label_bold?: boolean;
 }
 
 /** What the backend reports for the version handshake (see debug.py). */

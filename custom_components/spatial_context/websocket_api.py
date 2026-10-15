@@ -78,6 +78,13 @@ _ROOM_SCHEMA = {
     vol.Optional("light_entity_ids"): [str],
     # An outdoor space (deck, patio): counts as outside for daylight.
     vol.Optional("outdoor"): bool,
+    # The name label's look (see types.ts's Room).
+    vol.Optional("show_label"): bool,
+    vol.Optional("label_size"): vol.All(vol.Coerce(float), vol.Range(min=0.2, max=5)),
+    vol.Optional("label_rotation"): vol.All(
+        vol.Coerce(float), vol.Range(min=-360, max=360)
+    ),
+    vol.Optional("label_color"): vol.Any(vol.Match(r"^#[0-9a-fA-F]{6}$"), None),
 }
 
 _PIN_SCHEMA = {
@@ -390,6 +397,13 @@ _SETTINGS_SCHEMA = {
     vol.Optional("room_border_opacity", default=1.0): vol.All(
         vol.Coerce(float), vol.Range(min=0, max=1)
     ),
+    vol.Optional("room_label_size", default=16.0): vol.All(
+        vol.Coerce(float), vol.Range(min=4, max=80)
+    ),
+    vol.Optional("room_label_color", default=None): vol.Any(
+        None, vol.Match(r"^#[0-9a-fA-F]{6}$")
+    ),
+    vol.Optional("room_label_bold", default=False): bool,
 }
 
 

@@ -3571,6 +3571,16 @@ export class SpatialContextPanel extends LitElement {
     });
   };
 
+  private _onRoomLabelChange = (e: CustomEvent<{ patch: Partial<Room> }>) => {
+    const room = this._selectedRoom;
+    if (!room) return;
+    this._updateLayout({
+      rooms: this._layout.rooms.map((r) =>
+        r.id === room.id ? { ...r, ...e.detail.patch } : r,
+      ),
+    });
+  };
+
   private _onRoomOutdoorChange = (e: CustomEvent<{ outdoor: boolean }>) => {
     const room = this._selectedRoom;
     if (!room) return;
@@ -4751,6 +4761,11 @@ export class SpatialContextPanel extends LitElement {
                     .showCovers=${this._overlays.covers}
                     .showLightCount=${this._settings.show_light_count !== false}
                     .roomBorder=${roomBorderOf(this._settings)}
+                    .roomLabelStyle=${{
+                      size: this._settings.room_label_size ?? 16,
+                      color: this._settings.room_label_color ?? null,
+                      bold: this._settings.room_label_bold === true,
+                    }}
                     .northDeg=${this._layout.north_deg}
                     .location=${this._location}
                     .sunTime=${this._sunTime}
@@ -4847,6 +4862,7 @@ export class SpatialContextPanel extends LitElement {
                     @opening-cover-swap=${this._onOpeningCoverSwap}
                     @opening-garage-change=${this._onOpeningGarageChange}
                     @room-outdoor-change=${this._onRoomOutdoorChange}
+                    @room-label-change=${this._onRoomLabelChange}
                     .selectedCoverOpennessRight=${
                       this._selectedOpening
                         ? (this._coverOpenness.get(

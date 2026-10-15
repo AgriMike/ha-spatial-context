@@ -107,6 +107,11 @@ class SpatialContextCard extends HTMLElement {
   private _weatherSetting: string | null = null;
   /** The panel's Settings → Plan → light count choice. */
   private _lightCountSetting = true;
+  private _roomLabelStyle = {
+    size: 16,
+    color: null as string | null,
+    bold: false,
+  };
   private _roomBorder = {
     show: true,
     color: null as string | null,
@@ -221,6 +226,9 @@ class SpatialContextCard extends HTMLElement {
           room_border_color?: string | null;
           room_border_width?: number;
           room_border_opacity?: number;
+          room_label_size?: number;
+          room_label_color?: string | null;
+          room_label_bold?: boolean;
         }>({ type: "spatial_context/get_settings" })
         .catch(() => null);
       this._weatherSetting = settings?.weather_entity_id ?? null;
@@ -230,6 +238,11 @@ class SpatialContextCard extends HTMLElement {
         color: settings?.room_border_color ?? null,
         width: settings?.room_border_width ?? 2,
         opacity: settings?.room_border_opacity ?? 1,
+      };
+      this._roomLabelStyle = {
+        size: settings?.room_label_size ?? 16,
+        color: settings?.room_label_color ?? null,
+        bold: settings?.room_label_bold === true,
       };
       this._entities = new Map(entities.map((e) => [e.entity_id, e]));
       this._error = null;
@@ -304,6 +317,7 @@ class SpatialContextCard extends HTMLElement {
     c["showLights"] = this._overlays.lights;
     c["showCovers"] = this._overlays.covers;
     c["roomBorder"] = this._roomBorder;
+    c["roomLabelStyle"] = this._roomLabelStyle;
     c["showLightCount"] =
       this._config.show_light_count ?? this._lightCountSetting;
     c["northDeg"] = l.north_deg ?? null;

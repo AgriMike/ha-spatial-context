@@ -676,6 +676,13 @@ export class FloorplanCanvas extends LitElement {
     width: number;
     opacity: number;
   } = { show: true, color: null, width: 2, opacity: 1 };
+  /** Room name labels for every room (Settings → Plan → Room labels);
+   * each room can override size, rotation and colour. */
+  @property({ attribute: false }) roomLabelStyle: {
+    size: number;
+    color: string | null;
+    bold: boolean;
+  } = { size: 16, color: null, bold: false };
   /** Compass bearing the top of the plan faces (FloorLayout.north_deg). */
   @property({ attribute: false }) northDeg: number | null = null;
   /** HA's home location, for the sun's position. */
@@ -1555,6 +1562,9 @@ export class FloorplanCanvas extends LitElement {
     if (opening) return { type: "opening", opening };
     const wall = findWallAt(this.walls, image.x, image.y, hitR);
     if (wall) return { type: "wall", wall };
+    // Any room's name can be grabbed and moved, selected or not.
+    const labelled = this.rooms.find((r) => this._roomLabelHit(r, image, 0));
+    if (labelled) return { type: "roomLabel", room: labelled };
     const room = this.rooms.find(
       (r) => r.points.length >= 3 && pointInPolygon(image.x, image.y, r.points),
     );
@@ -2503,14 +2513,27 @@ export class FloorplanCanvas extends LitElement {
     if (room.visible === false) return false;
     const points = this._effectivePoints("room", room.id, room.points);
     if (points.length < 2) return false;
+    if (room.show_label === false) return false;
     const [cx, cy] = this._roomLabelPosition(room, points);
-    const halfW = (room.name.length * 9) / 2;
+    // In the label's own frame: undo its rotation, scale by its size.
+    const s = this._roomLabelSize(room) / 16;
+    const r = (-(room.label_rotation ?? 0) * Math.PI) / 180;
+    const dx = image.x - cx;
+    const dy = image.y - cy;
+    const lx = dx * Math.cos(r) - dy * Math.sin(r);
+    const ly = dx * Math.sin(r) + dy * Math.cos(r);
+    const halfW = (room.name.length * 9 * s) / 2;
     return (
-      image.x >= cx - halfW - slack &&
-      image.x <= cx + halfW + slack &&
-      image.y >= cy - 13 - slack &&
-      image.y <= cy + 4 + slack
+      lx >= -halfW - slack &&
+      lx <= halfW + slack &&
+      ly >= -13 * s - slack &&
+      ly <= 4 * s + slack
     );
+  }
+
+  /** A room's label size in plan units: the plan's size times its own. */
+  private _roomLabelSize(room: Room): number {
+    return this.roomLabelStyle.size * (room.label_size ?? 1);
   }
 
   private _renderRoom(room: Room) {
@@ -2579,7 +2602,19 @@ export class FloorplanCanvas extends LitElement {
               : 0
         }
       >${lightsText ? svg`<title>${room.name}: ${lightsText}</title>` : nothing}</polygon>
-      <text class="room-label" x=${cx} y=${cy}>${room.name}${
+      <text
+        class="room-label"
+        x=${cx}
+        y=${cy}
+        style=${`font-size:${this._roomLabelSize(room)}px;${
+          room.label_color || this.roomLabelStyle.color
+            ? `fill:${room.label_color || this.roomLabelStyle.color};`
+            : ""
+        }${this.roomLabelStyle.bold ? "font-weight:700;" : ""}${
+          room.show_label === false ? "display:none;" : ""
+        }`}
+        transform=${room.label_rotation ? `rotate(${room.label_rotation} ${cx} ${cy})` : ""}
+      >${room.name}${
         lightsText && this.showLightCount
           ? svg`<tspan class="room-lights" x=${cx} dy="1.2em">${lightsText}</tspan>`
           : nothing

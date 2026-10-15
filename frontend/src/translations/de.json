@@ -76,7 +76,9 @@
       "resetLabel": "Beschriftungsposition zurücksetzen",
       "delete": "Raum löschen",
       "outdoorHint": "Terrasse, Veranda oder Balkon: Tageslicht durch eine Tür oder ein Fenster dorthin fällt nur nach innen.",
-      "outdoorSpace": "Außenbereich (Terrasse…)"
+      "outdoorSpace": "Außenbereich (Terrasse…)",
+      "thisFloor": "Diese Etage",
+      "unknownArea": "Unbekannter Bereich ({id})"
     },
     "pin": {
       "setLabel": "Beschriftung festlegen",
@@ -168,6 +170,14 @@
       "none": "Noch keine Geräte in diesem Bereich.",
       "elsewhere": "Bereits platziert: {where}",
       "addAll": "Alle {count} in diesen Raum"
+    },
+    "label": {
+      "title": "Namensbeschriftung",
+      "show": "Namen zeigen",
+      "size": "Größe ({pct} %)",
+      "rotation": "Drehung (°)",
+      "colour": "Farbe",
+      "dragHint": "Den Namen auf dem Plan ziehen, um ihn zu verschieben."
     }
   },
   "mapBackground": {
@@ -230,7 +240,11 @@
     "roomBorderColor": "Randfarbe",
     "roomBorderColorRoom": "Raumfarbe",
     "roomBorderWidth": "Randstärke ({px})",
-    "roomBorderOpacity": "Rand-Deckkraft ({pct} %)"
+    "roomBorderOpacity": "Rand-Deckkraft ({pct} %)",
+    "labelSize": "Größe der Raumnamen ({size})",
+    "labelColor": "Farbe der Raumnamen",
+    "labelColorTheme": "Textfarbe des Designs",
+    "labelBold": "Raumnamen fett"
   },
   "picker": {
     "search": "Geräte suchen…",

@@ -142,7 +142,7 @@ New points snap to nearby walls and room edges and line up with your last point,
 
 | Selection | You can |
 |---|---|
-| **Room** | Set its HA **area** (including areas on no floor, such as a deck), **name** it, **edit its corners**, reset a dragged label, **show or hide** it, and style it with a **colour** from Home Assistant's own colour list (or a custom one), **fill opacity** and **border opacity**. Its **Lights** section shows how many of its lights are on, turns them all on or off, and links it to **other areas**, **other rooms** and **specific lights**. |
+| **Room** | Set its HA **area** (any area, grouped by floor) (including areas on no floor, such as a deck), **name** it, **edit its corners**, reset a dragged label, **show or hide** it, and style it with a **colour** from Home Assistant's own colour list (or a custom one), **fill opacity** and **border opacity**. Its **Name label** section shows or hides the name and sets its size, rotation and colour; drag the name on the plan to move it (Settings → Plan sets every room's label size, colour and bold). Its **Lights** section shows how many of its lights are on, turns them all on or off, and links it to **other areas**, **other rooms** and **specific lights**. |
 | **Device** | Set a **label**, a custom **icon** (search every Material Design icon), and a mounting **height**, and see its **network links** while a Connectivity Map layer is on. |
 | **Wall** | Set its **material** and **thickness**, and edit its corners. |
 | **Door / window** | Set its **width**, and link a **cover** (blind, shade, garage door) hung in it. See [Live lights and covers](#live-lights-and-covers). |

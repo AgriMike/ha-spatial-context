@@ -76,7 +76,9 @@
       "resetLabel": "Reset label position",
       "delete": "Delete room",
       "outdoorHint": "A deck, patio or porch: daylight through a door or window onto it only falls indoors.",
-      "outdoorSpace": "Outdoor space"
+      "outdoorSpace": "Outdoor space",
+      "thisFloor": "This floor",
+      "unknownArea": "Unknown area ({id})"
     },
     "pin": {
       "setLabel": "Set label",
@@ -168,6 +170,14 @@
       "none": "No devices in this area yet.",
       "elsewhere": "Already placed: {where}",
       "addAll": "Add all {count} to this room"
+    },
+    "label": {
+      "title": "Name label",
+      "show": "Show name",
+      "size": "Size ({pct}%)",
+      "rotation": "Rotation (°)",
+      "colour": "Colour",
+      "dragHint": "Drag the name on the plan to move it."
     }
   },
   "mapBackground": {
@@ -230,7 +240,11 @@
     "roomBorderColor": "Border colour",
     "roomBorderColorRoom": "Room colour",
     "roomBorderWidth": "Border thickness ({px})",
-    "roomBorderOpacity": "Border opacity ({pct}%)"
+    "roomBorderOpacity": "Border opacity ({pct}%)",
+    "labelSize": "Room name size ({size})",
+    "labelColor": "Room name colour",
+    "labelColorTheme": "Theme text colour",
+    "labelBold": "Bold room names"
   },
   "picker": {
     "search": "Search devices…",

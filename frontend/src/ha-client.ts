@@ -389,6 +389,9 @@ export function emptySettings(): Settings {
     room_border_color: null,
     room_border_width: 2,
     room_border_opacity: 1,
+    room_label_size: 16,
+    room_label_color: null,
+    room_label_bold: false,
   };
 }
 

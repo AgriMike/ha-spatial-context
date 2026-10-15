@@ -918,6 +918,130 @@ export class CanvasOverlay extends LitElement {
     `;
   }
 
+  /** The room's name label: shown or not, size, rotation, colour and
+   * position (it's dragged on the plan). */
+  private _renderRoomLabel(room: Room) {
+    const change = (patch: Partial<Room>) =>
+      this._fire("room-label-change", { patch });
+    const shown = room.show_label !== false;
+    const size = room.label_size ?? 1;
+    const rot = room.label_rotation ?? 0;
+    return html`<div class="info-group">
+      <div class="info-group-title">${localize("canvas.label.title")}</div>
+      ${this._fieldRow(
+        "mdi:format-text",
+        localize("canvas.label.show"),
+        html`<input
+          type="checkbox"
+          class="switch"
+          role="switch"
+          .checked=${shown}
+          @change=${(e: Event) =>
+            change({ show_label: (e.target as HTMLInputElement).checked })}
+        />`,
+      )}
+      ${
+        shown
+          ? html`
+              ${this._fieldRow(
+                "mdi:format-size",
+                localize("canvas.label.size", { pct: Math.round(size * 100) }),
+                html`<input
+                  type="range"
+                  class="stroke-range"
+                  min="0.4"
+                  max="3"
+                  step="0.05"
+                  style="--pct:${((size - 0.4) / 2.6) * 100}%"
+                  .value=${String(size)}
+                  @input=${(e: Event) =>
+                    change({
+                      label_size: Number((e.target as HTMLInputElement).value),
+                    })}
+                />`,
+              )}
+              ${this._fieldRow(
+                "mdi:format-rotate-90",
+                localize("canvas.label.rotation"),
+                html`<span class="inline-pair">
+                  <input
+                    type="number"
+                    class="furniture-size"
+                    step="5"
+                    .value=${String(rot)}
+                    @change=${(e: Event) => {
+                      const v = Number((e.target as HTMLInputElement).value);
+                      if (Number.isFinite(v))
+                        change({ label_rotation: ((v + 540) % 360) - 180 });
+                    }}
+                  />
+                  <span class="icon-buttons">
+                    <button
+                      title=${localize("furniture.rotateLeft")}
+                      @click=${() =>
+                        change({
+                          label_rotation: ((rot - 90 + 540) % 360) - 180,
+                        })}
+                    >
+                      <ha-icon icon="mdi:rotate-left"></ha-icon>
+                    </button>
+                    <button
+                      title=${localize("furniture.rotateRight")}
+                      @click=${() =>
+                        change({
+                          label_rotation: ((rot + 90 + 540) % 360) - 180,
+                        })}
+                    >
+                      <ha-icon icon="mdi:rotate-right"></ha-icon>
+                    </button>
+                  </span>
+                </span>`,
+              )}
+              ${this._fieldRow(
+                "mdi:palette",
+                localize("canvas.label.colour"),
+                html`<span class="inline-pair">
+                  ${
+                    room.label_color
+                      ? html`<button
+                          class="color-reset"
+                          @click=${() => change({ label_color: null })}
+                        >
+                          ${localize("canvas.card.colourDefault")}
+                        </button>`
+                      : nothing
+                  }
+                  <input
+                    type="color"
+                    class="room-fill-color"
+                    .value=${room.label_color ?? "#2f343a"}
+                    @input=${(e: Event) =>
+                      change({
+                        label_color: (e.target as HTMLInputElement).value,
+                      })}
+                  />
+                </span>`,
+              )}
+              <div class="info-row">
+                <span class="grow info-sub"
+                  >${localize("canvas.label.dragHint")}</span
+                >
+              </div>
+              ${
+                room.label_position
+                  ? this._actionRow(
+                      "mdi:format-text-variant-outline",
+                      localize("canvas.room.resetLabel"),
+                      () => this._fire("room-label-reset-click"),
+                    )
+                  : nothing
+              }
+            `
+          : nothing
+      }
+    </div>`;
+  }
+
   /** The devices in the room's HA area: tick one to place it in the room
    * (with an icon for its type), untick to take it off the plan. */
   private _renderAreaDevices(room: Room) {
@@ -928,7 +1052,7 @@ export class CanvasOverlay extends LitElement {
     return html`<div class="info-group">
       <div class="info-group-title">
         ${localize("canvas.areaDevices.title", {
-          area: area?.name ?? room.name,
+          area: area?.name ?? room.area_id,
         })}
       </div>
       ${
@@ -1437,6 +1561,64 @@ export class CanvasOverlay extends LitElement {
     </div>`;
   }
 
+  /** Every HA area to link a room to: this floor's first, then each other
+   * floor's, then areas on no floor. A linked area the list doesn't have
+   * (deleted, or never in this list) still shows, so the dropdown never
+   * claims "Custom" for a room that's linked. */
+  private _renderAreaSelect(room: Room) {
+    const here = this.areas.filter((a) => a.floor_id !== null);
+    const hereIds = new Set(here.map((a) => a.area_id));
+    const noFloor = this.allAreas.filter((a) => a.floor_id === null);
+    const otherFloors = this.otherFloors
+      .map((f) => ({
+        floor: f,
+        areas: this.allAreas.filter(
+          (a) => a.floor_id === f.floor_id && !hereIds.has(a.area_id),
+        ),
+      }))
+      .filter((g) => g.areas.length > 0);
+    const known = room.area_id
+      ? this.allAreas.some((a) => a.area_id === room.area_id)
+      : true;
+    return html`<select
+      @change=${(e: Event) =>
+        this._fire("room-area-change", {
+          areaId: (e.target as HTMLSelectElement).value,
+        })}
+    >
+      <option value="" ?selected=${!room.area_id}>
+        ${localize("canvas.room.custom")}
+      </option>
+      ${
+        !known
+          ? html`<option value=${room.area_id} selected>
+              ${localize("canvas.room.unknownArea", { id: room.area_id ?? "" })}
+            </option>`
+          : nothing
+      }
+      ${
+        here.length
+          ? html`<optgroup label=${localize("canvas.room.thisFloor")}>
+              ${this._areaOptions(here, room.area_id)}
+            </optgroup>`
+          : nothing
+      }
+      ${otherFloors.map(
+        (g) =>
+          html`<optgroup label=${g.floor.name}>
+            ${this._areaOptions(g.areas, room.area_id)}
+          </optgroup>`,
+      )}
+      ${
+        noFloor.length
+          ? html`<optgroup label=${localize("canvas.room.outdoor")}>
+              ${this._areaOptions(noFloor, room.area_id)}
+            </optgroup>`
+          : nothing
+      }
+    </select>`;
+  }
+
   private _areaOptions(areas: AreaMeta[], selectedAreaId: string | null) {
     return areas.map(
       (a) =>
@@ -1577,34 +1759,7 @@ export class CanvasOverlay extends LitElement {
             ${this._fieldRow(
               "mdi:floor-plan",
               localize("canvas.card.area"),
-              this._selectWrap(
-                html`<select
-                  @change=${(e: Event) =>
-                    this._fire("room-area-change", {
-                      areaId: (e.target as HTMLSelectElement).value,
-                    })}
-                >
-                  <option value="" ?selected=${!room.area_id}>
-                    ${localize("canvas.room.custom")}
-                  </option>
-                  ${this._areaOptions(
-                    this.areas.filter((a) => a.floor_id !== null),
-                    room.area_id,
-                  )}
-                  ${
-                    // Floor-less HA areas (decks, driveway…) — drawable onto any
-                    // floor's plan without changing the area's floor in HA.
-                    this.areas.some((a) => a.floor_id === null)
-                      ? html`<optgroup label=${localize("canvas.room.outdoor")}>
-                          ${this._areaOptions(
-                            this.areas.filter((a) => a.floor_id === null),
-                            room.area_id,
-                          )}
-                        </optgroup>`
-                      : nothing
-                  }
-                </select>`,
-              ),
+              this._selectWrap(this._renderAreaSelect(room)),
             )}
             ${this._fieldRow(
               "mdi:pencil",
@@ -1629,15 +1784,6 @@ export class CanvasOverlay extends LitElement {
               () => this._fire("room-edit-vertices-click"),
               this.editingRoom,
             )}
-            ${
-              room.label_position
-                ? this._actionRow(
-                    "mdi:format-text-variant-outline",
-                    localize("canvas.room.resetLabel"),
-                    () => this._fire("room-label-reset-click"),
-                  )
-                : nothing
-            }
             ${this._fieldRow(
               "mdi:home-export-outline",
               localize("canvas.room.outdoorSpace"),
@@ -1665,7 +1811,8 @@ export class CanvasOverlay extends LitElement {
               />`,
             )}
           </div>
-          ${this._renderAreaDevices(room)} ${this._renderRoomLights(room)}
+          ${this._renderRoomLabel(room)} ${this._renderAreaDevices(room)}
+          ${this._renderRoomLights(room)}
           <div class="info-group">
             <div class="info-group-title">${localize("canvas.card.style")}</div>
             ${this._renderColourPicker(room)}
