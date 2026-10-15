@@ -211,7 +211,7 @@ Any furniture or item can stand for an HA entity: a floor lamp for its light, a 
 
 A room shows its lights live on the plan: filled in the lights' own colour (white-temperature lights from warm amber to cool white, on the same palette as the home-flat dashboard's tiles) and brighter with their brightness, or shaded dark with them all off. By default a room follows the lights in its HA area. Its card can add **other areas** (an open-plan space spanning two), **other rooms** (a dining room that should show the kitchen's lights too), and **individual lights**.
 
-Link a **cover** to a door or window from its card, and the floor behind it shows a daylight patch reaching into the room. A wide door or window can take **two covers**, left and right as seen from inside, and each half shows its own. Mark a deck or patio drawn as a room **Outdoor space** (room card) and light through a door onto it only falls indoors. The patch is brighter the more the cover is open, and turns to shade when it's closed.
+Link a **cover** to a door or window from its card, and the floor behind it shows a daylight patch reaching into the room. Tick **Garage door** on a door's card and it's drawn as an overhead door that rolls up into the garage, animated, with its position beside it (its sun patch is under Daylight). A wide door or window can take **two covers**, left and right as seen from inside, and each half shows its own. Mark a deck or patio drawn as a room **Outdoor space** (room card) and light through a door onto it only falls indoors. The patch is brighter the more the cover is open, and turns to shade when it's closed.
 
 ### Daylight that follows the sun
 
@@ -241,6 +241,8 @@ item_tap_action: toggle     # a linked lamp, TV…: toggle | more-info | none
 The card opens at the view you last saved for that floor. Tap a room to toggle its lights, a covered window or door to open its details (or open and close it), and a device to open its more-info dialog.
 
 ## Placing devices
+
+The quickest way is from a room: once a room is linked to an HA area, its card lists **Devices in** that area. Tick one to place it in the room (auto-arranged, with an icon for its type), untick to take it off, or **Add all**. A device already placed elsewhere is greyed out. Click a placed device to change its icon from a row of suggestions for its type, **More icons…**, or back to the default; only the icon changes.
 
 **Place Device** opens a picker beside the plan (a sheet under it on a phone). Search it, filter by floor and area, and click a device to arm it, then click the plan. A device already placed elsewhere is greyed out, with where it is, so a device is never in two places. The ⋮ in the picker clears every placed device on the floor, after asking.
 

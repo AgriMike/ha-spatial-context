@@ -64,7 +64,7 @@
     },
     "room": {
       "custom": "— Benutzerdefiniert —",
-      "outdoor": "Außenbereich",
+      "outdoor": "Außenbereich / keine Etage",
       "hide": "Raum ausblenden",
       "show": "Raum einblenden",
       "color": "Raumfarbe",
@@ -75,7 +75,8 @@
       "editVertices": "Eckpunkte bearbeiten",
       "resetLabel": "Beschriftungsposition zurücksetzen",
       "delete": "Raum löschen",
-      "outdoorHint": "Terrasse, Veranda oder Balkon: Tageslicht durch eine Tür oder ein Fenster dorthin fällt nur nach innen."
+      "outdoorHint": "Terrasse, Veranda oder Balkon: Tageslicht durch eine Tür oder ein Fenster dorthin fällt nur nach innen.",
+      "outdoorSpace": "Außenbereich (Terrasse…)"
     },
     "pin": {
       "setLabel": "Beschriftung festlegen",
@@ -83,7 +84,10 @@
       "setHeight": "Höhe festlegen",
       "delete": "Pin löschen",
       "removeFromSpot": "Von dieser Stelle entfernen",
-      "stackTitle": "{count} Geräte an dieser Stelle"
+      "stackTitle": "{count} Geräte an dieser Stelle",
+      "icon": "Symbol",
+      "moreIcons": "Weitere Symbole…",
+      "defaultIcon": "Zurück zum Standardsymbol"
     },
     "wall": {
       "material": "Wandmaterial",
@@ -105,7 +109,9 @@
       "twoCovers": "Zwei Beschattungen (links & rechts)",
       "swapCovers": "Links und rechts tauschen",
       "left": "Links",
-      "right": "Rechts"
+      "right": "Rechts",
+      "garage": "Garagentor",
+      "garageHint": "Als Sektionaltor gezeichnet, das mit der Position der Beschattung in die Garage hochfährt. Der Sonnenfleck steht unter Tageslicht."
     },
     "meshStub": {
       "goToFloor": "Zur Etage"
@@ -156,6 +162,12 @@
       "head": "Höhe Fensteroberkante ({unit})",
       "shade": "Verschattung draußen ({pct} %)",
       "reset": "Tageslicht zurücksetzen"
+    },
+    "areaDevices": {
+      "title": "Geräte in {area}",
+      "none": "Noch keine Geräte in diesem Bereich.",
+      "elsewhere": "Bereits platziert: {where}",
+      "addAll": "Alle {count} in diesen Raum"
     }
   },
   "mapBackground": {

@@ -121,6 +121,8 @@ _OPENING_SCHEMA = {
     vol.Optional("cover_entity_id"): vol.Any(str, None),
     # A second cover: then cover_entity_id is the left half, this the right.
     vol.Optional("cover_right_entity_id"): vol.Any(str, None),
+    # A garage door, drawn as an overhead door rolling up with its cover.
+    vol.Optional("garage"): bool,
     # Per-opening daylight fine-tuning (see types.ts's OpeningDaylight).
     vol.Optional("daylight"): {
         vol.Optional("enabled"): bool,

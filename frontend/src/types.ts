@@ -145,6 +145,9 @@ export interface Opening {
   /** A second cover on the same opening — then `cover_entity_id` is its
    * left half and this the right, as seen from inside looking out. */
   cover_right_entity_id?: string | null;
+  /** A garage door: drawn as an overhead door that rolls up into the
+   * garage with its cover's position. */
+  garage?: boolean;
   /** Fine-tuning for the daylight drawn through this opening (see
    * floorplan-canvas.ts's _renderDaylight). Every field is optional. */
   daylight?: OpeningDaylight;

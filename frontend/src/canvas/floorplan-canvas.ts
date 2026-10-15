@@ -525,6 +525,43 @@ export class FloorplanCanvas extends LitElement {
       .cover-patch {
         pointer-events: none;
       }
+      .garage-door {
+        pointer-events: none;
+      }
+      .garage-panel {
+        fill: color-mix(in srgb, var(--sc-fg) 12%, transparent);
+        stroke: var(--sc-fg);
+        stroke-width: 1.5px;
+        vector-effect: non-scaling-stroke;
+        transition: opacity 1.2s ease;
+      }
+      .garage-panel.open {
+        fill: color-mix(in srgb, var(--sc-fg) 6%, transparent);
+        stroke-dasharray: 5 4;
+      }
+      .garage-roll {
+        transform-origin: 0 0;
+        transition: transform 1.2s ease;
+      }
+      .garage-slat {
+        stroke: var(--sc-fg);
+        stroke-width: 1px;
+        stroke-dasharray: 3 3;
+        vector-effect: non-scaling-stroke;
+        opacity: 0.6;
+      }
+      .garage-door.unknown .garage-panel {
+        stroke: var(--sc-fg-secondary);
+      }
+      .garage-label {
+        fill: var(--sc-fg-secondary);
+        text-anchor: middle;
+        dominant-baseline: central;
+        paint-order: stroke;
+        stroke: var(--sc-bg);
+        stroke-width: 3px;
+        pointer-events: none;
+      }
       .compass {
         position: absolute;
         left: 12px;
@@ -3495,6 +3532,80 @@ export class FloorplanCanvas extends LitElement {
     return svg`<defs>${defs}</defs>${patches}`;
   }
 
+  /** Garage doors as overhead doors: a slatted panel across the opening
+   * while closed, rolling back into the garage along its ceiling track as
+   * the cover opens (animated), with its position shown beside it. */
+  private _renderGarageDoors() {
+    if (!this.showCovers) return nothing;
+    const k = this.unitsPerCm;
+    const indoor = this.rooms.filter(
+      (r) => r.visible !== false && !r.outdoor && r.points.length >= 3,
+    );
+    return this.openings
+      .filter((o) => o.garage)
+      .map((opening) => {
+        const ends = this._openingEndpoints(opening);
+        if (!ends) return nothing;
+        const [[x1, y1], [x2, y2]] = ends;
+        const width = distance(x1, y1, x2, y2);
+        if (width <= 0) return nothing;
+        const tx = (x2 - x1) / width;
+        const ty = (y2 - y1) / width;
+        const cx = (x1 + x2) / 2;
+        const cy = (y1 + y2) / 2;
+        // Roll up into the garage: the side with an indoor room.
+        const probe = Math.max(this._pxToUnits(8), 15 * k);
+        const inward = [1, -1].find((side) =>
+          indoor.some((r) =>
+            pointInPolygon(
+              cx - ty * side * probe,
+              cy + tx * side * probe,
+              r.points,
+            ),
+          ),
+        );
+        const side = inward ?? 1;
+        const openness = this.coverOpenness.has(opening.id)
+          ? (this.coverOpenness.get(opening.id) ?? 0)
+          : 0;
+        const unknown =
+          this.coverOpenness.has(opening.id) &&
+          this.coverOpenness.get(opening.id) === null;
+        const angle = (Math.atan2(ty, tx) * 180) / Math.PI;
+        // Local frame: x along the door, y into the garage.
+        const depth = 210 * k; // a ~2.1 m door rolls back that far
+        const thick = Math.max(8 * k, this._pxToUnits(4));
+        const slats = 5;
+        const pct = Math.round(openness * 100);
+        const labelAt: [number, number] = [
+          cx + ty * side * this._pxToUnits(14),
+          cy - tx * side * this._pxToUnits(14),
+        ];
+        return svg`
+          <g class="garage-door ${unknown ? "unknown" : ""}" transform="translate(${x1} ${y1}) rotate(${angle}) scale(1 ${side})">
+            <rect class="garage-panel closed" x="0" y=${-thick / 2} width=${width} height=${thick}
+              style="opacity:${1 - openness}"></rect>
+            <g class="garage-roll" style="transform: scaleY(${openness})">
+              <rect class="garage-panel open" x="0" y="0" width=${width} height=${depth}></rect>
+              ${Array.from({ length: slats - 1 }, (_, i) => {
+                const y = ((i + 1) * depth) / slats;
+                return svg`<line class="garage-slat" x1="0" y1=${y} x2=${width} y2=${y}></line>`;
+              })}
+            </g>
+          </g>
+          <text class="garage-label" x=${labelAt[0]} y=${labelAt[1]} style="font-size:${this._pxToUnits(10)}px">${
+            unknown
+              ? "?"
+              : pct >= 98
+                ? "▲ open"
+                : pct <= 2
+                  ? "▼ closed"
+                  : `▲ ${pct}%`
+          }</text>
+        `;
+      });
+  }
+
   /** A north arrow, when the floor's compass is set. */
   private _renderCompass() {
     if (this.northDeg === null) return nothing;
@@ -3715,6 +3826,7 @@ export class FloorplanCanvas extends LitElement {
           ${this.showFurniture ? this.furniture.map((item) => this._renderFurniture(item)) : nothing}
           ${this.walls.map((wall) => this._renderWall(wall))}
           ${this.openings.map((opening) => this._renderOpening(opening))}
+          ${this._renderGarageDoors()}
           ${this._renderFurnitureGuides()} ${this._renderFurnitureHandles()}
           ${this.meshLinks.map((link) => this._renderMeshLink(link))}
           ${this.meshStubs.map((stub) => this._renderMeshStubLine(stub))}

@@ -39,7 +39,7 @@ import {
   dbmToQuality,
   lqiToQuality,
 } from "./canvas/mesh-colors";
-import { pinDisplayLabel } from "./canvas/device-display";
+import { pickDisplayEntity, pinDisplayLabel } from "./canvas/device-display";
 import { selectZigbeeLinks, withCoordinatorDevice } from "./zigbee-links";
 import { EditHistory } from "./history";
 import { debugLog } from "./debug-log";
@@ -91,7 +91,9 @@ import "./views/icon-popover";
 import "./views/row-actions";
 import "./views/entity-picker-sidebar";
 import "./views/furniture-library-sidebar";
-import type { EntityOption } from "./views/canvas-overlay";
+import type { AreaDevice, EntityOption } from "./views/canvas-overlay";
+import { deviceIconChoices, deviceTypeIcon } from "./canvas/device-icons";
+import { roomLabelPoint } from "./canvas/geometry";
 import { catalogItem } from "./canvas/furniture-catalog";
 import { COMPASS_POINTS, skyFromWeather, type Sky } from "./canvas/sun";
 import {
@@ -1233,6 +1235,130 @@ export class SpatialContextPanel extends LitElement {
       }
     `;
   }
+
+  /** The selected room's area devices, for its checklist. */
+  private _areaDevices(room: Room | null): AreaDevice[] {
+    if (!room?.area_id) return [];
+    const byDevice = new Map<string, PlaceableEntity[]>();
+    for (const e of this._entities) {
+      if (!e.device_id || e.area_id !== room.area_id) continue;
+      const list = byDevice.get(e.device_id);
+      if (list) list.push(e);
+      else byDevice.set(e.device_id, [e]);
+    }
+    const here = new Set(
+      this._layout.pins.map((p) => p.device_id).filter(Boolean),
+    );
+    return [...byDevice.entries()]
+      .map(([deviceId, entities]) => {
+        const rep = pickDisplayEntity(deviceId, entities);
+        const placedFloor = entities.find(
+          (e) => e.placed_floor_id,
+        )?.placed_floor_id;
+        const placed: AreaDevice["placed"] = here.has(deviceId)
+          ? "here"
+          : placedFloor && placedFloor !== this._currentFloorId
+            ? "elsewhere"
+            : "none";
+        return {
+          deviceId,
+          name: rep?.device_name ?? rep?.name ?? deviceId,
+          icon: deviceTypeIcon(rep),
+          placed,
+          where:
+            placed === "elsewhere"
+              ? (entities.find((e) => e.placed_floor_name)?.placed_floor_name ??
+                null)
+              : null,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** Free spots inside a room for `count` new pins: a grid over the room,
+   * nearest its label first, kept clear of pins already there. */
+  private _spotsInRoom(room: Room, count: number): [number, number][] {
+    const pts = room.points;
+    const xs = pts.map((p) => p[0]);
+    const ys = pts.map((p) => p[1]);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const [lx, ly] = roomLabelPoint(pts);
+    const taken = this._layout.pins.map((p): [number, number] => [p.x, p.y]);
+    for (const divisions of [5, 8, 12, 18]) {
+      const step = Math.min(maxX - minX, maxY - minY) / divisions;
+      if (step <= 0) break;
+      const spots: [number, number][] = [];
+      for (let x = minX + step / 2; x < maxX; x += step)
+        for (let y = minY + step / 2; y < maxY; y += step)
+          if (pointInPolygon(x, y, pts)) spots.push([x, y]);
+      const free = spots
+        // Leave the room's name readable.
+        .filter(([x, y]) => Math.hypot(x - lx, y - ly) > step * 0.7)
+        .sort(
+          (a, b) =>
+            Math.hypot(a[0] - lx, a[1] - ly) - Math.hypot(b[0] - lx, b[1] - ly),
+        );
+      const out: [number, number][] = [];
+      for (const s of free) {
+        if (out.length >= count) break;
+        if (
+          [...taken, ...out].every(
+            ([x, y]) => Math.hypot(x - s[0], y - s[1]) > step * 0.6,
+          )
+        )
+          out.push(s);
+      }
+      if (out.length >= count) return out;
+    }
+    return Array.from({ length: count }, (_, i): [number, number] => [
+      lx + i * 4,
+      ly + 12,
+    ]);
+  }
+
+  /** Places devices into the selected room, each with its type icon. */
+  private _placeDevicesInRoom(deviceIds: string[]): void {
+    const room = this._selectedRoom;
+    if (!room || deviceIds.length === 0) return;
+    const spots = this._spotsInRoom(room, deviceIds.length);
+    const pins = deviceIds.map((deviceId, i) => {
+      const [x, y] = spots[i]!;
+      const pin = emptyPin(deviceId, x, y, room.id);
+      const rep = pickDisplayEntity(deviceId, this._entities);
+      return { ...pin, icon_override: deviceTypeIcon(rep) };
+    });
+    this._updateLayout({ pins: [...this._layout.pins, ...pins] });
+  }
+
+  private _onRoomDeviceToggle = (
+    e: CustomEvent<{ deviceId: string; on: boolean }>,
+  ) => {
+    if (e.detail.on) {
+      this._placeDevicesInRoom([e.detail.deviceId]);
+    } else {
+      this._updateLayout({
+        pins: this._layout.pins.filter(
+          (p) => p.device_id !== e.detail.deviceId,
+        ),
+      });
+    }
+  };
+
+  private _onRoomDevicesAddAll = () => {
+    const ids = this._areaDevices(this._selectedRoom)
+      .filter((d) => d.placed === "none")
+      .map((d) => d.deviceId);
+    this._placeDevicesInRoom(ids);
+  };
+
+  /** A quick icon pick on a device's card (null = back to its default). */
+  private _onPinIconQuick = (e: CustomEvent<{ icon: string | null }>) => {
+    const pin = this._selectedPin;
+    if (pin) this._patchPin(pin.id, { icon_override: e.detail.icon });
+  };
 
   private get _unitsPerCm(): number {
     return this._canvas?.unitsPerCm ?? BASE_WIDTH / 2000;
@@ -3418,6 +3544,16 @@ export class SpatialContextPanel extends LitElement {
     });
   };
 
+  private _onOpeningGarageChange = (e: CustomEvent<{ garage: boolean }>) => {
+    const opening = this._selectedOpening;
+    if (!opening) return;
+    this._updateLayout({
+      openings: this._layout.openings.map((o) =>
+        o.id === opening.id ? { ...o, garage: e.detail.garage } : o,
+      ),
+    });
+  };
+
   /** Swaps an opening's left and right covers. */
   private _onOpeningCoverSwap = () => {
     const opening = this._selectedOpening;
@@ -4709,6 +4845,7 @@ export class SpatialContextPanel extends LitElement {
                     @opening-cover-change=${this._onOpeningCoverChange}
                     @opening-daylight-change=${this._onOpeningDaylightChange}
                     @opening-cover-swap=${this._onOpeningCoverSwap}
+                    @opening-garage-change=${this._onOpeningGarageChange}
                     @room-outdoor-change=${this._onRoomOutdoorChange}
                     .selectedCoverOpennessRight=${
                       this._selectedOpening
@@ -4752,6 +4889,20 @@ export class SpatialContextPanel extends LitElement {
                     @room-delete-click=${this._onRoomDelete}
                     @pin-label-change=${this._onPinLabelChange}
                     @pin-set-icon-click=${this._onPinSetIcon}
+                    @pin-icon-quick=${this._onPinIconQuick}
+                    @room-device-toggle=${this._onRoomDeviceToggle}
+                    @room-devices-add-all=${this._onRoomDevicesAddAll}
+                    .areaDevices=${this._areaDevices(this._selectedRoom)}
+                    .pinIconChoices=${
+                      this._selectedPin
+                        ? deviceIconChoices(
+                            pickDisplayEntity(
+                              this._selectedPin.device_id,
+                              this._entities,
+                            ),
+                          )
+                        : []
+                    }
                     @pin-height-change=${this._onPinHeightChange}
                     @pin-delete-click=${this._onPinDelete}
                     @wall-material-change=${this._onWallMaterialChange}

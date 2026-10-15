@@ -64,7 +64,7 @@
     },
     "room": {
       "custom": "— Custom —",
-      "outdoor": "Outdoor space",
+      "outdoor": "Outdoor / no floor",
       "hide": "Hide room",
       "show": "Show room",
       "color": "Room color",
@@ -75,7 +75,8 @@
       "editVertices": "Edit vertices",
       "resetLabel": "Reset label position",
       "delete": "Delete room",
-      "outdoorHint": "A deck, patio or porch: daylight through a door or window onto it only falls indoors."
+      "outdoorHint": "A deck, patio or porch: daylight through a door or window onto it only falls indoors.",
+      "outdoorSpace": "Outdoor space"
     },
     "pin": {
       "setLabel": "Set label",
@@ -83,7 +84,10 @@
       "setHeight": "Set height",
       "delete": "Delete pin",
       "removeFromSpot": "Remove from this spot",
-      "stackTitle": "{count} devices at this spot"
+      "stackTitle": "{count} devices at this spot",
+      "icon": "Icon",
+      "moreIcons": "More icons…",
+      "defaultIcon": "Back to the default icon"
     },
     "wall": {
       "material": "Wall material",
@@ -105,7 +109,9 @@
       "twoCovers": "Two covers (left & right)",
       "swapCovers": "Swap left and right",
       "left": "Left",
-      "right": "Right"
+      "right": "Right",
+      "garage": "Garage door",
+      "garageHint": "Drawn as an overhead door that rolls up into the garage with its cover's position. Its sun patch is under Daylight."
     },
     "meshStub": {
       "goToFloor": "Go to floor"
@@ -156,6 +162,12 @@
       "head": "Window top height ({unit})",
       "shade": "Outdoor shade ({pct}%)",
       "reset": "Reset daylight to defaults"
+    },
+    "areaDevices": {
+      "title": "Devices in {area}",
+      "none": "No devices in this area yet.",
+      "elsewhere": "Already placed: {where}",
+      "addAll": "Add all {count} to this room"
     }
   },
   "mapBackground": {

@@ -144,6 +144,7 @@ async def async_get_map_data(hass: HomeAssistant) -> dict[str, Any]:
                     "width_m": opening["width"] * floor_mpu if floor_mpu else None,
                     "cover_entity_id": opening.get("cover_entity_id"),
                     "cover_right_entity_id": opening.get("cover_right_entity_id"),
+                    "garage": opening.get("garage", False),
                 }
             )
 

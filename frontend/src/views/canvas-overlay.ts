@@ -80,6 +80,17 @@ const LINKABLE_DOMAINS = [
   "sensor",
 ];
 
+/** A device in a room's HA area, for the room card's checklist. */
+export interface AreaDevice {
+  deviceId: string;
+  name: string;
+  icon: string;
+  /** Placed on this floor, on another floor/the property, or nowhere. */
+  placed: "here" | "elsewhere" | "none";
+  /** Where, when placed elsewhere. */
+  where: string | null;
+}
+
 /** An entity offered in a picker: id plus display name. */
 export interface EntityOption {
   entity_id: string;
@@ -240,6 +251,47 @@ export class CanvasOverlay extends LitElement {
       .room-opacity {
         width: 140px;
       }
+      .device-row {
+        cursor: pointer;
+      }
+      .device-row.disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+      .device-row .device-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .device-row input {
+        width: 18px;
+        height: 18px;
+        accent-color: var(--sc-accent);
+      }
+      .icon-choices {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 0 12px 8px 44px;
+      }
+      .icon-choice {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        padding: 0;
+        border: 1px solid var(--sc-divider);
+        border-radius: 10px;
+        color: var(--sc-fg);
+      }
+      .icon-choice.active {
+        border-color: var(--sc-accent);
+        color: var(--sc-accent);
+        background: color-mix(in srgb, var(--sc-accent) 10%, transparent);
+      }
+      .icon-choice ha-icon {
+        --mdc-icon-size: 20px;
+      }
       .link-chips {
         display: flex;
         flex-wrap: wrap;
@@ -352,6 +404,10 @@ export class CanvasOverlay extends LitElement {
   /** Entities a furniture item can be linked to (see LINKABLE_DOMAINS). */
   @property({ attribute: false }) linkableEntities: EntityOption[] = [];
   @property({ attribute: false }) selectedItemState: ItemState | null = null;
+  /** Devices in the selected room's HA area, for its device checklist. */
+  @property({ attribute: false }) areaDevices: AreaDevice[] = [];
+  /** Icons to offer for the selected device pin (type icon first). */
+  @property({ attribute: false }) pinIconChoices: string[] = [];
   /** Show the weak → strong key along the bottom (a network layer is on). */
   @state() private _colorOpen = false;
   @property({ type: Boolean }) dirty = false;
@@ -694,6 +750,21 @@ export class CanvasOverlay extends LitElement {
       )}
       ${two ? picker("mdi:blinds", localize("canvas.opening.coverRight"), opening.cover_right_entity_id, "right") : nothing}
       ${this._fieldRow(
+        "mdi:garage",
+        localize("canvas.opening.garage"),
+        html`<input
+          type="checkbox"
+          class="switch"
+          role="switch"
+          title=${localize("canvas.opening.garageHint")}
+          .checked=${!!opening.garage}
+          @change=${(e: Event) =>
+            this._fire("opening-garage-change", {
+              garage: (e.target as HTMLInputElement).checked,
+            })}
+        />`,
+      )}
+      ${this._fieldRow(
         "mdi:arrow-split-vertical",
         localize("canvas.opening.twoCovers"),
         html`<input
@@ -845,6 +916,71 @@ export class CanvasOverlay extends LitElement {
           : nothing
       }
     `;
+  }
+
+  /** The devices in the room's HA area: tick one to place it in the room
+   * (with an icon for its type), untick to take it off the plan. */
+  private _renderAreaDevices(room: Room) {
+    if (!room.area_id) return nothing;
+    const devices = this.areaDevices;
+    const area = this.allAreas.find((a) => a.area_id === room.area_id);
+    const unplaced = devices.filter((d) => d.placed === "none").length;
+    return html`<div class="info-group">
+      <div class="info-group-title">
+        ${localize("canvas.areaDevices.title", {
+          area: area?.name ?? room.name,
+        })}
+      </div>
+      ${
+        devices.length === 0
+          ? html`<div class="info-row">
+              <span class="grow info-sub"
+                >${localize("canvas.areaDevices.none")}</span
+              >
+            </div>`
+          : devices.map(
+              (d) =>
+                html`<label
+                  class="info-row device-row ${d.placed === "elsewhere" ? "disabled" : ""}"
+                  title=${
+                    d.placed === "elsewhere"
+                      ? localize("canvas.areaDevices.elsewhere", {
+                          where: d.where ?? "",
+                        })
+                      : d.name
+                  }
+                >
+                  <ha-icon icon=${d.icon}></ha-icon>
+                  <span class="grow device-name"
+                    >${d.name}${
+                      d.placed === "elsewhere"
+                        ? html`<span class="info-sub"> · ${d.where}</span>`
+                        : nothing
+                    }</span
+                  >
+                  <input
+                    type="checkbox"
+                    .checked=${d.placed === "here"}
+                    ?disabled=${d.placed === "elsewhere"}
+                    @change=${(e: Event) =>
+                      this._fire("room-device-toggle", {
+                        deviceId: d.deviceId,
+                        on: (e.target as HTMLInputElement).checked,
+                      })}
+                  />
+                </label>`,
+            )
+      }
+      ${
+        unplaced > 1
+          ? this._actionRow(
+              "mdi:checkbox-multiple-marked-outline",
+              localize("canvas.areaDevices.addAll", { count: unplaced }),
+              () => this._fire("room-devices-add-all"),
+            )
+          : nothing
+      }
+    </div>`;
   }
 
   /** A list of linked things as removable chips, plus a dropdown adding
@@ -1504,7 +1640,7 @@ export class CanvasOverlay extends LitElement {
             }
             ${this._fieldRow(
               "mdi:home-export-outline",
-              localize("canvas.room.outdoor"),
+              localize("canvas.room.outdoorSpace"),
               html`<input
                 type="checkbox"
                 class="switch"
@@ -1529,7 +1665,7 @@ export class CanvasOverlay extends LitElement {
               />`,
             )}
           </div>
-          ${this._renderRoomLights(room)}
+          ${this._renderAreaDevices(room)} ${this._renderRoomLights(room)}
           <div class="info-group">
             <div class="info-group-title">${localize("canvas.card.style")}</div>
             ${this._renderColourPicker(room)}
@@ -1596,9 +1732,38 @@ export class CanvasOverlay extends LitElement {
                   })}
               />`,
             )}
-            ${this._actionRow("mdi:shape", localize("canvas.pin.setIcon"), () =>
-              this._fire("pin-set-icon-click"),
-            )}
+            <div class="info-row">
+              <ha-icon icon="mdi:shape"></ha-icon>
+              <span class="grow">${localize("canvas.pin.icon")}</span>
+            </div>
+            <div class="icon-choices">
+              ${this.pinIconChoices.map(
+                (icon) =>
+                  html`<button
+                    class="icon-choice ${pin.icon_override === icon ? "active" : ""}"
+                    title=${icon.replace("mdi:", "")}
+                    @click=${() => this._fire("pin-icon-quick", { icon })}
+                  >
+                    <ha-icon icon=${icon}></ha-icon>
+                  </button>`,
+              )}
+              <button
+                class="icon-choice more"
+                title=${localize("canvas.pin.moreIcons")}
+                @click=${() => this._fire("pin-set-icon-click")}
+              >
+                <ha-icon icon="mdi:dots-horizontal"></ha-icon>
+              </button>
+            </div>
+            ${
+              pin.icon_override
+                ? this._actionRow(
+                    "mdi:restore",
+                    localize("canvas.pin.defaultIcon"),
+                    () => this._fire("pin-icon-quick", { icon: null }),
+                  )
+                : nothing
+            }
             ${this._fieldRow(
               "mdi:human-male-height",
               localize("canvas.card.height", {
