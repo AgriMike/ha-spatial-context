@@ -214,14 +214,15 @@
     "settings": "Einstellungen",
     "more": "Weitere Optionen",
     "uploadBackground": "Hintergrund hochladen",
-    "replaceBackground": "Hintergrund ersetzen",
+    "replaceBackground": "Hintergrund ersetzen (Räume bleiben)",
     "removeBackground": "Hintergrund entfernen",
     "opacity": "Deckkraft",
     "exportJson": "JSON exportieren",
     "debugReport": "Debug-Bericht herunterladen",
     "debugReportHint": "Versionen, Einstellungen, Layout-Anzahlen und das aktuelle Debug-Protokoll – sicher an ein GitHub-Issue anzuhängen",
     "resetFloor": "Etage zurücksetzen",
-    "resetProperty": "Anwesen zurücksetzen"
+    "resetProperty": "Anwesen zurücksetzen",
+    "importSvg": "Räume & Wände aus SVG importieren"
   },
   "network": {
     "zigbee": "Zigbee-Mesh",
@@ -345,6 +346,8 @@
   "svgImport": {
     "confirm": "Diese SVG-Datei enthält {rooms} Räume, {walls} Wände und {openings} Türen/Fenster. Auch diese zu diesem Stockwerk hinzufügen, damit nichts nachgezeichnet werden muss?",
     "unitPrompt": "Wie lang ist eine Einheit der SVG-Zeichnung, in {unit}? (1, wenn sie in {unit} gezeichnet wurde.) Leer lassen, um das Stockwerk später selbst zu kalibrieren.",
-    "skipped": "{count} Türen/Fenster lagen in der SVG-Datei an keiner Wand und wurden ausgelassen."
+    "skipped": "{count} Türen/Fenster lagen in der SVG-Datei an keiner Wand und wurden ausgelassen.",
+    "nothingFound": "In dieser SVG-Datei wurden keine Räume, Wände, Türen oder Fenster gefunden. Benenne ihre Gruppen rooms, walls, doors und windows (siehe README).",
+    "alsoBackground": "Auch den Hintergrund dieses Stockwerks durch die SVG ersetzen? (Abbrechen behält den aktuellen Hintergrund und fügt nur die Geometrie hinzu.)"
   }
 }

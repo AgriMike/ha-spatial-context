@@ -2544,10 +2544,12 @@ export class SpatialContextPanel extends LitElement {
 
   /** Shared by the file-input picker and canvas drag-and-drop — drag-and-drop
    * bypasses the <input accept> restriction entirely, so the MIME check has
-   * to live here rather than only on the input element. */
+   * to live here rather than only on the input element. Replacing a
+   * background only ever swaps the image: rooms, walls and everything else
+   * stay exactly where they are, as does the opacity already chosen. */
   private async _handleBackgroundFile(file: File): Promise<void> {
     if (isSvgFile(file)) {
-      await this._handleSvgBackground(file);
+      await this._handleSvgFile(file, "background");
       return;
     }
     if (!SpatialContextPanel._ACCEPTED_BACKGROUND_TYPES.has(file.type)) {
@@ -2556,9 +2558,7 @@ export class SpatialContextPanel extends LitElement {
     }
     try {
       const imageId = await this._client.uploadBackgroundImage(file);
-      const patch = { background_image_id: imageId, background_opacity: 0.85 };
-      if (this._view === "property") this._updatePropertyLayout(patch);
-      else this._updateLayout(patch);
+      this._applyBackgroundImage(imageId);
     } catch (err) {
       window.alert(
         localize("errors.bgUpload", { error: (err as Error).message }),
@@ -2566,35 +2566,75 @@ export class SpatialContextPanel extends LitElement {
     }
   }
 
-  /** An SVG floor plan: rasterised to a PNG for the background (HA's image
-   * storage won't take SVG), and — on a floor — its rooms, walls, doors and
-   * windows offered as real geometry, so there's nothing to trace. The
-   * background, geometry and calibration land as one undo step. */
-  private async _handleSvgBackground(file: File): Promise<void> {
-    let patch: Partial<FloorLayout>;
+  /** Swaps in a new background image — only the image. A first background
+   * starts at the default opacity; a replacement keeps the current one. */
+  private _applyBackgroundImage(
+    imageId: string,
+    extra: Partial<FloorLayout> = {},
+  ): void {
+    const hadImage = !!this._activeBackground.imageId;
+    const patch = {
+      background_image_id: imageId,
+      ...(hadImage ? {} : { background_opacity: 0.85 }),
+    };
+    if (this._view === "property") this._updatePropertyLayout(patch);
+    else this._updateLayout({ ...patch, ...extra });
+  }
+
+  private _onSvgImportInputChange = (e: Event) => {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (file) void this._handleSvgFile(file, "import");
+  };
+
+  /** An SVG floor plan. As a background ("background") it's rasterised to a
+   * PNG (HA's image storage won't take SVG) and swapped in; its rooms,
+   * walls, doors and windows are only offered when the floor has nothing
+   * drawn yet, so replacing a plan never duplicates what's there. "import"
+   * (Background → Import rooms & walls from SVG) always offers them, and
+   * the image itself only when asked. Either way it's one undo step. */
+  private async _handleSvgFile(
+    file: File,
+    purpose: "background" | "import",
+  ): Promise<void> {
+    let imageId: string | null = null;
+    let geometry: Partial<FloorLayout> = {};
     let skipped = 0;
     try {
       const text = await file.text();
       const plan = parseSvgFloorplan(text);
-      const png = await rasterizeSvg(text, plan.viewBox, file.name);
-      const imageId = await this._client.uploadBackgroundImage(png);
-      patch = { background_image_id: imageId, background_opacity: 0.85 };
-      if (this._view === "property") {
-        this._updatePropertyLayout(patch);
-        return;
-      }
+      const layout = this._layout;
+      const onFloor = this._view !== "property";
       const found =
         plan.rooms.length + plan.walls.length + plan.openings.length > 0;
-      if (
-        found &&
+      const floorIsEmpty =
+        layout.rooms.length === 0 && layout.walls.length === 0;
+      const offerGeometry =
+        onFloor && found && (purpose === "import" || floorIsEmpty);
+      if (purpose === "import" && !found) {
+        window.alert(localize("svgImport.nothingFound"));
+        return;
+      }
+      const wantGeometry =
+        offerGeometry &&
         window.confirm(
           localize("svgImport.confirm", {
             rooms: plan.rooms.length,
             walls: plan.walls.length,
             openings: plan.openings.length,
           }),
-        )
-      ) {
+        );
+      if (purpose === "import" && !wantGeometry) return;
+      const wantImage =
+        purpose === "background" ||
+        !this._activeBackground.imageId ||
+        window.confirm(localize("svgImport.alsoBackground"));
+      if (wantImage) {
+        const png = await rasterizeSvg(text, plan.viewBox, file.name);
+        imageId = await this._client.uploadBackgroundImage(png);
+      }
+      if (wantGeometry) {
         const system = this._settings.unit_system;
         const unit = localize(
           system === "imperial" ? "units.feet" : "units.metres",
@@ -2605,7 +2645,6 @@ export class SpatialContextPanel extends LitElement {
           meters !== null && Number.isFinite(meters) && meters > 0
             ? meters
             : null;
-        const layout = this._layout;
         const result = buildSvgLayout(
           plan,
           {
@@ -2617,8 +2656,7 @@ export class SpatialContextPanel extends LitElement {
           metersPerUnit,
         );
         const rooms = [...layout.rooms, ...result.rooms];
-        patch = {
-          ...patch,
+        geometry = {
           rooms,
           pins: reassignPinRooms(rooms, layout.pins),
           walls: [...layout.walls, ...result.walls],
@@ -2633,7 +2671,8 @@ export class SpatialContextPanel extends LitElement {
       );
       return;
     }
-    this._updateLayout(patch);
+    if (imageId) this._applyBackgroundImage(imageId, geometry);
+    else this._updateLayout(geometry);
     if (skipped > 0) {
       window.alert(localize("svgImport.skipped", { count: skipped }));
     }
@@ -3444,10 +3483,31 @@ export class SpatialContextPanel extends LitElement {
           accept="image/png,image/jpeg,image/gif,image/svg+xml,.svg"
           @change=${this._onFileInputChange}
         />
+        <input
+          id="svg-import-input"
+          class="hidden-file-input"
+          type="file"
+          accept="image/svg+xml,.svg"
+          @change=${this._onSvgImportInputChange}
+        />
         <button class="menu-item" @click=${() => this._fileInput?.click()}>
           <ha-icon icon="mdi:image-plus"></ha-icon>
           ${this._activeBackground.imageId ? localize("menu.replaceBackground") : localize("menu.uploadBackground")}
         </button>
+        ${
+          this._view === "property"
+            ? nothing
+            : html`<button
+                class="menu-item"
+                @click=${() =>
+                  this.renderRoot
+                    .querySelector<HTMLInputElement>("#svg-import-input")
+                    ?.click()}
+              >
+                <ha-icon icon="mdi:vector-square-plus"></ha-icon>
+                ${localize("menu.importSvg")}
+              </button>`
+        }
         ${
           this._view === "property" &&
           this._mapTilesAvailable &&

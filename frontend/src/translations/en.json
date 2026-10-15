@@ -214,14 +214,15 @@
     "settings": "Settings",
     "more": "More options",
     "uploadBackground": "Upload background",
-    "replaceBackground": "Replace background",
+    "replaceBackground": "Replace background (keeps rooms)",
     "removeBackground": "Remove background",
     "opacity": "Opacity",
     "exportJson": "Export JSON",
     "debugReport": "Download debug report",
     "debugReportHint": "Versions, settings, layout counts and the recent debug log — safe to attach to a GitHub issue",
     "resetFloor": "Reset floor",
-    "resetProperty": "Reset property"
+    "resetProperty": "Reset property",
+    "importSvg": "Import rooms & walls from SVG"
   },
   "network": {
     "zigbee": "Zigbee Mesh",
@@ -345,6 +346,8 @@
   "svgImport": {
     "confirm": "This SVG has {rooms} rooms, {walls} walls and {openings} doors/windows. Add them to this floor as well, so there's nothing to trace?",
     "unitPrompt": "How long is one unit of the SVG's drawing, in {unit}? (1 if it was drawn in {unit}.) Leave blank to calibrate the floor yourself later.",
-    "skipped": "{count} doors/windows weren't along any wall in the SVG, so they were left out."
+    "skipped": "{count} doors/windows weren't along any wall in the SVG, so they were left out.",
+    "nothingFound": "No rooms, walls, doors or windows were found in that SVG. Name its groups rooms, walls, doors and windows (see the README).",
+    "alsoBackground": "Also replace this floor's background with the SVG? (Cancel keeps the current background and only adds the geometry.)"
   }
 }
