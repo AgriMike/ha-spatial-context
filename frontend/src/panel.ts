@@ -94,6 +94,7 @@ import "./views/furniture-library-sidebar";
 import type { AreaDevice, EntityOption } from "./views/canvas-overlay";
 import { deviceIconChoices, deviceTypeIcon } from "./canvas/device-icons";
 import { roomLabelPoint } from "./canvas/geometry";
+import { mergeDuplicateGeometry } from "./canvas/dedupe";
 import {
   catalogItem,
   FREEFORM_KIND,
@@ -1533,11 +1534,18 @@ export class SpatialContextPanel extends LitElement {
     // actually found something to fix.
     this._floorHistory.clear();
     const healedPins = reassignPinRooms(this._layout.rooms, this._layout.pins);
+    // Walls, doors and windows imported twice from the same plan: merged
+    // back into one each (keeping the copy with covers/daylight set).
+    const merged = mergeDuplicateGeometry(
+      this._layout.walls,
+      this._layout.openings,
+    );
+    if (merged) this._layout = { ...this._layout, ...merged };
     if (healedPins !== this._layout.pins) {
       this._layout = { ...this._layout, pins: healedPins };
       this._dirty = true;
     } else {
-      this._dirty = false;
+      this._dirty = merged !== null;
     }
     void this._loadOtherFloorPins(floorId);
     debugLog.log("floor_load", {
@@ -3105,12 +3113,26 @@ export class SpatialContextPanel extends LitElement {
           this._areasForCurrentFloor,
           metersPerUnit,
         );
-        const rooms = [...layout.rooms, ...result.rooms];
+        // Importing a plan again adds only what isn't drawn yet: rooms
+        // already traced are skipped, walls and openings merged with
+        // their existing copies (which keep their settings).
+        const roomKey = (r: Room) =>
+          r.points
+            .map(([x, y]) => `${Math.round(x)},${Math.round(y)}`)
+            .join(" ");
+        const existingRooms = new Set(layout.rooms.map(roomKey));
+        const rooms = [
+          ...layout.rooms,
+          ...result.rooms.filter((r) => !existingRooms.has(roomKey(r))),
+        ];
+        const walls = [...layout.walls, ...result.walls];
+        const openings = [...layout.openings, ...result.openings];
+        const merged = mergeDuplicateGeometry(walls, openings);
         geometry = {
           rooms,
           pins: reassignPinRooms(rooms, layout.pins),
-          walls: [...layout.walls, ...result.walls],
-          openings: [...layout.openings, ...result.openings],
+          walls: merged?.walls ?? walls,
+          openings: merged?.openings ?? openings,
           ...(result.scale ? { scale: result.scale } : {}),
         };
         skipped = result.skippedOpenings;

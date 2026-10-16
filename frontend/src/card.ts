@@ -670,15 +670,33 @@ class SpatialContextCardEditor extends HTMLElement {
   }
 }
 
-if (!customElements.get("spatial-context-card")) {
-  customElements.define("spatial-context-card", SpatialContextCard);
+/** Defines the card and its editor unless they're already defined. Home
+ * Assistant can swap in its own (scoped) custom element registry after
+ * integration scripts like this one have run, which hides definitions made
+ * before it — the card picker then waits forever for the card. So this
+ * runs again once the app is up, defining a fresh subclass each time
+ * (a registry won't take the same constructor twice). */
+function register(): void {
+  try {
+    if (!customElements.get("spatial-context-card")) {
+      customElements.define(
+        "spatial-context-card",
+        class extends SpatialContextCard {},
+      );
+    }
+    if (!customElements.get("spatial-context-card-editor")) {
+      customElements.define(
+        "spatial-context-card-editor",
+        class extends SpatialContextCardEditor {},
+      );
+    }
+  } catch (err) {
+    console.warn("Spatial Context card: couldn't register", err);
+  }
 }
-if (!customElements.get("spatial-context-card-editor")) {
-  customElements.define(
-    "spatial-context-card-editor",
-    SpatialContextCardEditor,
-  );
-}
+register();
+void customElements.whenDefined("home-assistant").then(register);
+for (const ms of [0, 1000, 3000, 8000]) setTimeout(register, ms);
 
 const cards = ((
   window as unknown as { customCards?: unknown[] }

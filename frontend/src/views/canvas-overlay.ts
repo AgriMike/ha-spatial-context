@@ -1871,7 +1871,11 @@ export class CanvasOverlay extends LitElement {
             ${this._renderColourPicker(room)}
             ${this._fieldRow(
               "mdi:opacity",
-              localize("canvas.room.fillOpacity"),
+              localize("canvas.room.fillOpacity", {
+                pct: Math.round(
+                  (room.fill_opacity ?? DEFAULT_ROOM_FILL_OPACITY) * 100,
+                ),
+              }),
               html`<input
                 type="range"
                 class="room-opacity"
@@ -1888,7 +1892,11 @@ export class CanvasOverlay extends LitElement {
             )}
             ${this._fieldRow(
               "mdi:square-outline",
-              localize("canvas.room.borderOpacity"),
+              localize("canvas.room.borderOpacity", {
+                pct: Math.round(
+                  (room.border_opacity ?? DEFAULT_ROOM_BORDER_OPACITY) * 100,
+                ),
+              }),
               html`<input
                 type="range"
                 class="room-opacity"
