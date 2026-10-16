@@ -9,6 +9,7 @@ Lovelace resource.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 
@@ -36,17 +37,26 @@ WWW_DIR = Path(__file__).parent / "www"
 
 
 def _cache_bust_token(filename: str) -> str:
-    """Derive a cache-busting query token from a served file's own mtime.
+    """Derive a cache-busting query token from a served file's contents.
 
     Deliberately not a hand-maintained version constant — a forgotten bump
     there means a browser keeps serving a stale panel after every redeploy
-    (this bit us once already). Tying it to the file's own mtime makes a
-    fresh HA restart always pick up whatever was actually last built.
+    (this bit us once already). Nor the file's mtime: HACS installs keep
+    the archive's timestamps, so a new build could keep the old token and
+    browsers (and HA's service worker) kept running the old card. A hash
+    of the bytes changes exactly when the build does.
     """
     try:
-        return str(int((WWW_DIR / filename).stat().st_mtime))
+        data = (WWW_DIR / filename).read_bytes()
     except OSError:
         return "0"
+    return hashlib.sha1(data, usedforsecurity=False).hexdigest()[:12]
+
+
+def cache_bust_tokens() -> tuple[str, str]:
+    """The panel's and the card's tokens. Reads both bundles, so it runs in
+    the executor (see __init__.py)."""
+    return _cache_bust_token(PANEL_FILENAME), _cache_bust_token(CARD_FILENAME)
 
 
 # The panel bundle's own URL — outside URL_BASE's static path, so it can be
@@ -88,9 +98,9 @@ async def async_register_static_paths(hass: HomeAssistant) -> None:
     hass.http.register_view(PanelBundleView())
 
 
-def async_register_sidebar_panel(hass: HomeAssistant) -> None:
+def async_register_sidebar_panel(hass: HomeAssistant, token: str) -> None:
     """Register the Spatial Context sidebar panel (browser_mod pattern)."""
-    panel_url = f"{PANEL_URL}?v={_cache_bust_token(PANEL_FILENAME)}"
+    panel_url = f"{PANEL_URL}?v={token}"
 
     async_register_built_in_panel(
         hass,
@@ -109,10 +119,8 @@ def async_register_sidebar_panel(hass: HomeAssistant) -> None:
     _LOGGER.debug("Spatial Context sidebar panel registered")
 
 
-def async_register_card(hass: HomeAssistant) -> None:
+def async_register_card(hass: HomeAssistant, token: str) -> None:
     """Load the dashboard card's script on every frontend page, so
     `type: custom:spatial-context-card` works without adding a resource."""
-    add_extra_js_url(
-        hass, f"{URL_BASE}/{CARD_FILENAME}?v={_cache_bust_token(CARD_FILENAME)}"
-    )
+    add_extra_js_url(hass, f"{URL_BASE}/{CARD_FILENAME}?v={token}")
     _LOGGER.debug("Spatial Context dashboard card registered")
