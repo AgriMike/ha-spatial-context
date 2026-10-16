@@ -1,4 +1,5 @@
 import { LitElement, html, css, nothing, type PropertyValues } from "lit";
+import "./search-select";
 import { property, state } from "lit/decorators.js";
 import { safeCustomElement } from "../define";
 import type {
@@ -291,6 +292,11 @@ export class CanvasOverlay extends LitElement {
       }
       .icon-choice ha-icon {
         --mdc-icon-size: 20px;
+      }
+      search-select.link-search {
+        flex: 1 1 auto;
+        width: 100%;
+        min-width: 0;
       }
       .link-chips {
         display: flex;
@@ -1155,25 +1161,26 @@ export class CanvasOverlay extends LitElement {
     onChange: (ids: string[]) => void,
   ) {
     const ids = linked.map((l) => l.id);
-    const remaining = options.filter((o) => !ids.includes(o.id));
+    const remaining = options
+      .filter((o) => !ids.includes(o.id))
+      .map((o) => ({
+        value: o.id,
+        label: o.label,
+        ...(o.label !== o.id ? { secondary: o.id } : {}),
+      }));
     return html`
       ${this._fieldRow(
         icon,
         label,
-        this._selectWrap(
-          html`<select
-            @change=${(e: Event) => {
-              const select = e.target as HTMLSelectElement;
-              if (select.value) onChange([...ids, select.value]);
-              select.value = "";
-            }}
-          >
-            <option value="" selected>${localize("canvas.links.add")}</option>
-            ${remaining.map(
-              (o) => html`<option value=${o.id}>${o.label}</option>`,
-            )}
-          </select>`,
-        ),
+        html`<search-select
+          class="link-search"
+          addMode
+          placeholder=${localize("canvas.links.add")}
+          .options=${remaining}
+          @value-changed=${(e: CustomEvent<{ value: string | null }>) => {
+            if (e.detail.value) onChange([...ids, e.detail.value]);
+          }}
+        ></search-select>`,
       )}
       ${
         linked.length
@@ -1264,6 +1271,24 @@ export class CanvasOverlay extends LitElement {
         this.lightEntities.map((l) => ({ id: l.entity_id, label: l.name })),
         (ids) => this._fire("room-links-change", { light_entity_ids: ids }),
       )}
+      ${
+        light || (room.excluded_light_ids ?? []).length
+          ? this._renderLinks(
+              "mdi:lightbulb-off-outline",
+              localize("canvas.links.exclude"),
+              (room.excluded_light_ids ?? []).map((id) => ({
+                id,
+                label: lightName(id),
+              })),
+              (light?.entityIds ?? []).map((id) => ({
+                id,
+                label: lightName(id),
+              })),
+              (ids) =>
+                this._fire("room-links-change", { excluded_light_ids: ids }),
+            )
+          : nothing
+      }
     </div>`;
   }
 
@@ -1281,34 +1306,24 @@ export class CanvasOverlay extends LitElement {
       ${this._fieldRow(
         "mdi:link-variant",
         localize("furniture.entity"),
-        this._selectWrap(
-          html`<select
-            @change=${(e: Event) =>
-              this._fire("furniture-change", {
-                patch: {
-                  entity_id: (e.target as HTMLSelectElement).value || null,
-                },
-              })}
-          >
-            <option value="" ?selected=${!item.entity_id}>
-              ${localize("furniture.noEntity")}
-            </option>
-            ${byDomain.map(
-              (g) =>
-                html`<optgroup label=${g.domain}>
-                  ${g.entities.map(
-                    (e) =>
-                      html`<option
-                        value=${e.entity_id}
-                        ?selected=${e.entity_id === item.entity_id}
-                      >
-                        ${e.name}
-                      </option>`,
-                  )}
-                </optgroup>`,
-            )}
-          </select>`,
-        ),
+        html`<search-select
+          class="link-search"
+          .options=${byDomain.flatMap((g) =>
+            g.entities.map((e) => ({
+              value: e.entity_id,
+              label: e.name,
+              group: g.domain,
+              secondary: e.entity_id,
+            })),
+          )}
+          .value=${item.entity_id ?? null}
+          .noneLabel=${localize("furniture.noEntity")}
+          placeholder=${localize("furniture.searchEntity")}
+          @value-changed=${(e: CustomEvent<{ value: string | null }>) =>
+            this._fire("furniture-change", {
+              patch: { entity_id: e.detail.value },
+            })}
+        ></search-select>`,
       )}
       ${
         item.entity_id && live

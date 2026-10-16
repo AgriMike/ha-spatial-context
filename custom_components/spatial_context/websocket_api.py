@@ -76,6 +76,7 @@ _ROOM_SCHEMA = {
     vol.Optional("linked_area_ids"): [str],
     vol.Optional("linked_room_ids"): [str],
     vol.Optional("light_entity_ids"): [str],
+    vol.Optional("excluded_light_ids"): [str],
     # An outdoor space (deck, patio): counts as outside for daylight.
     vol.Optional("outdoor"): bool,
     # The name label's look (see types.ts's Room).

@@ -157,7 +157,8 @@
       "remove": "Entfernen",
       "areas": "Auch Bereiche zeigen",
       "rooms": "Auch Räume zeigen",
-      "lights": "Auch Lichter zeigen"
+      "lights": "Auch Lichter zeigen",
+      "exclude": "Lichter ignorieren"
     },
     "daylight": {
       "title": "Tageslicht",
@@ -181,6 +182,10 @@
       "rotation": "Drehung (°)",
       "colour": "Farbe",
       "dragHint": "Den Namen auf dem Plan ziehen, um ihn zu verschieben."
+    },
+    "search": {
+      "none": "Keine Treffer",
+      "more": "+{count} weitere — tippen zum Eingrenzen"
     }
   },
   "mapBackground": {
@@ -498,7 +503,8 @@
     "deleteIcon": "Dieses Symbol aus der Bibliothek entfernen",
     "deleteIconConfirm": "„{name}“ aus der Bibliothek entfernen? Bereits platzierte Objekte erscheinen als leerer Umriss.",
     "iconColors": "Eigene Farben der Datei verwenden (sonst in der Linienfarbe des Objekts)",
-    "noCustom": "Noch keine importierten Symbole."
+    "noCustom": "Noch keine importierten Symbole.",
+    "searchEntity": "Entitäten suchen…"
   },
   "compass": {
     "title": "Norden relativ zur Oberkante des Plans: {dir}",

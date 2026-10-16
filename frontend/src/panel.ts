@@ -3511,7 +3511,13 @@ export class SpatialContextPanel extends LitElement {
 
   private _onRoomLinksChange = (
     e: CustomEvent<
-      Pick<Room, "linked_area_ids" | "linked_room_ids" | "light_entity_ids">
+      Pick<
+        Room,
+        | "linked_area_ids"
+        | "linked_room_ids"
+        | "light_entity_ids"
+        | "excluded_light_ids"
+      >
     >,
   ) => {
     const room = this._selectedRoom;

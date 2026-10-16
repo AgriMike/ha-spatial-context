@@ -157,7 +157,8 @@
       "remove": "Remove",
       "areas": "Also show areas",
       "rooms": "Also show rooms",
-      "lights": "Also show lights"
+      "lights": "Also show lights",
+      "exclude": "Ignore lights"
     },
     "daylight": {
       "title": "Daylight",
@@ -181,6 +182,10 @@
       "rotation": "Rotation (°)",
       "colour": "Colour",
       "dragHint": "Drag the name on the plan to move it."
+    },
+    "search": {
+      "none": "No matches",
+      "more": "+{count} more — type to narrow"
     }
   },
   "mapBackground": {
@@ -498,7 +503,8 @@
     "deleteIcon": "Remove this icon from the library",
     "deleteIconConfirm": "Remove “{name}” from the library? Items already placed show as an empty outline.",
     "iconColors": "Use the file's own colours (otherwise drawn in the item's line colour)",
-    "noCustom": "No imported icons yet."
+    "noCustom": "No imported icons yet.",
+    "searchEntity": "Search entities…"
   },
   "compass": {
     "title": "North is {dir} of the plan's top",

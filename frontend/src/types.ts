@@ -36,6 +36,9 @@ export interface Room {
   linked_area_ids?: string[];
   linked_room_ids?: string[];
   light_entity_ids?: string[];
+  /** Lights this room ignores though its area or links include them (an
+   * indicator strip, say). */
+  excluded_light_ids?: string[];
   /** An outdoor space drawn on the plan (a deck, a patio): it counts as
    * outside, so daylight through a door or window onto it only falls on
    * the indoor side. */

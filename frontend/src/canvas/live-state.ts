@@ -25,12 +25,24 @@ export interface RoomLight {
 
 const WARM_WHITE: [number, number, number] = [255, 196, 107]; // 2700 K
 
-/** Every light entity in each area, by the entity's own area or its
- * device's. */
+/** A light entity that stands for several others — a Hue room or zone,
+ * an HA light group — rather than one fixture. Counting it as well as its
+ * members would count those lights twice. */
+export function isLightGroup(attrs: Record<string, unknown>): boolean {
+  if (attrs["is_hue_group"] === true) return true;
+  const hueType = attrs["hue_type"];
+  if (hueType === "room" || hueType === "zone") return true;
+  const members = attrs["entity_id"];
+  return Array.isArray(members) && members.length > 0;
+}
+
+/** Every light fixture in each area, by the entity's own area or its
+ * device's (light groups left out). */
 function lightsByArea(hass: HomeAssistant): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const id of Object.keys(hass.states)) {
     if (!id.startsWith("light.")) continue;
+    if (isLightGroup(hass.states[id]?.attributes ?? {})) continue;
     const entry = hass.entities?.[id];
     const area =
       entry?.area_id ??
@@ -46,7 +58,8 @@ function lightsByArea(hass: HomeAssistant): Map<string, string[]> {
 
 /** The light entities a room follows: its area's, its linked areas', its
  * own picked lights — and the same for each linked room (one level, so
- * two rooms linked to each other don't loop). */
+ * two rooms linked to each other don't loop) — less the ones it
+ * excludes. */
 export function roomLightEntityIds(
   room: Room,
   rooms: Room[],
@@ -64,6 +77,7 @@ export function roomLightEntityIds(
     const linked = rooms.find((r) => r.id === linkedId);
     if (linked && linked.id !== room.id) add(linked);
   }
+  for (const id of room.excluded_light_ids ?? []) ids.delete(id);
   return [...ids];
 }
 
