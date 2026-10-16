@@ -62,6 +62,7 @@ import {
   setCustomIcons,
 } from "./furniture-catalog";
 import type { CustomIcon } from "./custom-icons";
+import { knockoutSvgUrl } from "./bg-knockout";
 import {
   drawItem,
   freeformPrims,
@@ -292,6 +293,9 @@ export class FloorplanCanvas extends LitElement {
       }
       .bg-overlay.blend {
         mix-blend-mode: multiply;
+      }
+      .bg-overlay.knockout img {
+        background: transparent;
       }
       :host([dark]) .bg-overlay.blend {
         mix-blend-mode: screen;
@@ -836,6 +840,9 @@ export class FloorplanCanvas extends LitElement {
   private _clock: ReturnType<typeof setInterval> | null = null;
   /** Where the pointer is while placing furniture (the ghost's spot). */
   @state() private _hoverImage: { x: number; y: number } | null = null;
+  /** With room colours under an SVG background: the drawing with its
+   * item outlines filled (see bg-knockout.ts), and which URL it's for. */
+  @state() private _knockout: { for: string; url: string | null } | null = null;
   /** A shape being dragged out: its opposite corners. */
   @state() private _drawBox: {
     x0: number;
@@ -844,7 +851,7 @@ export class FloorplanCanvas extends LitElement {
     y1: number;
   } | null = null;
 
-  @query("svg") private _svg!: SVGSVGElement;
+  @query("svg.plan") private _svg!: SVGSVGElement;
 
   private _pointers = new Map<number, { x: number; y: number }>();
   private _downHit: DownHit | null = null;
@@ -951,6 +958,9 @@ export class FloorplanCanvas extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>): void {
+    if (changed.has("backgroundImageUrl") || changed.has("roomFillUnder")) {
+      void this._prepareKnockout();
+    }
     if (changed.has("backgroundImageUrl") && this.backgroundImageUrl) {
       const img = new Image();
       img.onload = () => {
@@ -1011,6 +1021,21 @@ export class FloorplanCanvas extends LitElement {
         new CustomEvent("pending-changed", { detail: { count } }),
       );
     }
+  }
+
+  private async _prepareKnockout(): Promise<void> {
+    const url = this.roomFillUnder ? this.backgroundImageUrl : null;
+    if (this._knockout?.for === url) return;
+    if (this._knockout?.url) URL.revokeObjectURL(this._knockout.url);
+    this._knockout = null;
+    if (!url) return;
+    const made = await knockoutSvgUrl(url).catch(() => null);
+    // Changed again while this one was being made: drop it.
+    if (url !== (this.roomFillUnder ? this.backgroundImageUrl : null)) {
+      if (made) URL.revokeObjectURL(made);
+      return;
+    }
+    this._knockout = { for: url, url: made };
   }
 
   /** The traced floor plan (rooms/walls/pins) is the main focus of the
@@ -4032,13 +4057,22 @@ export class FloorplanCanvas extends LitElement {
     const tx = offsetX + scale * (this.backgroundOffsetX - this._viewBox.x);
     const ty = offsetY + scale * (this.backgroundOffsetY - this._viewBox.y);
     const bgScale = scale * this.backgroundScale;
+    // Room colours under the background: an SVG drawing goes on top with
+    // its items filled in and its paper see-through; a photo multiplies
+    // over the colours instead.
+    const knockout =
+      this.roomFillUnder && this._knockout?.for === this.backgroundImageUrl
+        ? this._knockout.url
+        : null;
+    const under = !this.roomFillUnder ? "" : knockout ? "knockout" : "blend";
+    const src = knockout ?? this.backgroundImageUrl;
     return html`
       <div
-        class="bg-overlay ${this.roomFillUnder ? "blend" : ""}"
+        class="bg-overlay ${under}"
         style="transform: translate(${tx}px, ${ty}px) scale(${bgScale});"
       >
         <img
-          src=${this.backgroundImageUrl}
+          src=${src}
           style="width:${BASE_WIDTH}px; height:${this._naturalHeight}px; opacity:${
             this.backgroundOpacity
           };"
@@ -4131,7 +4165,7 @@ export class FloorplanCanvas extends LitElement {
       ${svg`
         <svg
           viewBox="${vb.x} ${vb.y} ${vb.w} ${vb.h}"
-          class="${
+          class="plan ${
             this.mode === "pan" || this.mode === "align"
               ? "pan-mode"
               : this.mode !== "select"
