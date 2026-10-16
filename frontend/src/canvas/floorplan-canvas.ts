@@ -2763,17 +2763,21 @@ export class FloorplanCanvas extends LitElement {
     return this.roomLabelStyle.size * (room.label_size ?? 1);
   }
 
-  /** A room's fill right now: its own colour, or with live lights the
-   * lights' colour (brighter with their brightness) while any is on, and
-   * its own colour darkened while they're all off. */
+  /** A room's fill right now: its own colour — with live lights, tinted
+   * toward theirs and stronger while any is on, darkened while they're
+   * all off. */
   private _roomFill(room: Room): { color: string; opacity: number } {
     const own = room.fill_color ?? DEFAULT_ROOM_FILL_COLOR;
     const opacity = room.fill_opacity ?? DEFAULT_ROOM_FILL_OPACITY;
     const light = this.showLights ? this.roomLights.get(room.id) : undefined;
+    // Lit: still the room's own colour, tinted toward the lights' colour
+    // and stronger with their brightness — near-white lights would
+    // otherwise wash the room's colour out entirely.
     if (light && light.on > 0) {
+      const level = Math.min(1, light.level);
       return {
-        color: light.color,
-        opacity: 0.15 + 0.55 * Math.min(1, light.level),
+        color: mixHex(own, light.color, 0.3),
+        opacity: Math.min(0.85, opacity * (1 + 0.6 * level)),
       };
     }
     if (light && light.unavailable < light.entityIds.length) {
