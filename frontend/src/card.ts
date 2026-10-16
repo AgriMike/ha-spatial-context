@@ -25,6 +25,7 @@ import {
   type RoomLight,
 } from "./canvas/live-state";
 import { skyFromWeather } from "./canvas/sun";
+import type { CustomIcon } from "./canvas/custom-icons";
 
 const PANEL_BUNDLE_URL = `/spatial_context_panel.js?v=${__BUILD_ID__}`;
 
@@ -34,8 +35,14 @@ export interface SpatialContextCardConfig {
   type: string;
   floor_id?: string;
   title?: string;
-  /** Plan height in px (default 400). */
+  /** Plan height in px (default 400) in a masonry view; in a sections
+   * view the card fills its grid cell, and in a panel view the screen. */
   height?: number;
+  /** Start from the view saved in the editor instead of fitting the
+   * whole plan (the plan re-fits and re-centres on every resize). */
+  use_saved_view?: boolean;
+  /** A button that shows the plan full screen. */
+  show_fullscreen_button?: boolean;
   show_furniture?: boolean;
   show_lights?: boolean;
   show_covers?: boolean;
@@ -111,7 +118,16 @@ class SpatialContextCard extends HTMLElement {
     size: 16,
     color: null as string | null,
     bold: false,
+    halo: true,
+    haloWidth: 3,
+    haloColor: null as string | null,
   };
+  private _roomFillUnder = false;
+  private _customIcons: CustomIcon[] = [];
+  /** Set by HA: "grid" in a sections view. */
+  private _layoutMode: string | undefined;
+  /** Set by HA in a panel view (one card, the whole screen). */
+  private _isPanel = false;
   private _roomBorder = {
     show: true,
     color: null as string | null,
@@ -164,16 +180,57 @@ class SpatialContextCard extends HTMLElement {
     if (this._canvas) this._canvas["dark"] = hass.themes?.darkMode ?? false;
   }
 
+  set layout(value: string | undefined) {
+    this._layoutMode = value;
+    this._render();
+  }
+
+  get layout(): string | undefined {
+    return this._layoutMode;
+  }
+
+  set isPanel(value: boolean) {
+    this._isPanel = !!value;
+    this._render();
+  }
+
+  get isPanel(): boolean {
+    return this._isPanel;
+  }
+
+  /** Fills its space (sections cell, panel view, full screen) rather
+   * than a fixed height. */
+  private get _fills(): boolean {
+    return (
+      this._layoutMode === "grid" ||
+      this._isPanel ||
+      document.fullscreenElement === this
+    );
+  }
+
+  private _toggleFullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void this.requestFullscreen?.().catch(() => {});
+  };
+
+  private _onFullscreenChange = () => this._render();
+
   getCardSize(): number {
     return Math.max(3, Math.round((this._config.height ?? 400) / 50));
   }
 
   getGridOptions() {
-    return { columns: 12, rows: 6, min_columns: 6, min_rows: 3 };
+    return {
+      columns: 12,
+      rows: Math.max(3, Math.round((this._config.height ?? 400) / 64)),
+      min_columns: 4,
+      min_rows: 3,
+    };
   }
 
   connectedCallback(): void {
     document.addEventListener("visibilitychange", this._onVisible);
+    document.addEventListener("fullscreenchange", this._onFullscreenChange);
     // Back on a dashboard after editing the plan: pick up the changes.
     this._loadedFor = null;
     void this._load();
@@ -181,6 +238,7 @@ class SpatialContextCard extends HTMLElement {
 
   disconnectedCallback(): void {
     document.removeEventListener("visibilitychange", this._onVisible);
+    document.removeEventListener("fullscreenchange", this._onFullscreenChange);
   }
 
   private _onVisible = () => {
@@ -229,6 +287,11 @@ class SpatialContextCard extends HTMLElement {
           room_label_size?: number;
           room_label_color?: string | null;
           room_label_bold?: boolean;
+          room_label_halo?: boolean;
+          room_label_halo_width?: number;
+          room_label_halo_color?: string | null;
+          room_fill_under_background?: boolean;
+          custom_icons?: CustomIcon[];
         }>({ type: "spatial_context/get_settings" })
         .catch(() => null);
       this._weatherSetting = settings?.weather_entity_id ?? null;
@@ -243,7 +306,12 @@ class SpatialContextCard extends HTMLElement {
         size: settings?.room_label_size ?? 16,
         color: settings?.room_label_color ?? null,
         bold: settings?.room_label_bold === true,
+        halo: settings?.room_label_halo !== false,
+        haloWidth: settings?.room_label_halo_width ?? 3,
+        haloColor: settings?.room_label_halo_color ?? null,
       };
+      this._roomFillUnder = settings?.room_fill_under_background === true;
+      this._customIcons = settings?.custom_icons ?? [];
       this._entities = new Map(entities.map((e) => [e.entity_id, e]));
       this._error = null;
     } catch (err) {
@@ -259,20 +327,50 @@ class SpatialContextCard extends HTMLElement {
     if (!this._root.firstChild) {
       this._root.innerHTML = `
         <style>
-          ha-card { overflow: hidden; }
-          .head { padding: 12px 16px 0; font-size: 1.1rem; }
-          .plan { position: relative; }
+          :host { display: block; }
+          :host([fills]) { height: 100%; }
+          :host([panel]) { height: calc(100dvh - var(--header-height, 56px)); }
+          :host(:fullscreen) { height: 100vh; background: var(--primary-background-color); }
+          ha-card { overflow: hidden; display: flex; flex-direction: column; position: relative; }
+          :host([fills]) ha-card { height: 100%; box-sizing: border-box; }
+          :host(:fullscreen) ha-card { border-radius: 0; }
+          .head { padding: 12px 16px 0; font-size: 1.1rem; flex: none; }
+          .plan { position: relative; flex: 1 1 auto; min-height: 120px; }
           .msg { padding: 16px; color: var(--secondary-text-color); }
           floorplan-canvas { display: block; width: 100%; height: 100%; }
+          .fs { position: absolute; top: 8px; right: 8px; z-index: 2; width: 36px; height: 36px;
+            border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center;
+            justify-content: center; color: var(--primary-text-color);
+            background: color-mix(in srgb, var(--card-background-color, #fff) 85%, transparent);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2); --mdc-icon-size: 20px; }
+          .fs:hover { background: var(--card-background-color, #fff); }
         </style>
-        <ha-card><div class="head"></div><div class="plan"></div><div class="msg"></div></ha-card>`;
+        <ha-card><div class="head"></div><div class="plan"></div><div class="msg"></div>
+          <button class="fs" title="Full screen"><ha-icon icon="mdi:fullscreen"></ha-icon></button></ha-card>`;
+      this._root
+        .querySelector(".fs")
+        ?.addEventListener("click", this._toggleFullscreen);
     }
     const head = this._root.querySelector<HTMLElement>(".head")!;
     const plan = this._root.querySelector<HTMLElement>(".plan")!;
     const msg = this._root.querySelector<HTMLElement>(".msg")!;
+    const fs = this._root.querySelector<HTMLElement>(".fs")!;
     head.textContent = title;
     head.style.display = title ? "" : "none";
-    plan.style.height = `${height}px`;
+    const fullscreen = document.fullscreenElement === this;
+    this.toggleAttribute("fills", this._fills);
+    this.toggleAttribute("panel", this._isPanel && !fullscreen);
+    plan.style.height = this._fills ? "" : `${height}px`;
+    fs.style.display =
+      this._config.show_fullscreen_button !== false &&
+      document.fullscreenEnabled
+        ? ""
+        : "none";
+    fs.title = fullscreen ? "Exit full screen" : "Full screen";
+    fs.querySelector("ha-icon")?.setAttribute(
+      "icon",
+      fullscreen ? "mdi:fullscreen-exit" : "mdi:fullscreen",
+    );
     msg.textContent =
       this._error ?? (this._layout ? "" : "Loading floor plan…");
     msg.style.display = msg.textContent ? "" : "none";
@@ -311,13 +409,19 @@ class SpatialContextCard extends HTMLElement {
     c["backgroundOffsetX"] = l.background_offset_x;
     c["backgroundOffsetY"] = l.background_offset_y;
     c["backgroundScale"] = l.background_scale;
-    c["initialViewBox"] = l.view_box;
+    // Frame the whole plan, re-fitting and re-centring as the card is
+    // resized — unless asked to start from the editor's saved view.
+    c["autoFit"] = cfg.use_saved_view !== true;
+    c["initialViewBox"] = cfg.use_saved_view === true ? l.view_box : null;
+    c["showScaleLine"] = false;
     c["overlayButtons"] = cfg.show_controls !== false;
     c["showFurniture"] = this._overlays.furniture;
     c["showLights"] = this._overlays.lights;
     c["showCovers"] = this._overlays.covers;
     c["roomBorder"] = this._roomBorder;
     c["roomLabelStyle"] = this._roomLabelStyle;
+    c["roomFillUnder"] = this._roomFillUnder;
+    c["customIcons"] = this._customIcons;
     c["showLightCount"] =
       this._config.show_light_count ?? this._lightCountSetting;
     c["northDeg"] = l.north_deg ?? null;
@@ -493,6 +597,7 @@ class SpatialContextCardEditor extends HTMLElement {
       ["show_background", "Background image"],
       ["show_controls", "Zoom & overlay buttons"],
       ["show_light_count", "Lights-on count under room names"],
+      ["show_fullscreen_button", "Full-screen button"],
     ];
     const option = (
       value: string,
@@ -511,7 +616,8 @@ class SpatialContextCardEditor extends HTMLElement {
         ${this._floors.map((f) => option(f.floor_id, f.name, c.floor_id)).join("")}
       </select></div>
       <div class="row"><label>Title</label><input type="text" data-key="title" value="${c.title ?? ""}" placeholder="Floor name"></div>
-      <div class="row"><label>Height (px)</label><input type="number" data-key="height" min="150" step="10" value="${c.height ?? 400}"></div>
+      <div class="row"><label>Height (px, masonry views)</label><input type="number" data-key="height" min="150" step="10" value="${c.height ?? 400}"></div>
+      <div class="row"><label>Start from the editor's saved view (instead of fitting the whole plan)</label><input type="checkbox" data-flag="use_saved_view" ${c.use_saved_view === true ? "checked" : ""}></div>
       ${toggles
         .map(
           ([key, label]) =>
@@ -547,6 +653,12 @@ class SpatialContextCardEditor extends HTMLElement {
                 : undefined
               : raw || undefined,
         });
+      }),
+    );
+    this.querySelectorAll<HTMLInputElement>("[data-flag]").forEach((el) =>
+      el.addEventListener("change", () => {
+        const key = el.dataset["flag"] as keyof SpatialContextCardConfig;
+        this._set({ [key]: el.checked ? true : undefined });
       }),
     );
     this.querySelectorAll<HTMLInputElement>("[data-bool]").forEach((el) =>

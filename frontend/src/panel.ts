@@ -94,7 +94,12 @@ import "./views/furniture-library-sidebar";
 import type { AreaDevice, EntityOption } from "./views/canvas-overlay";
 import { deviceIconChoices, deviceTypeIcon } from "./canvas/device-icons";
 import { roomLabelPoint } from "./canvas/geometry";
-import { catalogItem } from "./canvas/furniture-catalog";
+import {
+  catalogItem,
+  FREEFORM_KIND,
+  isShapeKind,
+  setCustomIcons,
+} from "./canvas/furniture-catalog";
 import { COMPASS_POINTS, skyFromWeather, type Sky } from "./canvas/sun";
 import {
   computeCoverOpenness,
@@ -2338,6 +2343,8 @@ export class SpatialContextPanel extends LitElement {
   /** Picking something on the canvas puts the header menus away (a layer
    * that's switched on stays on; only its menu closes). */
   override willUpdate(changed: Map<string, unknown>): void {
+    // Imported icons, for the library and the canvas (catalogItem).
+    setCustomIcons(this._settings.custom_icons ?? []);
     const selectionKeys = [
       "_selectedRoomId",
       "_selectedPinId",
@@ -2908,6 +2915,15 @@ export class SpatialContextPanel extends LitElement {
       this._onFinishWall();
       return;
     }
+    if (
+      e.key === "Enter" &&
+      this._mode === "furniture" &&
+      this._armedFurnitureKind === FREEFORM_KIND
+    ) {
+      e.preventDefault();
+      this._canvas?.finishPendingShape();
+      return;
+    }
 
     if (this._view !== "floor") return;
     // Furniture: R rotates (Shift: by 15 degrees) the item being placed or
@@ -3330,7 +3346,16 @@ export class SpatialContextPanel extends LitElement {
   /** Drops the armed item where clicked, at its catalog size, and selects
    * it. Shift+click keeps it armed for placing another. */
   private _onFurniturePlace = (
-    e: CustomEvent<{ x: number; y: number; keepArmed: boolean }>,
+    e: CustomEvent<{
+      x: number;
+      y: number;
+      keepArmed: boolean;
+      /** A dragged-out shape's size, or a free-form shape's. */
+      width_cm?: number;
+      depth_cm?: number;
+      points?: [number, number][];
+      closed?: boolean;
+    }>,
   ) => {
     const entry = this._armedFurnitureKind
       ? catalogItem(this._armedFurnitureKind)
@@ -3341,10 +3366,13 @@ export class SpatialContextPanel extends LitElement {
       kind: entry.id,
       x: e.detail.x,
       y: e.detail.y,
-      rotation_deg: this._armedFurnitureRotation,
-      width_cm: entry.w,
-      depth_cm: entry.d,
+      rotation_deg: e.detail.points ? 0 : this._armedFurnitureRotation,
+      width_cm: e.detail.width_cm ?? entry.w,
+      depth_cm: e.detail.depth_cm ?? entry.d,
       stroke_width: 1.5,
+      ...(e.detail.points
+        ? { points: e.detail.points, closed: e.detail.closed !== false }
+        : {}),
     };
     this._updateLayout({ furniture: [...this._layout.furniture, item] });
     if (!e.detail.keepArmed) {
@@ -4765,7 +4793,15 @@ export class SpatialContextPanel extends LitElement {
                       size: this._settings.room_label_size ?? 16,
                       color: this._settings.room_label_color ?? null,
                       bold: this._settings.room_label_bold === true,
+                      halo: this._settings.room_label_halo !== false,
+                      haloWidth: this._settings.room_label_halo_width ?? 3,
+                      haloColor: this._settings.room_label_halo_color ?? null,
                     }}
+                    .customIcons=${this._settings.custom_icons ?? []}
+                    .showScaleLine=${this._settings.show_scale_line !== false}
+                    .roomFillUnder=${
+                      this._settings.room_fill_under_background === true
+                    }
                     .northDeg=${this._layout.north_deg}
                     .location=${this._location}
                     .sunTime=${this._sunTime}
@@ -4811,6 +4847,21 @@ export class SpatialContextPanel extends LitElement {
                     .armedOpeningType=${this._armedOpeningType}
                     .hasPendingTrace=${this._mode === "trace" && this._pendingCount > 0}
                     .hasPendingWall=${this._mode === "wall" && this._pendingCount >= 2}
+                    .furnitureHint=${
+                      this._mode !== "furniture"
+                        ? "place"
+                        : this._armedFurnitureKind === FREEFORM_KIND
+                          ? "freeform"
+                          : isShapeKind(this._armedFurnitureKind)
+                            ? "shape"
+                            : "place"
+                    }
+                    .freeformPoints=${
+                      this._armedFurnitureKind === FREEFORM_KIND
+                        ? this._pendingCount
+                        : 0
+                    }
+                    @finish-shape-click=${() => this._canvas?.finishPendingShape()}
                     .snapMode=${this._snapMode}
                     .pendingScaleCount=${this._mode === "scale" ? this._pendingCount : 0}
                     .unitSystem=${this._settings.unit_system}
@@ -4953,6 +5004,8 @@ export class SpatialContextPanel extends LitElement {
                       ? html`<furniture-library-sidebar
                           .armedKind=${this._armedFurnitureKind}
                           .unitSystem=${this._settings.unit_system}
+                          .customIcons=${this._settings.custom_icons ?? []}
+                          @settings-change=${this._onSettingsChange}
                           @furniture-armed=${this._onFurnitureArmed}
                           @library-close=${this._onLibraryClose}
                         ></furniture-library-sidebar>`

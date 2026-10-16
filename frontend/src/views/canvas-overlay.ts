@@ -368,6 +368,12 @@ export class CanvasOverlay extends LitElement {
     null;
   @property({ type: Boolean }) hasPendingTrace = false;
   @property({ type: Boolean }) hasPendingWall = false;
+  /** What placing in furniture mode does: drop an item, drag out a
+   * shape, or click corners of a free-form shape. */
+  @property({ attribute: false }) furnitureHint:
+    "place" | "shape" | "freeform" = "place";
+  /** Corners clicked so far on the free-form shape being drawn. */
+  @property({ type: Number }) freeformPoints = 0;
   @property({ attribute: false }) snapMode: SnapMode = "all";
   @property({ type: Number }) pendingScaleCount = 0;
 
@@ -675,9 +681,41 @@ export class CanvasOverlay extends LitElement {
     if (this.mode === "align") {
       return this._renderAlignBar();
     }
+    if (this.mode === "furniture" && this.furnitureHint === "freeform") {
+      return html`<div class="hint-bar floating-panel">
+        <span class="hint">${localize("canvas.hint.freeform")}</span>
+        ${this._renderSnapSelect()}
+        ${
+          this.freeformPoints >= 2
+            ? html`<button
+                class="primary"
+                @click=${() => this._fire("finish-shape-click")}
+              >
+                ${localize("canvas.button.finishShape")}
+              </button>`
+            : nothing
+        }
+        ${
+          this.freeformPoints > 0
+            ? html`<button @click=${() => this._fire("cancel-pending-click")}>
+                ${localize("canvas.button.cancel")}
+              </button>`
+            : nothing
+        }
+        <button @click=${() => this._fire("furniture-done-click")}>
+          ${localize("canvas.button.done")}
+        </button>
+      </div>`;
+    }
     if (this.mode === "furniture") {
       return html`<div class="hint-bar floating-panel">
-        <span class="hint">${localize("canvas.hint.placeFurniture")}</span>
+        <span class="hint"
+          >${localize(
+            this.furnitureHint === "shape"
+              ? "canvas.hint.drawShape"
+              : "canvas.hint.placeFurniture",
+          )}</span
+        >
         <button @click=${() => this._fire("furniture-rotate-armed-click")}>
           <ha-icon icon="mdi:rotate-right-variant"></ha-icon>
         </button>

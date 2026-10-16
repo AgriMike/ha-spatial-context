@@ -392,6 +392,12 @@ export function emptySettings(): Settings {
     room_label_size: 16,
     room_label_color: null,
     room_label_bold: false,
+    room_label_halo: true,
+    room_label_halo_width: 3,
+    room_label_halo_color: null,
+    room_fill_under_background: false,
+    custom_icons: [],
+    show_scale_line: true,
   };
 }
 

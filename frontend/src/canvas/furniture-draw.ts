@@ -12,6 +12,7 @@
 import { svg, type SVGTemplateResult } from "lit";
 import { unsafeSVG } from "lit/directives/unsafe-svg.js";
 import { UI_ICONS } from "./ui-icons";
+import { svgDataUrl, type CustomIcon } from "./custom-icons";
 
 export type Pt = [number, number];
 
@@ -46,6 +47,8 @@ export type Prim =
     }
   | { t: "poly"; points: Pt[]; closed: boolean; dash?: boolean | undefined }
   | { t: "path"; d: string; dash?: boolean | undefined }
+  /** An imported SVG (see custom-icons.ts), fitted into w x d. */
+  | { t: "image"; id: string; w: number; d: number; dash?: boolean | undefined }
   /** A 64x64 single-colour icon (see ui-icons.ts), fitted into w x d. */
   | {
       t: "icon";
@@ -1603,6 +1606,286 @@ const T: Record<string, Template> = {
         .map(([x, y]) => line(w / 2, d / 2, x, y, true)),
     ];
   },
+  // A drum shade: its rim, the diffuser inside, the bulb at the centre.
+  drumShade: (w, d) => [
+    ell(w / 2, d / 2, w / 2, d / 2),
+    ell(w / 2, d / 2, w * 0.42, d * 0.42, undefined, true),
+    circ(w / 2, d / 2, min(w, d) * 0.08),
+  ],
+  // A glass globe with a soft highlight.
+  globeLight: (w, d) => {
+    const r = min(w, d) / 2;
+    return [
+      ell(w / 2, d / 2, w / 2, d / 2),
+      path(
+        `M${w / 2 - r * 0.55},${d / 2 - r * 0.1} A${r * 0.6},${r * 0.6} 0 0 1 ${w / 2 - r * 0.1},${d / 2 - r * 0.55}`,
+      ),
+      circ(w / 2, d / 2, r * 0.12),
+    ];
+  },
+  // Globes hung at different drops from one canopy.
+  globeCluster: (w, d) => {
+    const r = min(w, d) / 2;
+    const out: Prim[] = [circ(w / 2, d / 2, r * 0.14)];
+    const spots: [number, number, number][] = [
+      [-0.45, -0.35, 0.3],
+      [0.45, -0.3, 0.26],
+      [0.1, 0.5, 0.32],
+      [-0.5, 0.42, 0.2],
+      [0.55, 0.45, 0.18],
+    ];
+    for (const [fx, fy, fr] of spots) {
+      const x = w / 2 + fx * r * 0.95;
+      const y = d / 2 + fy * r * 0.95;
+      out.push(line(w / 2, d / 2, x, y, true), circ(x, y, fr * r));
+    }
+    return out;
+  },
+  // A dome shade seen from above: the rim and the shade's ribs.
+  domePendant: (w, d) => {
+    const r = min(w, d) / 2;
+    const out: Prim[] = [
+      ell(w / 2, d / 2, w / 2, d / 2),
+      circ(w / 2, d / 2, r * 0.18),
+    ];
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      out.push(
+        line(
+          w / 2 + Math.cos(a) * r * 0.18,
+          d / 2 + Math.sin(a) * r * 0.18,
+          w / 2 + Math.cos(a) * r * 0.85,
+          d / 2 + Math.sin(a) * r * 0.85,
+          true,
+        ),
+      );
+    }
+    return out;
+  },
+  squareLight: (w, d) => [
+    rect(0, 0, w, d, min(w, d) * 0.12),
+    rect(w * 0.2, d * 0.2, w * 0.6, d * 0.6, min(w, d) * 0.08),
+  ],
+  // Modern halo rings, one inside the next.
+  ringLight: (w, d, o) => {
+    const n = Math.max(1, num(o, "rings", 1));
+    const out: Prim[] = [];
+    for (let i = 0; i < n; i++) {
+      const k = 1 - i * (0.55 / Math.max(1, n));
+      out.push(ell(w / 2, d / 2, (w / 2) * k, (d / 2) * k));
+      out.push(
+        ell(
+          w / 2,
+          d / 2,
+          (w / 2) * k - 2.5,
+          (d / 2) * k - 2.5,
+          undefined,
+          true,
+        ),
+      );
+    }
+    out.push(circ(w / 2, d / 2, min(w, d) * 0.05));
+    return out;
+  },
+  // A bar with candle-style arms both sides.
+  linearChandelier: (w, d) => {
+    const out: Prim[] = [rect(0, d * 0.42, w, d * 0.16, d * 0.08)];
+    const n = Math.max(2, Math.round(w / 25));
+    for (const x of dividers(0, w, n)) {
+      out.push(line(x, d * 0.42, x, d * 0.12), circ(x, d * 0.1, d * 0.1));
+      out.push(line(x, d * 0.58, x, d * 0.88), circ(x, d * 0.9, d * 0.1));
+    }
+    return out;
+  },
+  // A ceiling bar with aimable spots along it.
+  spotBar: (w, d, o) => {
+    const n = Math.max(1, num(o, "spots", 3));
+    const out: Prim[] = [rect(0, d * 0.35, w, d * 0.3, d * 0.15)];
+    const r = min(d * 0.5, w / (n * 2.4));
+    for (let i = 0; i < n; i++) {
+      const x = (w / n) * (i + 0.5);
+      out.push(circ(x, d / 2, r), circ(x, d / 2, r * 0.45));
+    }
+    return out;
+  },
+  // A wall plate with a hinged arm out to its shade.
+  swingArm: (w, d) => [
+    rect(0, 0, w, d * 0.12, 1),
+    line(w / 2, d * 0.12, w / 2, d * 0.62),
+    circ(w / 2, d * 0.62, w * 0.12),
+    ell(w / 2, d * 0.82, w / 2, d * 0.18),
+  ],
+  // Wall lamps: a back plate and a shade per head.
+  wallLamp: (w, d, o) => {
+    const heads = Math.max(1, num(o, "heads", 1));
+    const out: Prim[] = [rect(0, 0, w, d * 0.25, 1)];
+    for (let i = 0; i < heads; i++) {
+      const cx = (w / heads) * (i + 0.5);
+      const r = min(w / heads, d) * 0.42;
+      out.push(
+        path(
+          `M${cx - r},${d * 0.25} Q${cx},${d * 0.25 + r * 2.1} ${cx + r},${d * 0.25}`,
+        ),
+      );
+    }
+    return out;
+  },
+  // Three splayed legs under a round shade.
+  tripodLamp: (w, d) => {
+    const r = min(w, d) / 2;
+    const out: Prim[] = [circ(w / 2, d / 2, r * 0.42)];
+    for (let i = 0; i < 3; i++) {
+      const a = -Math.PI / 2 + (i / 3) * Math.PI * 2;
+      out.push(
+        line(
+          w / 2 + Math.cos(a) * r * 0.42,
+          d / 2 + Math.sin(a) * r * 0.42,
+          w / 2 + Math.cos(a) * r,
+          d / 2 + Math.sin(a) * r,
+        ),
+        circ(w / 2 + Math.cos(a) * r, d / 2 + Math.sin(a) * r, r * 0.05),
+      );
+    }
+    return out;
+  },
+  // A slim pole on a triangular base that tucks into a corner.
+  cornerLamp: (w, d) => [
+    poly([
+      [0, 0],
+      [w, 0],
+      [0, d],
+    ]),
+    circ(w * 0.3, d * 0.3, min(w, d) * 0.12),
+    line(w * 0.3, d * 0.3, w * 0.62, d * 0.62, true),
+  ],
+  // A rough-hewn salt crystal.
+  saltLamp: (w, d) => [
+    path(
+      `M${w * 0.2},${d} L${w * 0.05},${d * 0.55} L${w * 0.25},${d * 0.1} L${w * 0.6},0 L${w * 0.95},${d * 0.35} L${w * 0.85},${d} Z`,
+    ),
+    path(
+      `M${w * 0.3},${d * 0.75} L${w * 0.45},${d * 0.35} L${w * 0.7},${d * 0.55}`,
+      true,
+    ),
+  ],
+  // Modular hexagon panels, tiled in a cluster.
+  hexPanels: (w, d) => {
+    const r = min(w / 4.2, d / 3.6);
+    const hw = Math.sqrt(3) * r;
+    const hex = (cx: number, cy: number) =>
+      poly(
+        Array.from({ length: 6 }, (_, i): Pt => [
+          cx + Math.cos((Math.PI / 3) * i + Math.PI / 6) * r,
+          cy + Math.sin((Math.PI / 3) * i + Math.PI / 6) * r,
+        ]),
+      );
+    const cy = d / 2;
+    const x0 = w / 2 - hw;
+    return [
+      hex(x0, cy - r * 0.75),
+      hex(x0 + hw, cy - r * 0.75),
+      hex(x0 + hw / 2, cy + r * 0.75),
+      hex(x0 + hw * 1.5, cy + r * 0.75),
+      hex(x0 + hw * 2, cy - r * 0.75),
+    ].filter((p) =>
+      p.t === "poly"
+        ? p.points.every(([x]) => x >= -0.5 && x <= w + 0.5)
+        : true,
+    );
+  },
+  // Triangle panels, alternating up and down.
+  triPanels: (w, d) => {
+    const out: Prim[] = [];
+    const n = Math.max(2, Math.round((w / d) * 2));
+    const s = w / ((n + 1) / 2);
+    for (let i = 0; i < n; i++) {
+      const x = (i * s) / 2;
+      out.push(
+        i % 2 === 0
+          ? poly([
+              [x, d],
+              [x + s / 2, 0],
+              [x + s, d],
+            ])
+          : poly([
+              [x, 0],
+              [x + s, 0],
+              [x + s / 2, d],
+            ]),
+      );
+    }
+    return out;
+  },
+  // A dome projector throwing stars.
+  starProjector: (w, d) => {
+    const r = min(w, d) / 2;
+    const out: Prim[] = [
+      circ(w / 2, d / 2, r * 0.6),
+      circ(w / 2, d / 2, r * 0.25),
+    ];
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + 0.3;
+      out.push(
+        circ(
+          w / 2 + Math.cos(a) * r * 0.88,
+          d / 2 + Math.sin(a) * r * 0.88,
+          r * 0.05,
+        ),
+      );
+    }
+    return out;
+  },
+  // A gooseneck arm from the wall out to a wide barn shade.
+  barnLight: (w, d) => [
+    rect(w * 0.35, 0, w * 0.3, d * 0.08, 1),
+    path(`M${w / 2},${d * 0.08} Q${w / 2},${d * 0.35} ${w / 2},${d * 0.45}`),
+    ell(w / 2, d * 0.72, w / 2, d * 0.28),
+    circ(w / 2, d * 0.72, min(w, d) * 0.08),
+  ],
+  // Festoon bulbs swagged between posts.
+  cafeLights: (w, d) => {
+    const spans = Math.max(1, Math.round(w / 200));
+    const span = w / spans;
+    const out: Prim[] = [];
+    let dpath = `M0,${d * 0.15}`;
+    for (let i = 0; i < spans; i++) {
+      const x = i * span;
+      dpath += ` Q${x + span / 2},${d * 1.1} ${x + span},${d * 0.15}`;
+      out.push(circ(x, d * 0.15, d * 0.12));
+    }
+    out.unshift(path(dpath));
+    out.push(circ(w, d * 0.15, d * 0.12));
+    const bulbs = Math.max(4, Math.round(w / 30));
+    for (let i = 1; i < bulbs; i++) {
+      const t = i / bulbs;
+      const local = ((t * w) % span) / span;
+      const y =
+        d * 0.15 + (d * 0.95 - d * 0.15) * 4 * local * (1 - local) * 0.5;
+      out.push(circ(t * w, y + d * 0.08, Math.min(2.2, d * 0.08)));
+    }
+    return out;
+  },
+  postCap: (w, d) => [
+    rect(0, 0, w, d, 1),
+    rect(w * 0.15, d * 0.15, w * 0.7, d * 0.7, 1, true),
+    circ(w / 2, d / 2, min(w, d) * 0.2),
+  ],
+  // A recessed ground light: rim, grille, lamp.
+  wellLight: (w, d) => {
+    const r = min(w, d) / 2;
+    return [
+      circ(w / 2, d / 2, r),
+      circ(w / 2, d / 2, r * 0.75),
+      line(w / 2 - r * 0.75, d / 2, w / 2 + r * 0.75, d / 2),
+      line(w / 2, d / 2 - r * 0.75, w / 2, d / 2 + r * 0.75),
+    ];
+  },
+  skylightPanel: (w, d) => [
+    rect(0, 0, w, d, 2),
+    rect(4, 4, w - 8, d - 8, 1),
+    line(4, 4, w - 4, d - 4, true),
+    line(w - 4, 4, 4, d - 4, true),
+  ],
   linearPendant: (w, d) => [
     rect(0, d * 0.25, w, d * 0.5, d * 0.25),
     line(d * 0.4, d / 2, w - d * 0.4, d / 2, true),
@@ -2124,6 +2407,184 @@ const T: Record<string, Template> = {
     ell(w / 2, d / 2, w / 2, d / 2),
     ell(w / 2, d * 0.55, w * 0.36, d * 0.33),
   ],
+  // Elevated cot: a tube frame with a foot at each corner, the mesh
+  // stretched inside it with its stitched, chamfered panel.
+  petCot: (w, d) => {
+    const s = min(w, d);
+    const t = s * 0.07;
+    const c = s * 0.16;
+    const i = t * 2.2;
+    return [
+      rect(0, 0, w, d, t),
+      rect(t, t, w - 2 * t, d - 2 * t, t * 0.4),
+      poly(
+        [
+          [i + c, i],
+          [w - i - c, i],
+          [w - i, i + c],
+          [w - i, d - i - c],
+          [w - i - c, d - i],
+          [i + c, d - i],
+          [i, d - i - c],
+          [i, i + c],
+        ],
+        true,
+        true,
+      ),
+      ...[
+        [t * 0.5, t * 0.5],
+        [w - t * 0.5, t * 0.5],
+        [w - t * 0.5, d - t * 0.5],
+        [t * 0.5, d - t * 0.5],
+      ].map(([x, y]) => circ(x ?? 0, y ?? 0, t * 0.75)),
+    ];
+  },
+  // Bolsters round the back and sides, open at the front.
+  petBolster: (w, d) => {
+    const b = min(w, d) * 0.2;
+    return [
+      rect(0, 0, w, d, b * 0.9),
+      rect(b, b, w - 2 * b, d - b - 2, b * 0.5),
+      line(b * 0.4, d - 1, b, d - 1),
+      line(w - b, d - 1, w - b * 0.4, d - 1),
+    ];
+  },
+  // Flat orthopedic mattress: a stitched border and a few tufts.
+  petMattress: (w, d) => {
+    const m = min(w, d) * 0.09;
+    return [
+      rect(0, 0, w, d, m),
+      rect(m, m, w - 2 * m, d - 2 * m, m * 0.6, true),
+      ...[0.3, 0.7].flatMap((fy) =>
+        [0.25, 0.5, 0.75].map((fx) => circ(w * fx, d * fy, m * 0.3)),
+      ),
+    ];
+  },
+  // Round donut bed: a deep bolster ring round a sunken cushion.
+  petDonut: (w, d) => [
+    ell(w / 2, d / 2, w / 2, d / 2),
+    ell(w / 2, d / 2, w * 0.31, d * 0.31),
+    ell(w / 2, d / 2, w * 0.41, d * 0.41, undefined, true),
+  ],
+  // Hooded cave bed: the roof seen from above, the opening at the front.
+  petCave: (w, d) => [
+    path(
+      `M${w * 0.12},${d} C${-w * 0.04},${d * 0.55} ${w * 0.15},0 ${w / 2},0 C${w * 0.85},0 ${w * 1.04},${d * 0.55} ${w * 0.88},${d} Z`,
+    ),
+    path(`M${w * 0.28},${d} Q${w / 2},${d * 0.52} ${w * 0.72},${d}`),
+    path(
+      `M${w * 0.22},${d * 0.72} C${w * 0.18},${d * 0.3} ${w * 0.35},${d * 0.12} ${w / 2},${d * 0.12} C${w * 0.65},${d * 0.12} ${w * 0.82},${d * 0.3} ${w * 0.78},${d * 0.72}`,
+      true,
+    ),
+  ],
+  // Basic shapes: the same soft corners and line weight as the items.
+  shapeRect: (w, d) => [rect(0, 0, w, d)],
+  shapeEllipse: (w, d) => [ell(w / 2, d / 2, w / 2, d / 2)],
+  shapeTriangle: (w, d) => [
+    shapePoly(w, d, [
+      [0.5, 0],
+      [1, 1],
+      [0, 1],
+    ]),
+  ],
+  shapeRightTriangle: (w, d) => [
+    shapePoly(w, d, [
+      [0, 0],
+      [1, 1],
+      [0, 1],
+    ]),
+  ],
+  shapeDiamond: (w, d) => [
+    shapePoly(w, d, [
+      [0.5, 0],
+      [1, 0.5],
+      [0.5, 1],
+      [0, 0.5],
+    ]),
+  ],
+  shapePolygon: (w, d, o) => [shapePoly(w, d, ring(num(o, "sides", 6)))],
+  shapeStar: (w, d, o) => {
+    const n = num(o, "points", 5);
+    const outer = ring(n);
+    const inner = ring(n, 0.45, Math.PI / n);
+    return [
+      shapePoly(
+        w,
+        d,
+        outer.flatMap((p, i): Pt[] => [p, inner[i]!]),
+      ),
+    ];
+  },
+  shapeL: (w, d) => [
+    shapePoly(w, d, [
+      [0, 0],
+      [0.45, 0],
+      [0.45, 0.55],
+      [1, 0.55],
+      [1, 1],
+      [0, 1],
+    ]),
+  ],
+  shapeU: (w, d) => [
+    shapePoly(w, d, [
+      [0, 0],
+      [0.3, 0],
+      [0.3, 0.6],
+      [0.7, 0.6],
+      [0.7, 0],
+      [1, 0],
+      [1, 1],
+      [0, 1],
+    ]),
+  ],
+  shapePlus: (w, d) => [
+    shapePoly(w, d, [
+      [0.35, 0],
+      [0.65, 0],
+      [0.65, 0.35],
+      [1, 0.35],
+      [1, 0.65],
+      [0.65, 0.65],
+      [0.65, 1],
+      [0.35, 1],
+      [0.35, 0.65],
+      [0, 0.65],
+      [0, 0.35],
+      [0.35, 0.35],
+    ]),
+  ],
+  shapeArrow: (w, d) => [
+    shapePoly(w, d, [
+      [0, 0.32],
+      [0.68, 0.32],
+      [0.68, 0],
+      [1, 0.5],
+      [0.68, 1],
+      [0.68, 0.68],
+      [0, 0.68],
+    ]),
+  ],
+  shapeSemicircle: (w, d) => [path(`M0,${d} A${w / 2},${d} 0 0 1 ${w},${d} Z`)],
+  shapeQuarter: (w, d) => [path(`M0,0 A${w},${d} 0 0 1 ${w},${d} L0,${d} Z`)],
+  shapeLine: (w, d) => [line(0, d / 2, w, d / 2)],
+  shapeDashedLine: (w, d) => [line(0, d / 2, w, d / 2, true)],
+  shapeFreeform: (w, d) => [
+    shapePoly(w, d, [
+      [0.1, 0.2],
+      [0.55, 0],
+      [1, 0.35],
+      [0.8, 1],
+      [0.2, 0.85],
+    ]),
+  ],
+  custom: (w, d, o) => [
+    {
+      t: "image",
+      id: typeof o["custom"] === "string" ? o["custom"] : "",
+      w,
+      d,
+    },
+  ],
   catTree: (w, d) => [
     rect(0, 0, w, d, 2),
     circ(w * 0.35, d * 0.35, min(w, d) * 0.28, true),
@@ -2258,6 +2719,7 @@ function offset(p: Prim, dx: number, dy: number): Prim {
       return { ...p, points: p.points.map(([x, y]): Pt => [x + dx, y + dy]) };
     case "path":
     case "icon":
+    case "image":
       return p; // only used for leaf ellipses (see planter)
   }
 }
@@ -2278,6 +2740,98 @@ export function drawItem(
 ): Prim[] {
   const fn = T[template] ?? T["box"]!;
   return fn(w, d, template in T ? opts : { x: true });
+}
+
+/** The corner softening every drawn box gets (see renderPrims' rect):
+ * 22% of the shorter side, at most 6 cm. */
+export function softRadius(w: number, d: number): number {
+  return Math.min(Math.min(w, d) * 0.22, 6);
+}
+
+/** A path through `points` with each corner rounded by up to `r` (never
+ * more than half of either side meeting there) — shapes and free-form
+ * outlines get the same soft corners as the boxes. */
+export function roundedPolyPath(
+  points: Pt[],
+  closed: boolean,
+  r: number,
+): string {
+  const n = points.length;
+  if (n < 2) return "";
+  const fmt = (v: number) => Math.round(v * 100) / 100;
+  const corner = (i: number) => {
+    const p = points[i]!;
+    const a = points[(i - 1 + n) % n]!;
+    const b = points[(i + 1) % n]!;
+    const la = Math.hypot(a[0] - p[0], a[1] - p[1]) || 1;
+    const lb = Math.hypot(b[0] - p[0], b[1] - p[1]) || 1;
+    const k = Math.min(r, la / 2, lb / 2);
+    return {
+      p,
+      inn: [p[0] + ((a[0] - p[0]) / la) * k, p[1] + ((a[1] - p[1]) / la) * k],
+      out: [p[0] + ((b[0] - p[0]) / lb) * k, p[1] + ((b[1] - p[1]) / lb) * k],
+    };
+  };
+  if (!closed) {
+    let d = `M${fmt(points[0]![0])},${fmt(points[0]![1])}`;
+    for (let i = 1; i < n - 1; i++) {
+      const c = corner(i);
+      d += ` L${fmt(c.inn[0]!)},${fmt(c.inn[1]!)} Q${fmt(c.p[0])},${fmt(c.p[1])} ${fmt(c.out[0]!)},${fmt(c.out[1]!)}`;
+    }
+    d += ` L${fmt(points[n - 1]![0])},${fmt(points[n - 1]![1])}`;
+    return d;
+  }
+  const c0 = corner(0);
+  let d = `M${fmt(c0.out[0]!)},${fmt(c0.out[1]!)}`;
+  for (let i = 1; i <= n; i++) {
+    const c = corner(i % n);
+    d += ` L${fmt(c.inn[0]!)},${fmt(c.inn[1]!)} Q${fmt(c.p[0])},${fmt(c.p[1])} ${fmt(c.out[0]!)},${fmt(c.out[1]!)}`;
+  }
+  return `${d} Z`;
+}
+
+/** A soft-cornered polygon, fitted to w x d from 0–1 fractions. */
+const shapePoly = (w: number, d: number, frac: Pt[], closed = true): Prim =>
+  path(
+    roundedPolyPath(
+      frac.map(([fx, fy]): Pt => [fx * w, fy * d]),
+      closed,
+      softRadius(w, d),
+    ),
+  );
+
+/** n points round an ellipse, the first at the top. */
+const ring = (n: number, k = 1, turn = 0): Pt[] =>
+  Array.from({ length: n }, (_, i): Pt => {
+    const a = -Math.PI / 2 + turn + (i / n) * Math.PI * 2;
+    return [0.5 + Math.cos(a) * 0.5 * k, 0.5 + Math.sin(a) * 0.5 * k];
+  });
+
+/** A free-form outline drawn point by point (FurnitureItem.points, 0–1
+ * fractions of its size), with the usual soft corners. */
+export function freeformPrims(
+  points: [number, number][],
+  w: number,
+  d: number,
+  closed: boolean,
+): Prim[] {
+  if (points.length < 2) return [];
+  const pts = points.map(([fx, fy]): Pt => [fx * w, fy * d]);
+  return [path(roundedPolyPath(pts, closed, 6))];
+}
+
+/** Imported icons by id: their image URL and whether they keep their
+ * own colours (set from the catalog's setCustomIcons). */
+const CUSTOM_IMAGES = new Map<string, { href: string; colors: boolean }>();
+
+export function setCustomImages(icons: CustomIcon[]): void {
+  CUSTOM_IMAGES.clear();
+  for (const icon of icons) {
+    CUSTOM_IMAGES.set(icon.id, {
+      href: svgDataUrl(icon.svg),
+      colors: icon.colors === true,
+    });
+  }
 }
 
 /** SVG for a drawing's primitives. Strokes keep a constant on-screen width
@@ -2304,6 +2858,23 @@ export function renderPrims(
         if (!icon) return svg``;
         const s = Math.min(p.w, p.d) / 64;
         return svg`<g class="fx-icon" transform="translate(${(p.w - 64 * s) / 2} ${(p.d - 64 * s) / 2}) scale(${s})">${unsafeSVG(icon.svg)}</g>`;
+      }
+      case "image": {
+        const img = CUSTOM_IMAGES.get(p.id);
+        const w = max(0.01, p.w);
+        const h = max(0.01, p.d);
+        // A deleted icon: just its footprint.
+        if (!img)
+          return svg`<rect class="fx dash" x="0" y="0" width=${w} height=${h}></rect>`;
+        if (img.colors)
+          return svg`<image href=${img.href} x="0" y="0" width=${w} height=${h} preserveAspectRatio="xMidYMid meet"></image>`;
+        // One colour: the drawing's shapes cut a fill in the item's line
+        // colour, so it follows the theme and live state like the rest.
+        const id = `fx-mask-${p.id}-${Math.round(w * 10)}x${Math.round(h * 10)}`;
+        return svg`<mask id=${id} style="mask-type:alpha" maskUnits="userSpaceOnUse" x="0" y="0" width=${w} height=${h}>
+            <image href=${img.href} x="0" y="0" width=${w} height=${h} preserveAspectRatio="xMidYMid meet"></image>
+          </mask>
+          <rect class="fx-tint" x="0" y="0" width=${w} height=${h} mask="url(#${id})"></rect>`;
       }
       case "ellipse":
         return p.rot
@@ -2345,4 +2916,5 @@ export const FURNITURE_STYLES = `
   }
   .fx-icon * { vector-effect: non-scaling-stroke; }
   .fx.body { fill: var(--fx-color, currentColor); fill-opacity: 0.16; }
+  .fx-tint { fill: var(--fx-color, currentColor); stroke: none; }
 `;

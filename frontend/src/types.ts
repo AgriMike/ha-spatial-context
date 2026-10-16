@@ -1,3 +1,5 @@
+import type { CustomIcon } from "./canvas/custom-icons";
+
 /** Types mirroring custom_components/spatial_context/storage.py's schema. */
 
 /** Stands in for a floor_id wherever something is placed on the Property
@@ -126,6 +128,17 @@ export interface Settings {
   room_label_size?: number;
   room_label_color?: string | null;
   room_label_bold?: boolean;
+  /** The halo behind room names (absent = on, 3 units, the canvas
+   * background colour). */
+  room_label_halo?: boolean;
+  room_label_halo_width?: number;
+  room_label_halo_color?: string | null;
+  /** Draw room fills beneath the background image (absent = above). */
+  room_fill_under_background?: boolean;
+  /** SVG icons imported into the furniture library (custom-icons.ts). */
+  custom_icons?: CustomIcon[];
+  /** The dashed Set Scale reference line on the plan (absent = shown). */
+  show_scale_line?: boolean;
 }
 
 /** What the backend reports for the version handshake (see debug.py). */
@@ -210,6 +223,11 @@ export interface FurnitureItem {
    * player…) — its live state is drawn on the item (see live-state.ts's
    * computeItemStates), and a dashboard tap toggles it. */
   entity_id?: string | null;
+  /** A free-form shape's outline: 0–1 fractions of width/depth, so it
+   * scales with the item. */
+  points?: [number, number][];
+  /** Whether that outline is closed (clicked back to its first corner). */
+  closed?: boolean;
 }
 
 /** The canvas's visible region in its own stored coordinate space — what

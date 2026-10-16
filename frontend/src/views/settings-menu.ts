@@ -433,6 +433,84 @@ export class SettingsMenu extends LitElement {
             ),
           )}
           ${this._row(
+            localize("settings.labelHalo"),
+            this._switch(
+              s.room_label_halo !== false,
+              localize("settings.labelHalo"),
+              (room_label_halo) => this._change({ room_label_halo }),
+            ),
+            localize("settings.labelHaloHint"),
+          )}
+          ${
+            s.room_label_halo !== false
+              ? html`${this._row(
+                  localize("settings.labelHaloWidth", {
+                    px: s.room_label_halo_width ?? 3,
+                  }),
+                  html`<input
+                    type="range"
+                    min="0.5"
+                    max="12"
+                    step="0.5"
+                    .value=${String(s.room_label_halo_width ?? 3)}
+                    @input=${(e: Event) =>
+                      this._change({
+                        room_label_halo_width: Number(
+                          (e.target as HTMLInputElement).value,
+                        ),
+                      })}
+                  />`,
+                )}
+                ${this._row(
+                  localize("settings.labelHaloColor"),
+                  html`<span class="border-color">
+                    ${
+                      s.room_label_halo_color
+                        ? html`<button
+                            class="border-reset"
+                            @click=${() =>
+                              this._change({ room_label_halo_color: null })}
+                          >
+                            ${localize("settings.labelHaloColorAuto")}
+                          </button>`
+                        : html`<span class="description"
+                            >${localize("settings.labelHaloColorAuto")}</span
+                          >`
+                    }
+                    <input
+                      type="color"
+                      aria-label=${localize("settings.labelHaloColor")}
+                      .value=${s.room_label_halo_color ?? "#ffffff"}
+                      @input=${(e: Event) =>
+                        this._change({
+                          room_label_halo_color: (e.target as HTMLInputElement)
+                            .value,
+                        })}
+                    />
+                  </span>`,
+                )}`
+              : ""
+          }
+          ${this._row(
+            localize("settings.scaleLine"),
+            this._switch(
+              s.show_scale_line !== false,
+              localize("settings.scaleLine"),
+              (show_scale_line) => this._change({ show_scale_line }),
+            ),
+            localize("settings.scaleLineHint"),
+          )}
+          ${this._row(
+            localize("settings.fillUnder"),
+            this._switch(
+              s.room_fill_under_background === true,
+              localize("settings.fillUnder"),
+              (room_fill_under_background) =>
+                this._change({ room_fill_under_background }),
+            ),
+            localize("settings.fillUnderHint"),
+          )}
+          ${this._row(
             localize("settings.roomBorders"),
             this._switch(
               s.room_border_show !== false,

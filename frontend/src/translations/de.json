@@ -38,7 +38,9 @@
       "alignAgainst": "Ausrichten an:",
       "noBackground": "Diese Etage hat kein Hintergrundbild zum Ausrichten.",
       "alignDrag": "Zum Verschieben ziehen, mit +/− die Größe ändern, dann „Anwenden“.",
-      "placeFurniture": "Klicken zum Platzieren · R dreht · Umschalt+Klick platziert noch eins"
+      "placeFurniture": "Klicken zum Platzieren · R dreht · Umschalt+Klick platziert noch eins",
+      "freeform": "Klicken, um Ecken hinzuzufügen. Die erste Ecke anklicken, um die Form zu schließen, oder „Fertig“ (Enter), um sie offen zu lassen.",
+      "drawShape": "Auf dem Plan ziehen, um die Form zu zeichnen (Umschalt für Quadrat oder Kreis), oder klicken, um sie in Standardgröße abzulegen."
     },
     "openingType": {
       "door": "eine Tür",
@@ -55,7 +57,8 @@
       "chooseAnother": "Andere wählen",
       "apply": "Anwenden",
       "close": "Schließen",
-      "done": "Fertig"
+      "done": "Fertig",
+      "finishShape": "Form fertigstellen"
     },
     "align": {
       "choose": "— Etage wählen —",
@@ -244,7 +247,16 @@
     "labelSize": "Größe der Raumnamen ({size})",
     "labelColor": "Farbe der Raumnamen",
     "labelColorTheme": "Textfarbe des Designs",
-    "labelBold": "Raumnamen fett"
+    "labelBold": "Raumnamen fett",
+    "labelHalo": "Umrandung der Raumnamen",
+    "labelHaloHint": "Die Kontur hinter jedem Raumnamen, die ihn über Linien und Farbe lesbar hält.",
+    "labelHaloWidth": "Umrandungsstärke ({px})",
+    "labelHaloColor": "Umrandungsfarbe",
+    "labelHaloColorAuto": "Hintergrundfarbe",
+    "fillUnder": "Raumfarbe unter dem Hintergrund",
+    "fillUnderHint": "Raumfarben unter dem Hintergrundbild zeichnen, damit Arbeitsplatten, Geräte und andere Objekte der Zeichnung obenauf bleiben.",
+    "scaleLine": "Maßstabslinie",
+    "scaleLineHint": "Die gestrichelte Linie aus „Maßstab festlegen“ und ihre Länge. Sie erscheint immer beim Festlegen des Maßstabs und nie auf Dashboards."
   },
   "picker": {
     "search": "Geräte suchen…",
@@ -471,13 +483,22 @@
       "fitness": "Fitness & Hobby",
       "pets": "Haustiere",
       "decor": "Deko & Pflanzen",
-      "icons": "Symbole"
+      "icons": "Symbole",
+      "custom": "Eigene Symbole",
+      "shapes": "Formen"
     },
     "entityTitle": "Verknüpfte Entität",
     "entity": "Entität",
     "noEntity": "Keine",
     "toggle": "Umschalten",
-    "opacity": "Deckkraft ({pct} %)"
+    "opacity": "Deckkraft ({pct} %)",
+    "importSvg": "SVG-Symbole importieren",
+    "importHint": "Eigene Zeichnungen hinzufügen: eine oder mehrere .svg-Dateien wählen. Sie werden mit den Einstellungen gespeichert und gelten auf allen Etagen und Dashboards.",
+    "importFailed": "{names} konnte nicht importiert werden: keine SVG-Datei oder größer als 300 KB.",
+    "deleteIcon": "Dieses Symbol aus der Bibliothek entfernen",
+    "deleteIconConfirm": "„{name}“ aus der Bibliothek entfernen? Bereits platzierte Objekte erscheinen als leerer Umriss.",
+    "iconColors": "Eigene Farben der Datei verwenden (sonst in der Linienfarbe des Objekts)",
+    "noCustom": "Noch keine importierten Symbole."
   },
   "compass": {
     "title": "Norden relativ zur Oberkante des Plans: {dir}",

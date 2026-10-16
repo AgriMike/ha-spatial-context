@@ -162,6 +162,12 @@ _FURNITURE_SCHEMA = {
     vol.Optional("opacity"): vol.All(vol.Coerce(float), vol.Range(min=0.05, max=1)),
     # An HA entity the item stands for (a lamp's light, say).
     vol.Optional("entity_id"): vol.Any(str, None),
+    # A free-form shape's outline, as 0-1 fractions of its size.
+    vol.Optional("points"): vol.All(
+        [vol.All([vol.Coerce(float)], vol.Length(min=2, max=2))],
+        vol.Length(max=500),
+    ),
+    vol.Optional("closed"): bool,
 }
 
 _SCALE_SCHEMA = vol.Any(
@@ -404,6 +410,34 @@ _SETTINGS_SCHEMA = {
         None, vol.Match(r"^#[0-9a-fA-F]{6}$")
     ),
     vol.Optional("room_label_bold", default=False): bool,
+    vol.Optional("room_label_halo", default=True): bool,
+    vol.Optional("room_label_halo_width", default=3.0): vol.All(
+        vol.Coerce(float), vol.Range(min=0, max=12)
+    ),
+    vol.Optional("room_label_halo_color", default=None): vol.Any(
+        None, vol.Match(r"^#[0-9a-fA-F]{6}$")
+    ),
+    vol.Optional("room_fill_under_background", default=False): bool,
+    vol.Optional("show_scale_line", default=True): bool,
+    vol.Optional("custom_icons", default=list): vol.All(
+        [
+            vol.Schema(
+                {
+                    vol.Required("id"): vol.All(str, vol.Length(min=1, max=40)),
+                    vol.Required("name"): vol.All(str, vol.Length(max=120)),
+                    vol.Required("svg"): vol.All(str, vol.Length(max=300_000)),
+                    vol.Required("w"): vol.All(
+                        vol.Coerce(float), vol.Range(min=1, max=5000)
+                    ),
+                    vol.Required("d"): vol.All(
+                        vol.Coerce(float), vol.Range(min=1, max=5000)
+                    ),
+                    vol.Optional("colors", default=False): bool,
+                }
+            )
+        ],
+        vol.Length(max=200),
+    ),
 }
 
 

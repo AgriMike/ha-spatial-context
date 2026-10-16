@@ -3,7 +3,8 @@
  * in centimetres — width across the front, depth front to back. Ids are
  * stored in saved layouts (FurnitureItem.kind), so never rename one. */
 
-import type { Opts } from "./furniture-draw";
+import { setCustomImages, type Opts } from "./furniture-draw";
+import type { CustomIcon } from "./custom-icons";
 import { UI_ICONS } from "./ui-icons";
 
 export type FurnitureCategory =
@@ -23,7 +24,9 @@ export type FurnitureCategory =
   | "fitness"
   | "pets"
   | "decor"
-  | "icons";
+  | "icons"
+  | "shapes"
+  | "custom";
 
 export const FURNITURE_CATEGORIES: { id: FurnitureCategory; icon: string }[] = [
   { id: "living", icon: "mdi:sofa" },
@@ -43,6 +46,8 @@ export const FURNITURE_CATEGORIES: { id: FurnitureCategory; icon: string }[] = [
   { id: "pets", icon: "mdi:paw" },
   { id: "decor", icon: "mdi:flower" },
   { id: "icons", icon: "mdi:shape-outline" },
+  { id: "shapes", icon: "mdi:shape-plus-outline" },
+  { id: "custom", icon: "mdi:file-upload-outline" },
 ];
 
 export interface CatalogItem {
@@ -1309,6 +1314,54 @@ const LIGHTING: Row[] = [
   ["ceiling_fan_light", "Ceiling fan with light", 132, 132, "fanLight"],
   ["floor_uplight", "Floor uplight", 25, 25, "uplight"],
   ["exit_sign", "Exit sign", 30, 6, "exitSign"],
+  ["drum_pendant", "Drum pendant", 50, 50, "drumShade"],
+  ["drum_flush_mount", "Drum flush-mount light", 40, 40, "drumShade"],
+  ["globe_pendant", "Globe pendant", 30, 30, "globeLight"],
+  ["globe_cluster", "Globe cluster pendant", 70, 70, "globeCluster"],
+  ["dome_pendant", "Dome pendant", 40, 40, "domePendant"],
+  ["flush_mount_square", "Square flush-mount light", 35, 35, "squareLight"],
+  ["ring_chandelier", "Ring chandelier", 80, 80, "ringLight"],
+  [
+    "ring_chandelier_3",
+    "Three-ring chandelier",
+    100,
+    100,
+    "ringLight",
+    { rings: 3 },
+  ],
+  ["linear_chandelier", "Linear chandelier", 120, 30, "linearChandelier"],
+  ["spot_bar_3", "Ceiling spot bar (3)", 70, 12, "spotBar", { spots: 3 }],
+  ["spot_bar_4", "Ceiling spot bar (4)", 90, 12, "spotBar", { spots: 4 }],
+  ["swing_arm_lamp", "Swing-arm wall lamp", 15, 50, "swingArm"],
+  [
+    "wall_sconce_double",
+    "Double wall sconce",
+    35,
+    15,
+    "wallLamp",
+    { heads: 2 },
+  ],
+  ["wall_up_down", "Up/down wall light", 15, 12, "wallLamp", { heads: 1 }],
+  ["reading_light_bed", "Bedside reading light", 12, 25, "swingArm"],
+  ["tripod_floor_lamp", "Tripod floor lamp", 60, 60, "tripodLamp"],
+  ["corner_floor_lamp", "RGB corner floor lamp", 25, 25, "cornerLamp"],
+  ["mushroom_lamp", "Mushroom table lamp", 30, 30, "globeLight"],
+  ["salt_lamp", "Salt lamp", 20, 18, "saltLamp"],
+  ["lava_lamp", "Lava lamp", 15, 15, "puck", { dot: true }],
+  ["hex_light_panels", "Hexagon light panels", 90, 60, "hexPanels"],
+  ["triangle_light_panels", "Triangle light panels", 90, 50, "triPanels"],
+  ["tv_backlight", "TV backlight strip", 140, 4, "linearLight", { pitch: 6 }],
+  ["wall_washer", "Wall-washer light", 120, 8, "linearLight", { cove: true }],
+  ["under_bed_light", "Under-bed motion light", 120, 3, "linearLight"],
+  ["closet_puck", "Closet puck light", 10, 10, "puck", { dot: true }],
+  ["galaxy_projector", "Star projector", 18, 18, "starProjector"],
+  ["barn_light", "Barn / gooseneck light", 35, 40, "barnLight"],
+  ["cafe_lights", "Café string lights", 400, 30, "cafeLights"],
+  ["post_cap_light", "Post cap light", 12, 12, "postCap"],
+  ["well_light", "In-ground well light", 18, 18, "wellLight"],
+  ["spike_spotlight", "Garden spike spotlight", 12, 20, "spotlight"],
+  ["pool_light", "Pool light", 30, 30, "uplight"],
+  ["skylight_light", "Smart skylight panel", 60, 120, "skylightPanel"],
 ];
 
 const KIDS: Row[] = [
@@ -1666,6 +1719,23 @@ const PETS: Row[] = [
   ["dog_bed_small", "Dog bed (small)", 55, 45, "petBed"],
   ["dog_bed_medium", "Dog bed (medium)", 75, 60, "petBed"],
   ["dog_bed_large", "Dog bed (large)", 105, 80, "petBed"],
+  ["dog_cot_small", "Elevated dog cot (small)", 76, 53, "petCot"],
+  ["dog_cot_medium", "Elevated dog cot (medium)", 91, 66, "petCot"],
+  ["dog_cot_large", "Elevated dog cot (large)", 109, 76, "petCot"],
+  ["dog_cot_xl", "Elevated dog cot (XL)", 130, 81, "petCot"],
+  ["dog_bed_bolster", "Bolster dog bed", 90, 70, "petBolster"],
+  ["dog_bed_bolster_large", "Bolster dog bed (large)", 110, 85, "petBolster"],
+  ["dog_bed_mattress", "Orthopedic dog mattress", 100, 75, "petMattress"],
+  [
+    "dog_bed_mattress_large",
+    "Orthopedic dog mattress (large)",
+    120,
+    90,
+    "petMattress",
+  ],
+  ["dog_bed_donut", "Donut dog bed", 70, 70, "petDonut"],
+  ["dog_bed_donut_large", "Donut dog bed (large)", 90, 90, "petDonut"],
+  ["pet_cave_bed", "Covered pet bed", 55, 50, "petCave"],
   ["cat_bed", "Cat bed", 45, 45, "petBed"],
   ["cat_tree_small", "Cat tree (small)", 50, 50, "catTree"],
   ["cat_tree_large", "Cat tree (large)", 80, 60, "catTree"],
@@ -1851,6 +1921,38 @@ const ICONS: Row[] = Object.entries(UI_ICONS).map(([name, icon]) => [
   { icon: name },
 ]);
 
+/** The free-form shape: armed, each click on the plan adds a corner
+ * (see floorplan-canvas.ts); the outline is kept on the item. */
+export const FREEFORM_KIND = "shape_freeform";
+
+/** Basic shapes — armed, drag on the plan to draw one at that size. */
+const SHAPES: Row[] = [
+  [FREEFORM_KIND, "Free-form shape", 100, 80, "shapeFreeform"],
+  ["shape_rect", "Rectangle", 100, 60, "shapeRect"],
+  ["shape_square", "Square", 60, 60, "shapeRect"],
+  ["shape_circle", "Circle", 60, 60, "shapeEllipse"],
+  ["shape_ellipse", "Ellipse", 100, 60, "shapeEllipse"],
+  ["shape_triangle", "Triangle", 70, 60, "shapeTriangle"],
+  ["shape_right_triangle", "Right triangle", 70, 60, "shapeRightTriangle"],
+  ["shape_diamond", "Diamond", 60, 60, "shapeDiamond"],
+  ["shape_pentagon", "Pentagon", 60, 60, "shapePolygon", { sides: 5 }],
+  ["shape_hexagon", "Hexagon", 60, 60, "shapePolygon", { sides: 6 }],
+  ["shape_octagon", "Octagon", 60, 60, "shapePolygon", { sides: 8 }],
+  ["shape_star", "Star", 60, 60, "shapeStar"],
+  ["shape_l", "L-shape", 100, 100, "shapeL"],
+  ["shape_u", "U-shape", 100, 80, "shapeU"],
+  ["shape_plus", "Plus", 60, 60, "shapePlus"],
+  ["shape_arrow", "Arrow", 100, 50, "shapeArrow"],
+  ["shape_semicircle", "Semicircle", 100, 50, "shapeSemicircle"],
+  ["shape_quarter", "Quarter circle", 60, 60, "shapeQuarter"],
+  ["shape_line", "Line", 100, 4, "shapeLine"],
+  ["shape_dashed_line", "Dashed line", 100, 4, "shapeDashedLine"],
+];
+
+export function isShapeKind(kind: string | null | undefined): boolean {
+  return !!kind && kind.startsWith("shape_");
+}
+
 const ROWS: [FurnitureCategory, Row[]][] = [
   ["living", LIVING],
   ["bedroom", BEDROOM],
@@ -1869,6 +1971,7 @@ const ROWS: [FurnitureCategory, Row[]][] = [
   ["pets", PETS],
   ["decor", DECOR],
   ["icons", ICONS],
+  ["shapes", SHAPES],
 ];
 
 export const FURNITURE_CATALOG: CatalogItem[] = ROWS.flatMap(
@@ -1887,6 +1990,33 @@ export const FURNITURE_CATALOG: CatalogItem[] = ROWS.flatMap(
 
 const BY_ID = new Map(FURNITURE_CATALOG.map((item) => [item.id, item]));
 
+/** Imported icons (Settings.custom_icons) as library items, kind
+ * `custom_<id>`. */
+let customItems: CatalogItem[] = [];
+let customById = new Map<string, CatalogItem>();
+let customSource: CustomIcon[] | null = null;
+
+export function setCustomIcons(icons: CustomIcon[]): void {
+  if (icons === customSource) return;
+  customSource = icons;
+  setCustomImages(icons);
+  customItems = icons.map((icon) => ({
+    id: `custom_${icon.id}`,
+    name: icon.name,
+    category: "custom",
+    w: icon.w,
+    d: icon.d,
+    draw: "custom",
+    opts: { custom: icon.id },
+    flip: false,
+  }));
+  customById = new Map(customItems.map((item) => [item.id, item]));
+}
+
+export function customCatalog(): CatalogItem[] {
+  return customItems;
+}
+
 export function catalogItem(id: string): CatalogItem | undefined {
-  return BY_ID.get(id);
+  return BY_ID.get(id) ?? customById.get(id);
 }

@@ -297,6 +297,18 @@ def _empty_settings() -> dict[str, Any]:
         "room_label_size": 16.0,
         "room_label_color": None,
         "room_label_bold": False,
+        # The halo around room names: on/off, thickness and colour (None =
+        # the canvas background).
+        "room_label_halo": True,
+        "room_label_halo_width": 3.0,
+        "room_label_halo_color": None,
+        # Draw room fills beneath the background image, so furniture
+        # already in the plan drawing stays on top of the colour.
+        "room_fill_under_background": False,
+        # SVG icons imported into the furniture library.
+        "custom_icons": [],
+        # The dashed Set Scale reference line on the plan.
+        "show_scale_line": True,
     }
 
 

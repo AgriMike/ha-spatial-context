@@ -38,7 +38,9 @@
       "alignAgainst": "Align against:",
       "noBackground": "That floor has no background image to align against.",
       "alignDrag": "Drag to move, use +/− to resize, then Apply.",
-      "placeFurniture": "Click to place · R rotates · Shift+click places another"
+      "placeFurniture": "Click to place · R rotates · Shift+click places another",
+      "freeform": "Click to add corners. Click the first corner to close the shape, or Finish (Enter) to leave it open.",
+      "drawShape": "Drag on the plan to draw the shape (Shift for a square or circle), or click to drop it at its default size."
     },
     "openingType": {
       "door": "door",
@@ -55,7 +57,8 @@
       "chooseAnother": "Choose another",
       "apply": "Apply",
       "close": "Close",
-      "done": "Done"
+      "done": "Done",
+      "finishShape": "Finish shape"
     },
     "align": {
       "choose": "— Choose a floor —",
@@ -244,7 +247,16 @@
     "labelSize": "Room name size ({size})",
     "labelColor": "Room name colour",
     "labelColorTheme": "Theme text colour",
-    "labelBold": "Bold room names"
+    "labelBold": "Bold room names",
+    "labelHalo": "Room name halo",
+    "labelHaloHint": "The outline behind each room name that keeps it readable over lines and colour.",
+    "labelHaloWidth": "Halo thickness ({px})",
+    "labelHaloColor": "Halo colour",
+    "labelHaloColorAuto": "Background colour",
+    "fillUnder": "Room colour under the background",
+    "fillUnderHint": "Draw room colours beneath the background image, so counters, appliances and other items already in the drawing stay on top.",
+    "scaleLine": "Scale reference line",
+    "scaleLineHint": "The dashed line from Set Scale and its length. It always shows while you set the scale, and never on dashboards."
   },
   "picker": {
     "search": "Search devices…",
@@ -471,13 +483,22 @@
       "fitness": "Fitness & hobbies",
       "pets": "Pets",
       "decor": "Decor & plants",
-      "icons": "Icons"
+      "icons": "Icons",
+      "custom": "My icons",
+      "shapes": "Shapes"
     },
     "entityTitle": "Linked entity",
     "entity": "Entity",
     "noEntity": "None",
     "toggle": "Toggle",
-    "opacity": "Opacity ({pct}%)"
+    "opacity": "Opacity ({pct}%)",
+    "importSvg": "Import SVG icons",
+    "importHint": "Add your own drawings: pick one or more .svg files. They're saved with your settings and work on every floor and on dashboards.",
+    "importFailed": "Couldn't import {names}: not an SVG file, or larger than 300 KB.",
+    "deleteIcon": "Remove this icon from the library",
+    "deleteIconConfirm": "Remove “{name}” from the library? Items already placed show as an empty outline.",
+    "iconColors": "Use the file's own colours (otherwise drawn in the item's line colour)",
+    "noCustom": "No imported icons yet."
   },
   "compass": {
     "title": "North is {dir} of the plan's top",

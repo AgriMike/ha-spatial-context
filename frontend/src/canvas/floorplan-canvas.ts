@@ -55,8 +55,19 @@ import { GROUP_ICON_PATH } from "./pin-icons";
 import { formatLarge, largeUnitLabel } from "../units";
 import { localize } from "../i18n";
 import { scaleStyles, sharedStyles, zoomControlsStyles } from "../styles";
-import { catalogItem } from "./furniture-catalog";
-import { drawItem, FURNITURE_STYLES, renderPrims } from "./furniture-draw";
+import {
+  catalogItem,
+  FREEFORM_KIND,
+  isShapeKind,
+  setCustomIcons,
+} from "./furniture-catalog";
+import type { CustomIcon } from "./custom-icons";
+import {
+  drawItem,
+  freeformPrims,
+  FURNITURE_STYLES,
+  renderPrims,
+} from "./furniture-draw";
 import type { ItemState, RoomLight } from "./live-state";
 import {
   cloudySunColor,
@@ -174,6 +185,8 @@ type Gesture =
   | { kind: "roomMove"; roomId: string; startX: number; startY: number }
   | { kind: "openingMove"; openingId: string }
   | { kind: "furnitureMove"; id: string; startX: number; startY: number }
+  /** Dragging out a basic shape at the size of the drag. */
+  | { kind: "furnitureDraw"; startX: number; startY: number }
   | {
       kind: "furnitureHandle";
       id: string;
@@ -189,6 +202,24 @@ type Gesture =
       midImage: { x: number; y: number };
     }
   | null;
+
+/** `a` blended toward `b` by `t` (0 = a, 1 = b); #rrggbb in and out. */
+function mixHex(a: string, b: string, t: number): string {
+  const parse = (h: string) => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(h.trim());
+    const n = m ? parseInt(m[1] ?? "0", 16) : 0;
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
+  const ca = parse(a);
+  const cb = parse(b);
+  return `#${ca
+    .map((v, i) =>
+      Math.round(v + ((cb[i] ?? 0) - v) * t)
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
+}
 
 @safeCustomElement("floorplan-canvas")
 export class FloorplanCanvas extends LitElement {
@@ -246,6 +277,24 @@ export class FloorplanCanvas extends LitElement {
       .bg-overlay img {
         display: block;
         background: white;
+      }
+      /* Room fills under the background: an SVG layer beneath the image,
+       * which multiplies over it so its white shows the colour and its
+       * lines stay on top (screen in dark mode, where the image is
+       * inverted). */
+      .fill-under {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+      }
+      .bg-overlay.blend {
+        mix-blend-mode: multiply;
+      }
+      :host([dark]) .bg-overlay.blend {
+        mix-blend-mode: screen;
       }
       /* Dark HA theme: the canvas takes the theme's own background and the
        * (usually white) plan image is inverted into light lines on dark —
@@ -682,7 +731,23 @@ export class FloorplanCanvas extends LitElement {
     size: number;
     color: string | null;
     bold: boolean;
+    halo?: boolean;
+    haloWidth?: number;
+    haloColor?: string | null;
   } = { size: 16, color: null, bold: false };
+  /** Draw room fills beneath the background image (Settings → Plan), so
+   * items already drawn in the plan aren't covered by the colour. Borders
+   * and names stay on top. */
+  @property({ type: Boolean }) roomFillUnder = false;
+  /** Imported SVG icons (Settings.custom_icons), drawn for `custom_<id>`
+   * furniture. */
+  @property({ attribute: false }) customIcons: CustomIcon[] = [];
+  /** Keep the whole plan framed and centred: re-fit whenever the canvas
+   * is resized or the plan changes (the dashboard card). */
+  @property({ type: Boolean }) autoFit = false;
+  /** The dashed Set Scale reference line and its length (Settings →
+   * Plan). Always shown while setting the scale. */
+  @property({ type: Boolean }) showScaleLine = true;
   /** Compass bearing the top of the plan faces (FloorLayout.north_deg). */
   @property({ attribute: false }) northDeg: number | null = null;
   /** HA's home location, for the sun's position. */
@@ -771,6 +836,13 @@ export class FloorplanCanvas extends LitElement {
   private _clock: ReturnType<typeof setInterval> | null = null;
   /** Where the pointer is while placing furniture (the ghost's spot). */
   @state() private _hoverImage: { x: number; y: number } | null = null;
+  /** A shape being dragged out: its opposite corners. */
+  @state() private _drawBox: {
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+  } | null = null;
 
   @query("svg") private _svg!: SVGSVGElement;
 
@@ -803,6 +875,20 @@ export class FloorplanCanvas extends LitElement {
   }
 
   override willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has("customIcons")) setCustomIcons(this.customIcons);
+    if (changed.has("armedFurnitureKind")) {
+      this._pendingTrace = null;
+      this._drawBox = null;
+    }
+    if (
+      this.autoFit &&
+      (changed.has("rooms") ||
+        changed.has("walls") ||
+        changed.has("pins") ||
+        changed.has("autoFit"))
+    ) {
+      this.fitToScreen();
+    }
     if (changed.has("editingRoomId") || changed.has("editingWallId")) {
       const target = this._editingTarget;
       const points = target ? this._rawPointsFor(target) : null;
@@ -843,7 +929,10 @@ export class FloorplanCanvas extends LitElement {
     // the toolbar growing a hint row when a wall trace starts) would
     // otherwise leave the overlay's transform stale relative to the SVG
     // content until something unrelated happened to trigger a re-render.
-    this._resizeObserver = new ResizeObserver(() => this.requestUpdate());
+    this._resizeObserver = new ResizeObserver(() => {
+      if (this.autoFit) this.fitToScreen();
+      this.requestUpdate();
+    });
     this._resizeObserver.observe(this);
   }
 
@@ -888,7 +977,7 @@ export class FloorplanCanvas extends LitElement {
         // values, a new object. Re-applying it would snap a pan that's
         // still in progress back to where the save captured it.
         this._hasFittedOnce = true;
-      } else if (vb) {
+      } else if (vb && !this.autoFit) {
         this._viewBox = { ...vb };
         this._hasFittedOnce = true;
       } else if (!this.sameBuildingAsPrevious) {
@@ -1614,7 +1703,11 @@ export class FloorplanCanvas extends LitElement {
       // the only thing this component does with it is preview where a
       // wall/room-trace click would actually land, so the snap is visible
       // before you commit to it rather than only after.
-      if (this.mode === "wall" || this.mode === "trace") {
+      if (
+        this.mode === "wall" ||
+        this.mode === "trace" ||
+        this._drawingFreeform
+      ) {
         const image = this._clientToImage(e.clientX, e.clientY);
         this._hoverSnap = this._snappedGeometryPoint(
           this._pendingTrace?.points ?? [],
@@ -1690,6 +1783,22 @@ export class FloorplanCanvas extends LitElement {
         ...this._viewBox,
         x: this._viewBox.x - (e.clientX - last.x) / scale,
         y: this._viewBox.y - (e.clientY - last.y) / scale,
+      };
+    } else if (this._gesture?.kind === "furnitureDraw") {
+      const { startX, startY } = this._gesture;
+      let dx = image.x - startX;
+      let dy = image.y - startY;
+      // Shift: a square / circle.
+      if (e.shiftKey) {
+        const s = Math.max(Math.abs(dx), Math.abs(dy));
+        dx = Math.sign(dx || 1) * s;
+        dy = Math.sign(dy || 1) * s;
+      }
+      this._drawBox = {
+        x0: startX,
+        y0: startY,
+        x1: startX + dx,
+        y1: startY + dy,
       };
     } else if (this._gesture?.kind === "alignDrag") {
       const scale = this._svgTransform().scale || 1;
@@ -1835,6 +1944,18 @@ export class FloorplanCanvas extends LitElement {
     // _downHit is always "empty" in any non-select mode).
     if (this.mode === "align") return { kind: "alignDrag" };
     if (this.readOnly) return { kind: "pan" };
+    if (
+      this.mode === "furniture" &&
+      isShapeKind(this.armedFurnitureKind) &&
+      this.armedFurnitureKind !== FREEFORM_KIND &&
+      this._lastImage
+    ) {
+      return {
+        kind: "furnitureDraw",
+        startX: this._lastImage.x,
+        startY: this._lastImage.y,
+      };
+    }
     if (this._downHit?.type === "furnitureHandle" && this._lastImage) {
       const { item, handle } = this._downHit;
       if (handle === "move") {
@@ -1956,6 +2077,27 @@ export class FloorplanCanvas extends LitElement {
   }
 
   private _commitGesture(): void {
+    if (this._gesture?.kind === "furnitureDraw") {
+      const box = this._drawBox;
+      this._drawBox = null;
+      if (!box) return;
+      const k = this.unitsPerCm;
+      const quarter = Math.abs(this.armedFurnitureRotation % 180) === 90;
+      const bw = Math.max(1, Math.abs(box.x1 - box.x0) / k);
+      const bd = Math.max(1, Math.abs(box.y1 - box.y0) / k);
+      this.dispatchEvent(
+        new CustomEvent("furniture-place", {
+          detail: {
+            x: (box.x0 + box.x1) / 2,
+            y: (box.y0 + box.y1) / 2,
+            width_cm: Math.round(quarter ? bd : bw),
+            depth_cm: Math.round(quarter ? bw : bd),
+            keepArmed: false,
+          },
+        }),
+      );
+      return;
+    }
     if (
       (this._gesture?.kind === "furnitureMove" ||
         this._gesture?.kind === "furnitureHandle") &&
@@ -2104,6 +2246,21 @@ export class FloorplanCanvas extends LitElement {
           detail: { wallId: wall.id, x: point[0], y: point[1] },
         }),
       );
+      return;
+    }
+
+    if (this.mode === "furniture" && this._drawingFreeform) {
+      const closeThreshold = this._pxToUnits(HIT_RADIUS_PX);
+      const trace = this._pendingTrace ?? startTrace();
+      const {
+        point: [sx, sy],
+      } = this._snappedGeometryPoint(trace.points, image.x, image.y, shiftKey);
+      const result = addTracePoint(trace, sx, sy, closeThreshold);
+      if (result.closed) {
+        this._placeFreeform(trace.points, true);
+      } else {
+        this._pendingTrace = result.trace;
+      }
       return;
     }
 
@@ -2304,6 +2461,51 @@ export class FloorplanCanvas extends LitElement {
         new CustomEvent("mesh-stub-select", { detail: { stub: null } }),
       );
     }
+  }
+
+  /** Drawing a free-form shape: the free-form item is armed. */
+  private get _drawingFreeform(): boolean {
+    return (
+      this.mode === "furniture" && this.armedFurnitureKind === FREEFORM_KIND
+    );
+  }
+
+  /** A traced outline as a free-form item: its bounding box becomes the
+   * item's position and size, the corners fractions of it. */
+  private _placeFreeform(points: [number, number][], closed: boolean): void {
+    this._pendingTrace = null;
+    if (points.length < 2) return;
+    const xs = points.map(([x]) => x);
+    const ys = points.map(([, y]) => y);
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    const spanX = Math.max(...xs) - minX;
+    const spanY = Math.max(...ys) - minY;
+    const k = this.unitsPerCm;
+    this.dispatchEvent(
+      new CustomEvent("furniture-place", {
+        detail: {
+          x: minX + spanX / 2,
+          y: minY + spanY / 2,
+          width_cm: Math.max(1, Math.round((spanX / k) * 10) / 10),
+          depth_cm: Math.max(1, Math.round((spanY / k) * 10) / 10),
+          points: points.map(([x, y]): [number, number] => [
+            spanX > 0 ? Math.round(((x - minX) / spanX) * 1e4) / 1e4 : 0.5,
+            spanY > 0 ? Math.round(((y - minY) / spanY) * 1e4) / 1e4 : 0.5,
+          ]),
+          closed,
+          keepArmed: false,
+        },
+      }),
+    );
+  }
+
+  /** Finishes the free-form shape being drawn as an open outline (>= 2
+   * corners). No-op otherwise. */
+  finishPendingShape(): void {
+    const points = this._pendingTrace?.points;
+    if (!this._drawingFreeform || !points || points.length < 2) return;
+    this._placeFreeform(points, false);
   }
 
   /** Commits the in-progress wall trace (mode 'wall', >= 2 points). No-op otherwise. */
@@ -2536,6 +2738,49 @@ export class FloorplanCanvas extends LitElement {
     return this.roomLabelStyle.size * (room.label_size ?? 1);
   }
 
+  /** A room's fill right now: its own colour, or with live lights the
+   * lights' colour (brighter with their brightness) while any is on, and
+   * its own colour darkened while they're all off. */
+  private _roomFill(room: Room): { color: string; opacity: number } {
+    const own = room.fill_color ?? DEFAULT_ROOM_FILL_COLOR;
+    const opacity = room.fill_opacity ?? DEFAULT_ROOM_FILL_OPACITY;
+    const light = this.showLights ? this.roomLights.get(room.id) : undefined;
+    if (light && light.on > 0) {
+      return {
+        color: light.color,
+        opacity: 0.15 + 0.55 * Math.min(1, light.level),
+      };
+    }
+    if (light && light.unavailable < light.entityIds.length) {
+      return {
+        color: mixHex(own, this.dark ? "#000000" : SHADE_COLOR, 0.55),
+        opacity: Math.max(opacity, this.dark ? 0.45 : 0.3),
+      };
+    }
+    return { color: own, opacity };
+  }
+
+  private _isRoomSelected(room: Room): boolean {
+    return room.id === this.selectedRoomId || this.editingRoomId === room.id;
+  }
+
+  /** Just the fill, for the layer under the background image. */
+  private _renderRoomFill(room: Room) {
+    if (room.visible === false) return nothing;
+    const points = this._effectivePoints("room", room.id, room.points);
+    if (points.length < 3) return nothing;
+    const { color, opacity } = this._roomFill(room);
+    return svg`<polygon
+      points=${points.map(([x, y]) => `${x},${y}`).join(" ")}
+      fill=${color}
+      fill-opacity=${
+        this._isRoomSelected(room)
+          ? Math.min(1, opacity * (0.32 / 0.18))
+          : opacity
+      }
+    ></polygon>`;
+  }
+
   private _renderRoom(room: Room) {
     if (room.visible === false) return nothing;
     const points = this._effectivePoints("room", room.id, room.points);
@@ -2543,21 +2788,15 @@ export class FloorplanCanvas extends LitElement {
     const pointsAttr = points.map(([x, y]) => `${x},${y}`).join(" ");
     const [cx, cy] = this._roomLabelPosition(room, points);
     const isEditing = this.editingRoomId === room.id;
-    const isSelected = room.id === this.selectedRoomId || isEditing;
+    const isSelected = this._isRoomSelected(room);
     const borderColor = room.fill_color ?? DEFAULT_ROOM_FILL_COLOR;
-    let fillColor = borderColor;
-    let fillOpacity = room.fill_opacity ?? DEFAULT_ROOM_FILL_OPACITY;
+    const { color: fillColor, opacity: fillOpacity } = this._roomFill(room);
     const borderOpacity = room.border_opacity ?? DEFAULT_ROOM_BORDER_OPACITY;
-    // Live lights: lit in the lights' own colour, brighter with their
-    // brightness; dark with them all off.
     const light = this.showLights ? this.roomLights.get(room.id) : undefined;
-    if (light && light.on > 0) {
-      fillColor = light.color;
-      fillOpacity = 0.15 + 0.55 * Math.min(1, light.level);
-    } else if (light && light.unavailable < light.entityIds.length) {
-      fillColor = this.dark ? "#000000" : "#263238";
-      fillOpacity = this.dark ? 0.45 : 0.3;
-    }
+    // With fills under the background, this polygon keeps only the
+    // outline (and stays clickable).
+    const under = this.roomFillUnder && !!this.backgroundImageUrl;
+    const halo = this.roomLabelStyle;
     const lightsText = light
       ? localize("canvas.lights.count", {
           on: light.on,
@@ -2583,7 +2822,11 @@ export class FloorplanCanvas extends LitElement {
         points=${pointsAttr}
         fill=${fillColor}
         fill-opacity=${
-          isSelected ? Math.min(1, fillOpacity * (0.32 / 0.18)) : fillOpacity
+          under
+            ? 0
+            : isSelected
+              ? Math.min(1, fillOpacity * (0.32 / 0.18))
+              : fillOpacity
         }
         stroke=${this.roomBorder.color ?? borderColor}
         stroke-opacity=${
@@ -2611,8 +2854,12 @@ export class FloorplanCanvas extends LitElement {
             ? `fill:${room.label_color || this.roomLabelStyle.color};`
             : ""
         }${this.roomLabelStyle.bold ? "font-weight:700;" : ""}${
-          room.show_label === false ? "display:none;" : ""
-        }`}
+          halo.halo === false
+            ? "stroke:none;"
+            : `stroke-width:${halo.haloWidth ?? 3}px;${
+                halo.haloColor ? `stroke:${halo.haloColor};` : ""
+              }`
+        }${room.show_label === false ? "display:none;" : ""}`}
         transform=${room.label_rotation ? `rotate(${room.label_rotation} ${cx} ${cy})` : ""}
       >${room.name}${
         lightsText && this.showLightCount
@@ -3161,12 +3408,20 @@ export class FloorplanCanvas extends LitElement {
     const entry = catalogItem(item.kind);
     const k = this.unitsPerCm;
     const flip = !!item.mirrored !== !!entry?.flip;
-    const prims = drawItem(
-      entry?.draw ?? "box",
-      item.width_cm,
-      item.depth_cm,
-      entry?.opts ?? {},
-    );
+    const prims =
+      item.points && item.points.length >= 2
+        ? freeformPrims(
+            item.points,
+            item.width_cm,
+            item.depth_cm,
+            item.closed !== false,
+          )
+        : drawItem(
+            entry?.draw ?? "box",
+            item.width_cm,
+            item.depth_cm,
+            entry?.opts ?? {},
+          );
     const selected = !ghost && item.id === this.selectedFurnitureId;
     const transform = `translate(${item.x} ${item.y}) rotate(${item.rotation_deg}) scale(${k} ${k})`;
     const inner = `translate(${-item.width_cm / 2} ${-item.depth_cm / 2})${
@@ -3282,9 +3537,32 @@ export class FloorplanCanvas extends LitElement {
   }
 
   private _renderFurnitureGhost() {
-    if (!this.armedFurnitureKind || !this._hoverImage) return nothing;
+    if (!this.armedFurnitureKind) return nothing;
     const entry = catalogItem(this.armedFurnitureKind);
     if (!entry) return nothing;
+    // The free-form shape shows its trace instead.
+    if (entry.id === FREEFORM_KIND) return nothing;
+    const box = this._drawBox;
+    if (box) {
+      const k = this.unitsPerCm;
+      const quarter = Math.abs(this.armedFurnitureRotation % 180) === 90;
+      const bw = Math.max(1, Math.abs(box.x1 - box.x0) / k);
+      const bd = Math.max(1, Math.abs(box.y1 - box.y0) / k);
+      return this._renderFurniture(
+        {
+          id: "__ghost__",
+          kind: entry.id,
+          x: (box.x0 + box.x1) / 2,
+          y: (box.y0 + box.y1) / 2,
+          rotation_deg: this.armedFurnitureRotation,
+          width_cm: quarter ? bd : bw,
+          depth_cm: quarter ? bw : bd,
+          stroke_width: 1.5,
+        },
+        true,
+      );
+    }
+    if (!this._hoverImage) return nothing;
     return this._renderFurniture(
       {
         id: "__ghost__",
@@ -3469,15 +3747,18 @@ export class FloorplanCanvas extends LitElement {
           // Sizes follow the whole opening, so a half doesn't throw a
           // stubbier patch than the full window would.
           const base = Math.max(fullWidth * 1.4, 1.2 * m);
+          // A garage door shows its state with the door itself: no
+          // shade while closed, only light while open.
+          const shades = !opening.garage;
           if (openness === null) {
-            soft(fullWidth * 1.2, "#9e9e9e", 0.25);
+            if (shades) soft(fullWidth * 1.2, "#9e9e9e", 0.25);
             continue;
           }
           if (!sun) {
             // No compass: open = bright, closed = shade.
             const depth = Math.max(fullWidth * 1.6, 1.2 * m);
             if (openness >= 0.05) soft(depth, "#ffd54f", 0.2 + 0.5 * openness);
-            else soft(depth, "#263238", 0.45, false);
+            else if (shades) soft(depth, "#263238", 0.45, false);
             continue;
           }
           const day = daylight(sun.elevation);
@@ -3487,7 +3768,7 @@ export class FloorplanCanvas extends LitElement {
           // blue-grey, like a soft shadow, as clouds thicken.
           if (day < 1) soft(base, NIGHT_COLOR, 0.3 * (1 - day) * openness);
           // Behind a closed cover: charcoal shade, day or night.
-          if (segLinked && openness < 0.95) {
+          if (shades && segLinked && openness < 0.95) {
             soft(base, SHADE_COLOR, 0.45 * (1 - openness), false);
           }
           if (day <= 0) continue;
@@ -3712,6 +3993,7 @@ export class FloorplanCanvas extends LitElement {
 
   private _renderScaleLine() {
     if (!this.scale) return nothing;
+    if (!this.showScaleLine && this.mode !== "scale") return nothing;
     const [[x1, y1], [x2, y2]] = this.scale.points;
     return svg`
       <line class="scale-line" x1=${x1} y1=${y1} x2=${x2} y2=${y2}></line>
@@ -3752,7 +4034,7 @@ export class FloorplanCanvas extends LitElement {
     const bgScale = scale * this.backgroundScale;
     return html`
       <div
-        class="bg-overlay"
+        class="bg-overlay ${this.roomFillUnder ? "blend" : ""}"
         style="transform: translate(${tx}px, ${ty}px) scale(${bgScale});"
       >
         <img
@@ -3838,6 +4120,13 @@ export class FloorplanCanvas extends LitElement {
   override render() {
     const vb = this._viewBox;
     return html`
+      ${
+        this.roomFillUnder && this.backgroundImageUrl
+          ? svg`<svg class="fill-under" viewBox="${vb.x} ${vb.y} ${vb.w} ${vb.h}">
+              ${this.rooms.map((room) => this._renderRoomFill(room))}
+            </svg>`
+          : nothing
+      }
       ${this._renderBackgroundOverlay()} ${this._renderAlignOverlay()}
       ${svg`
         <svg
@@ -3867,7 +4156,7 @@ export class FloorplanCanvas extends LitElement {
           ${this.meshStubs.map((stub) => this._renderMeshStubLine(stub))}
           ${this._renderMeshStubMarkers()}
           ${this._renderRoomMoveGuides()}
-          ${this.mode === "trace" || this.mode === "wall" ? this._renderPendingTrace() : nothing}
+          ${this.mode === "trace" || this.mode === "wall" || this._drawingFreeform ? this._renderPendingTrace() : nothing}
           ${this._renderScaleLine()}
           ${this.mode === "scale" ? this._renderPendingScale() : nothing}
           ${this._pinGroups().map((group) => this._renderPinGroup(group))}
