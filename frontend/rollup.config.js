@@ -105,6 +105,35 @@ const mapModule = {
   ].filter(Boolean),
 };
 
+const view3dDir = "../custom_components/spatial_context/www/view3d";
+
+/** The 3D view: three.js + the scene builder's mesh side, loaded on
+ * demand by <floorplan-3d-view> so the panel itself stays light. */
+const view3dModule = {
+  input: "src/view3d/view3d-glue.ts",
+  output: {
+    file: `${view3dDir}/spatial-context-3d.mjs`,
+    format: "es",
+    sourcemap: isDev,
+    banner: `/*! spatial-context-3d v${pkg.version} | ${pkg.license} — includes three.js (MIT) */`,
+  },
+  plugins: [
+    nodeResolve({ browser: true, extensions: [".js", ".ts", ".mjs"] }),
+    typescript({
+      tsconfig: "./tsconfig.json",
+      noEmitOnError: !isDev,
+      compilerOptions: {
+        noEmit: false,
+        declaration: false,
+        sourceMap: isDev,
+        outDir: view3dDir,
+      },
+      outputToFilesystem: false,
+    }),
+    !isDev && terser({ module: true, format: { comments: /^!/ } }),
+  ].filter(Boolean),
+};
+
 const panel = {
   input: "src/index.ts",
   output: {
@@ -182,4 +211,4 @@ const card = {
   ].filter(Boolean),
 };
 
-export default [panel, mapModule, card];
+export default [panel, mapModule, view3dModule, card];

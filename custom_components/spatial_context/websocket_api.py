@@ -12,7 +12,14 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 
-from . import bluetooth_mesh, debug, registry_snapshot, wifi_mesh, zigbee_mesh
+from . import (
+    bluetooth_mesh,
+    debug,
+    registry_snapshot,
+    scans,
+    wifi_mesh,
+    zigbee_mesh,
+)
 from .export import async_get_map_data
 from .storage import (
     async_get_floor_layout,
@@ -485,6 +492,80 @@ async def ws_save_settings(
     connection.send_result(msg["id"], {"success": True})
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "spatial_context/get_view3d",
+        vol.Required("floor_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_get_view3d(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """A floor's 3D view settings and room scans (see scans.py)."""
+    connection.send_result(
+        msg["id"], await scans.async_get_view3d(hass, msg["floor_id"])
+    )
+
+
+_SCAN_SCHEMA = {
+    vol.Required("id"): str,
+    vol.Optional("name"): vol.All(str, vol.Length(max=120)),
+    vol.Optional("x"): vol.Any(None, vol.Coerce(float)),
+    vol.Optional("y"): vol.Any(None, vol.Coerce(float)),
+    vol.Optional("elevation_m"): vol.All(vol.Coerce(float), vol.Range(min=-50, max=50)),
+    vol.Optional("rotation_deg"): vol.All(
+        vol.Coerce(float), vol.Range(min=-720, max=720)
+    ),
+    vol.Optional("scale"): vol.All(vol.Coerce(float), vol.Range(min=0.01, max=100)),
+    vol.Optional("visible"): bool,
+    vol.Optional("opacity"): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
+    vol.Optional("hide_walls"): bool,
+}
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "spatial_context/save_view3d",
+        vol.Required("floor_id"): str,
+        vol.Required("wall_height_m"): vol.Any(
+            None, vol.All(vol.Coerce(float), vol.Range(min=1, max=10))
+        ),
+        vol.Required("scans"): [vol.Schema(_SCAN_SCHEMA, extra=vol.REMOVE_EXTRA)],
+    }
+)
+@websocket_api.async_response
+async def ws_save_view3d(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Update a floor's wall height and its scans' placement and look."""
+    result = await scans.async_save_view3d(
+        hass, msg["floor_id"], msg["wall_height_m"], msg["scans"]
+    )
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "spatial_context/delete_scan",
+        vol.Required("scan_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_delete_scan(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Delete a room scan's file and metadata."""
+    removed = await scans.async_delete_scan(hass, msg["scan_id"])
+    connection.send_result(msg["id"], {"success": removed})
+
+
 @websocket_api.websocket_command({vol.Required("type"): "spatial_context/list_areas"})
 @websocket_api.async_response
 async def ws_list_areas(
@@ -661,6 +742,9 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_save_property_layout)
     websocket_api.async_register_command(hass, ws_get_settings)
     websocket_api.async_register_command(hass, ws_save_settings)
+    websocket_api.async_register_command(hass, ws_get_view3d)
+    websocket_api.async_register_command(hass, ws_save_view3d)
+    websocket_api.async_register_command(hass, ws_delete_scan)
     websocket_api.async_register_command(hass, ws_list_areas)
     websocket_api.async_register_command(hass, ws_list_placeable_entities)
     websocket_api.async_register_command(hass, ws_export_snapshot)

@@ -217,6 +217,12 @@ Link a **cover** to a door or window from its card, and the floor behind it show
 
 Tell a floor which way it faces (**Background → Top of plan faces**, one of 16 compass points or an exact bearing) and, with your home location set in Home Assistant, daylight through every exterior window follows the real sun. A window facing the sun gets a beam across the floor at the sun's actual angle: long and orange at sunrise and sunset, short and near-white at midday. Other windows get soft sky light, and at night there's none. An open window always shows something: a deep-blue night-sky patch after dark, and a cool blue-grey, shadow-like patch under heavy cloud. A closed cover shows charcoal shade, day or night, and dims the light by how far it's closed. A compass and the sun's position show in the corner of the plan, and **Daylight at** previews any time of day. Clouds count too: the light follows a weather entity's cloud cover (picked automatically, or chosen in **Settings → Daylight**). A partly cloudy sky softens the beam, and an overcast or rainy one leaves only soft, grey sky light. Each window's card fine-tunes its **Daylight**: on or off, strength, reach, the window's top height (which sets the sun beam's length) and outdoor shade from trees or an overhang. Even under cloud, windows facing the sun get more light than those facing away. Dashboard cards follow the same sun and sky, and a card can use its own `weather_entity` (or `none`). Device pins are tinted by their device's live state too: lights in their colour, switches and fans amber, open covers blue, motion or open doors red.
 
+## 3D view and room scans
+
+**3D** in the header shows the floor in 3D, built from the same plan: walls stand at the floor's wall height (2.4 m unless set in **Room scans**), doors are cut 2.1 m high and windows from a 0.9 m sill to their daylight top height (2.1 m by default). Rooms become floors tinted in their colour and lit or darkened with their lights, and furniture becomes blocks of a typical height for each item with its plan drawing on top. Ceiling lights hang from the ceiling. Blinds and garage doors drop with their cover's position, and a linked light that's on glows and lights the room around it. The sun comes from your home location and the floor's compass, with real shadows; the sun slider previews any time of day. Drag to orbit, right-drag or two fingers to pan, scroll or pinch to zoom. **Dollhouse** stacks every floor of an aligned building (see **Align Floors**), with a slider to pull them apart. **glTF** downloads the scene as a `.glb` file for Blender, SketchUp or any 3D viewer. three.js loads only when a 3D view is opened, so the plan itself stays light.
+
+**Room scans** lays a phone LiDAR scan over the plan. Export it from the scanning app as glTF (`.glb`, or `.gltf` with its data embedded) and **Import scan…**. Scans are stored with the integration under `.storage/spatial_context/scans/`, so they're included in Home Assistant backups. To line one up: turn on **Drag to move** and drag it onto its room (a top view helps), then **Auto-align**, which squares it to the plan's walls, snaps its edges onto the nearest wall faces and sets its floor on the floor's level. Nudge, rotate (±1° and ±90°), scale and lift it by hand if needed; with **Snap to walls** on, a dragged scan's edges catch on wall faces (hold Shift to place it freely). Each scan has its own opacity and can be hidden, and **Replace the plan's walls** hides the drawn walls while it shows. Placements save as you go.
+
 ## Dashboard card
 
 Everything above also works on a dashboard: add the **Spatial Context floor plan** card (it's in the card picker; no resource to add), or in YAML:
@@ -236,6 +242,8 @@ room_tap_action: toggle     # toggle | more-info | none
 cover_tap_action: more-info # more-info | toggle | none
 device_tap_action: more-info
 item_tap_action: toggle     # a linked lamp, TV…: toggle | more-info | none
+view: 2d                    # 2d | 3d: the 3D view instead of the plan (taps are 2D only)
+dollhouse: false            # 3d: stack every floor of the building
 ```
 
 The card opens at the view you last saved for that floor. Tap a room to toggle its lights, a covered window or door to open its details (or open and close it), and a device to open its more-info dialog.

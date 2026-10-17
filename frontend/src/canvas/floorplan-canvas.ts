@@ -70,13 +70,12 @@ import {
   renderPrims,
   shapeCornerFractions,
 } from "./furniture-draw";
-import type { ItemState, RoomLight } from "./live-state";
+import { roomFillStyle, type ItemState, type RoomLight } from "./live-state";
 import {
   cloudySunColor,
   compassName,
   daylight,
   NIGHT_COLOR,
-  SHADE_COLOR,
   skyColor,
   type Sky,
   planBearing,
@@ -236,24 +235,6 @@ type Gesture =
       midImage: { x: number; y: number };
     }
   | null;
-
-/** `a` blended toward `b` by `t` (0 = a, 1 = b); #rrggbb in and out. */
-function mixHex(a: string, b: string, t: number): string {
-  const parse = (h: string) => {
-    const m = /^#?([0-9a-f]{6})$/i.exec(h.trim());
-    const n = m ? parseInt(m[1] ?? "0", 16) : 0;
-    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-  };
-  const ca = parse(a);
-  const cb = parse(b);
-  return `#${ca
-    .map((v, i) =>
-      Math.round(v + ((cb[i] ?? 0) - v) * t)
-        .toString(16)
-        .padStart(2, "0"),
-    )
-    .join("")}`;
-}
 
 @safeCustomElement("floorplan-canvas")
 export class FloorplanCanvas extends LitElement {
@@ -2880,26 +2861,12 @@ export class FloorplanCanvas extends LitElement {
    * toward theirs and stronger while any is on, darkened while they're
    * all off. */
   private _roomFill(room: Room): { color: string; opacity: number } {
-    const own = room.fill_color ?? DEFAULT_ROOM_FILL_COLOR;
-    const opacity = room.fill_opacity ?? DEFAULT_ROOM_FILL_OPACITY;
-    const light = this.showLights ? this.roomLights.get(room.id) : undefined;
-    // Lit: still the room's own colour, tinted toward the lights' colour
-    // and stronger with their brightness — near-white lights would
-    // otherwise wash the room's colour out entirely.
-    if (light && light.on > 0) {
-      const level = Math.min(1, light.level);
-      return {
-        color: mixHex(own, light.color, 0.3),
-        opacity: Math.min(0.85, opacity * (1 + 0.6 * level)),
-      };
-    }
-    if (light && light.unavailable < light.entityIds.length) {
-      return {
-        color: mixHex(own, this.dark ? "#000000" : SHADE_COLOR, 0.55),
-        opacity: Math.max(opacity, this.dark ? 0.45 : 0.3),
-      };
-    }
-    return { color: own, opacity };
+    return roomFillStyle(
+      room.fill_color ?? DEFAULT_ROOM_FILL_COLOR,
+      room.fill_opacity ?? DEFAULT_ROOM_FILL_OPACITY,
+      this.showLights ? this.roomLights.get(room.id) : undefined,
+      this.dark,
+    );
   }
 
   private _isRoomSelected(room: Room): boolean {

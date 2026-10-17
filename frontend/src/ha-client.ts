@@ -18,6 +18,8 @@ import type {
   WifiMesh,
   ZigbeeMesh,
   VersionInfo,
+  RoomScan,
+  View3dSettings,
   BluetoothAdvertisementEvent,
 } from "./types";
 import { DEFAULT_WALL_MATERIAL, wallMaterial } from "./canvas/materials";
@@ -234,6 +236,65 @@ export class HaClient {
     });
   }
 
+  /** A floor's 3D view settings and room scans (see scans.py). */
+  async getView3d(floorId: string): Promise<View3dSettings> {
+    return this.hass.connection.sendMessagePromise<View3dSettings>({
+      type: "spatial_context/get_view3d",
+      floor_id: floorId,
+    });
+  }
+
+  async saveView3d(
+    floorId: string,
+    settings: View3dSettings,
+  ): Promise<View3dSettings> {
+    return this.hass.connection.sendMessagePromise<View3dSettings>({
+      type: "spatial_context/save_view3d",
+      floor_id: floorId,
+      wall_height_m: settings.wall_height_m,
+      scans: settings.scans.map((s) => ({
+        id: s.id,
+        name: s.name,
+        x: s.x,
+        y: s.y,
+        elevation_m: s.elevation_m,
+        rotation_deg: s.rotation_deg,
+        scale: s.scale,
+        visible: s.visible,
+        opacity: s.opacity,
+        hide_walls: s.hide_walls,
+      })),
+    });
+  }
+
+  /** Uploads a .glb/.gltf room scan to the integration's own storage
+   * (not HA's image store, which only takes pictures). */
+  async uploadScan(floorId: string, file: File): Promise<RoomScan> {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await this.hass.fetchWithAuth(
+      `/api/spatial_context/scan_upload/${encodeURIComponent(floorId)}`,
+      { method: "POST", body: formData },
+    );
+    if (!response.ok) {
+      const detail = await response
+        .json()
+        .then((d: { message?: string }) => d.message)
+        .catch(() => null);
+      throw new Error(
+        detail ?? `Upload failed: ${response.status} ${response.statusText}`,
+      );
+    }
+    return (await response.json()) as RoomScan;
+  }
+
+  async deleteScan(scanId: string): Promise<void> {
+    await this.hass.connection.sendMessagePromise({
+      type: "spatial_context/delete_scan",
+      scan_id: scanId,
+    });
+  }
+
   /** Uploads via HA core's built-in image_upload component, returns the new image id. */
   async uploadBackgroundImage(file: File): Promise<string> {
     const formData = new FormData();
@@ -250,6 +311,19 @@ export class HaClient {
     const data = (await response.json()) as { id: string };
     return data.id;
   }
+}
+
+/** A room scan's file, as bytes for GLTFLoader. */
+export async function fetchScan(
+  hass: HomeAssistant,
+  scanId: string,
+): Promise<ArrayBuffer> {
+  const response = await hass.fetchWithAuth(
+    `/api/spatial_context/scan/${encodeURIComponent(scanId)}`,
+  );
+  if (!response.ok)
+    throw new Error(`Couldn't load the scan (${response.status})`);
+  return response.arrayBuffer();
 }
 
 export function backgroundImageUrl(imageId: string | null): string | null {

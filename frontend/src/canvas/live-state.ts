@@ -10,6 +10,7 @@ import type {
   Pin,
   Room,
 } from "../types";
+import { SHADE_COLOR } from "./sun";
 
 export interface RoomLight {
   /** Light entities the room follows. */
@@ -427,4 +428,50 @@ export function liveSignature(
     parts.push(`${id}:${o === null ? "x" : o.toFixed(2)}`);
   for (const [id, c] of pins) parts.push(`${id}:${c}`);
   return parts.join("|");
+}
+
+/** `a` blended toward `b` by `t` (0 = a, 1 = b); #rrggbb in and out. */
+export function mixHex(a: string, b: string, t: number): string {
+  const parse = (h: string) => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(h.trim());
+    const n = m ? parseInt(m[1] ?? "0", 16) : 0;
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
+  const ca = parse(a);
+  const cb = parse(b);
+  return `#${ca
+    .map((v, i) =>
+      Math.round(v + ((cb[i] ?? 0) - v) * t)
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
+}
+
+/** A room's fill right now (floor plan and 3D view alike): its own colour
+ * — with live lights, tinted toward theirs and stronger while any is on,
+ * darkened while they're all off. */
+export function roomFillStyle(
+  own: string,
+  opacity: number,
+  light: RoomLight | undefined,
+  dark: boolean,
+): { color: string; opacity: number } {
+  // Lit: still the room's own colour, tinted toward the lights' colour
+  // and stronger with their brightness — near-white lights would
+  // otherwise wash the room's colour out entirely.
+  if (light && light.on > 0) {
+    const level = Math.min(1, light.level);
+    return {
+      color: mixHex(own, light.color, 0.3),
+      opacity: Math.min(0.85, opacity * (1 + 0.6 * level)),
+    };
+  }
+  if (light && light.unavailable < light.entityIds.length) {
+    return {
+      color: mixHex(own, dark ? "#000000" : SHADE_COLOR, 0.55),
+      opacity: Math.max(opacity, dark ? 0.45 : 0.3),
+    };
+  }
+  return { color: own, opacity };
 }

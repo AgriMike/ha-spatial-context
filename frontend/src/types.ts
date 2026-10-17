@@ -238,6 +238,37 @@ export interface FurnitureItem {
   corners?: number[] | null;
 }
 
+/** A phone room scan (glTF/GLB) laid over a floor in the 3D view — see
+ * scans.py. The file itself is fetched separately (HaClient.fetchScan);
+ * this is just its metadata and placement. */
+export interface RoomScan {
+  id: string;
+  name: string;
+  ext: "glb" | "gltf";
+  size_bytes: number;
+  uploaded_at: number;
+  /** Where the scan's origin sits on the plan, stored units; null until
+   * first placed (the 3D view then centres it on the plan). */
+  x: number | null;
+  y: number | null;
+  /** Metres above the floor's level. */
+  elevation_m: number;
+  /** Degrees clockwise as seen from above. */
+  rotation_deg: number;
+  scale: number;
+  visible: boolean;
+  opacity: number;
+  /** Hide the floor's extruded walls while this scan shows. */
+  hide_walls: boolean;
+}
+
+/** A floor's 3D view settings (see scans.py), kept apart from its layout. */
+export interface View3dSettings {
+  /** Null = the default (2.4 m). */
+  wall_height_m: number | null;
+  scans: RoomScan[];
+}
+
 /** The canvas's visible region in its own stored coordinate space — what
  * `fitToScreen()`/pan/zoom actually manipulate. Persisted per floor (and
  * once for the Property tab) so a chosen viewing angle survives switching
@@ -636,7 +667,13 @@ export interface HomeAssistant {
     ): Promise<() => void>;
   };
   fetchWithAuth(path: string, init?: RequestInit): Promise<Response>;
-  config?: { latitude?: number; longitude?: number; components?: string[] };
+  config?: {
+    latitude?: number;
+    longitude?: number;
+    components?: string[];
+    /** IANA zone of the home, e.g. "Australia/Sydney". */
+    time_zone?: string;
+  };
   themes?: { darkMode?: boolean };
   states: Record<
     string,

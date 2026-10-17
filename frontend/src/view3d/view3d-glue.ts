@@ -1,0 +1,1050 @@
+import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import type {
+  Box3d,
+  Floor3d,
+  Item3d,
+  Scene3d,
+  ScanPlacement3d,
+  ScanPose,
+  Vec2,
+  View3dHandle,
+  View3dModule,
+  View3dOptions,
+} from "./view3d-api";
+
+/** Lazily loaded by <floorplan-3d-view> (see views/floorplan-3d-view.ts) —
+ * built separately from the panel bundle into
+ * www/view3d/spatial-context-3d.mjs, so three.js only downloads when a 3D
+ * view is opened.
+ *
+ * Builds meshes from the plain scene description scene3d.ts computes,
+ * renders on demand (only while the camera moves or something changed),
+ * loads room scans with GLTFLoader and lets one be dragged into place. */
+
+const SLAB_M = 0.04;
+/** Point lights are costly per fragment; the brightest few get one. */
+const MAX_POINT_LIGHTS = 8;
+/** How close (metres) a dragged scan's edge must come to a wall face to
+ * snap onto it, and how far auto-align looks. */
+const DRAG_SNAP_M = 0.15;
+const AUTO_SNAP_M = 0.6;
+/** three.js's physically based lights put out 1/π of their intensity as
+ * diffuse light, so ambient-ish light needs this to read as daylight. */
+const AMBIENT_SCALE = Math.PI * 0.45;
+const SUN_SCALE = 1.1;
+
+function supportsWebgl(): boolean {
+  try {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl2") ?? canvas.getContext("webgl");
+    const ok = !!gl;
+    (gl as WebGLRenderingContext | null)
+      ?.getExtension("WEBGL_lose_context")
+      ?.loseContext();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+const RAD = Math.PI / 180;
+
+function boxGeometry(b: Box3d): THREE.BufferGeometry {
+  const g = new THREE.BoxGeometry(
+    Math.max(0.001, b.length),
+    Math.max(0.001, b.y1 - b.y0),
+    Math.max(0.001, b.depth),
+  );
+  g.rotateY(b.angle);
+  g.translate(b.x, (b.y0 + b.y1) / 2, b.z);
+  return g;
+}
+
+/** A shape on the floor plane from (x, z) points — three's shapes live in
+ * XY, so z goes in as -y and rotateX(-90°) brings it back. */
+function floorShape(points: Vec2[]): THREE.Shape {
+  return new THREE.Shape(points.map(([x, z]) => new THREE.Vector2(x, -z)));
+}
+
+/** UVs for an extruded item: the caps map the footprint's bounding box
+ * onto the whole texture (the 2D drawing), the sides get nothing much. */
+function itemUvGenerator(w: number, d: number) {
+  return {
+    generateTopUV(
+      _g: THREE.ExtrudeGeometry,
+      v: number[],
+      a: number,
+      b: number,
+      c: number,
+    ) {
+      return [a, b, c].map(
+        (i) =>
+          new THREE.Vector2(
+            (v[i * 3]! + w / 2) / w,
+            (v[i * 3 + 1]! + d / 2) / d,
+          ),
+      );
+    },
+    generateSideWallUV() {
+      return [
+        new THREE.Vector2(0, 0),
+        new THREE.Vector2(1, 0),
+        new THREE.Vector2(1, 1),
+        new THREE.Vector2(0, 1),
+      ];
+    },
+  };
+}
+
+/** The angle (degrees, 0–90) most of these directions share, modulo 90 —
+ * a building's (or a scan's) grid. Weighted 1° histogram, smoothed. */
+function dominantAngle(
+  samples: { angle: number; weight: number }[],
+): number | null {
+  const bins = new Float64Array(90);
+  let total = 0;
+  for (const { angle, weight } of samples) {
+    const a = ((angle % 90) + 90) % 90;
+    bins[Math.floor(a) % 90]! += weight;
+    total += weight;
+  }
+  if (total <= 0) return null;
+  let best = 0;
+  let bestScore = -1;
+  for (let i = 0; i < 90; i++) {
+    const score =
+      bins[(i + 89) % 90]! * 0.5 + bins[i]! + bins[(i + 1) % 90]! * 0.5;
+    if (score > bestScore) {
+      bestScore = score;
+      best = i;
+    }
+  }
+  // Refine within the peak bin's neighbourhood by a weighted mean.
+  let sum = 0;
+  let w = 0;
+  for (const { angle, weight } of samples) {
+    const a = ((angle % 90) + 90) % 90;
+    let diff = a - (best + 0.5);
+    if (diff > 45) diff -= 90;
+    if (diff < -45) diff += 90;
+    if (Math.abs(diff) <= 1.5) {
+      sum += diff * weight;
+      w += weight;
+    }
+  }
+  return (((best + 0.5 + (w > 0 ? sum / w : 0)) % 90) + 90) % 90;
+}
+
+function percentile(sorted: Float32Array, p: number): number {
+  if (sorted.length === 0) return 0;
+  return sorted[
+    Math.min(
+      sorted.length - 1,
+      Math.max(0, Math.round(p * (sorted.length - 1))),
+    )
+  ]!;
+}
+
+/** A wall face in a frame squared to the building: constant u (or v)
+ * from..to along the other axis, looking toward +1 or -1. */
+interface WallLine {
+  at: number;
+  from: number;
+  to: number;
+  facing: number;
+}
+
+interface FloorEntry {
+  spec: Floor3d;
+  group: THREE.Group;
+  walls: THREE.Group;
+  scans: THREE.Group;
+  order: number;
+}
+
+interface ScanEntry {
+  placement: ScanPlacement3d;
+  /** Positioned/rotated/scaled per the placement. */
+  group: THREE.Group;
+  content: THREE.Object3D | null;
+  /** Sampled vertices in the scan's own frame (x, y, z triples). */
+  samples: Float32Array | null;
+  /** Its walls' grid angle in its own frame (degrees mod 90). */
+  angle: number | null;
+  materials: {
+    material: THREE.Material;
+    opacity: number;
+    transparent: boolean;
+  }[];
+}
+
+function createView3d(options: View3dOptions): View3dHandle {
+  const { container } = options;
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  // Rolls off highlights (a lamp-lit floor in full sun) instead of
+  // clipping them to white.
+  renderer.toneMapping = THREE.NeutralToneMapping;
+  renderer.domElement.style.display = "block";
+  renderer.domElement.style.touchAction = "none";
+  container.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 3000);
+  camera.position.set(12, 14, 18);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.12;
+  controls.screenSpacePanning = true;
+  controls.maxPolarAngle = Math.PI * 0.495;
+
+  /** Everything that's exported: floors, furniture, lights, scans. */
+  const root = new THREE.Group();
+  root.name = "Building";
+  scene.add(root);
+
+  const groundMat = new THREE.MeshStandardMaterial({
+    color: "#c9d4c0",
+    roughness: 1,
+  });
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(400, 64), groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.06;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  const hemi = new THREE.HemisphereLight("#dcecff", "#b9a88f", 1);
+  scene.add(hemi);
+  const sun = new THREE.DirectionalLight("#ffffff", 2);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.02;
+  scene.add(sun, sun.target);
+
+  const textureLoader = new THREE.TextureLoader();
+  const textures = new Map<string, THREE.Texture>();
+  const floors = new Map<string, FloorEntry>();
+  const scans = new Map<string, ScanEntry>();
+  let spread = 0;
+  let editScanId: string | null = null;
+  let editSnap = true;
+  let fitted = false;
+  let destroyed = false;
+
+  // --- rendering on demand ------------------------------------------------
+  let raf = 0;
+  let dirty = true;
+  const draw = () => {
+    raf = 0;
+    if (destroyed) return;
+    const moved = controls.update();
+    if (moved || dirty) {
+      dirty = false;
+      renderer.render(scene, camera);
+    }
+    if (moved) schedule();
+  };
+  const schedule = () => {
+    if (!raf && !destroyed) raf = requestAnimationFrame(draw);
+  };
+  const invalidate = () => {
+    dirty = true;
+    schedule();
+  };
+  controls.addEventListener("change", invalidate);
+
+  const resize = () => {
+    const w = Math.max(1, container.clientWidth);
+    const h = Math.max(1, container.clientHeight);
+    renderer.setSize(w, h, false);
+    renderer.domElement.style.width = "100%";
+    renderer.domElement.style.height = "100%";
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    invalidate();
+  };
+  const observer = new ResizeObserver(resize);
+  observer.observe(container);
+  resize();
+
+  function texture(url: string): THREE.Texture {
+    let tex = textures.get(url);
+    if (!tex) {
+      tex = textureLoader.load(url, invalidate);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+      textures.set(url, tex);
+    }
+    return tex;
+  }
+
+  function disposeObject(obj: THREE.Object3D, keepTextures = true): void {
+    obj.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.geometry?.dispose();
+        const mats = Array.isArray(mesh.material)
+          ? mesh.material
+          : [mesh.material];
+        for (const m of mats) {
+          if (!keepTextures) {
+            for (const v of Object.values(m))
+              if ((v as THREE.Texture)?.isTexture)
+                (v as THREE.Texture).dispose();
+          }
+          m.dispose();
+        }
+      }
+    });
+  }
+
+  // --- the building ---------------------------------------------------------
+
+  function buildItem(item: Item3d): THREE.Object3D {
+    const shape = floorShape(item.footprint);
+    const geom = new THREE.ExtrudeGeometry(shape, {
+      depth: Math.max(0.005, item.height),
+      bevelEnabled: false,
+      curveSegments: 4,
+      UVGenerator: itemUvGenerator(item.width, item.depth),
+    });
+    geom.rotateX(-Math.PI / 2);
+    const transparent = item.opacity < 0.999;
+    const top = new THREE.MeshStandardMaterial({
+      color: "#ffffff",
+      roughness: 0.85,
+      transparent,
+      opacity: item.opacity,
+    });
+    if (item.topImage) top.map = texture(item.topImage);
+    const side = new THREE.MeshStandardMaterial({
+      color: item.color,
+      roughness: 0.8,
+      transparent,
+      opacity: item.opacity,
+    });
+    if (item.light) {
+      for (const m of [top, side]) {
+        m.emissive = new THREE.Color(item.light.color);
+        m.emissiveIntensity = 0.35 + 0.65 * item.light.level;
+      }
+    }
+    const mesh = new THREE.Mesh(geom, [top, side]);
+    mesh.name = item.name;
+    mesh.position.set(item.x, item.y0, item.z);
+    mesh.rotation.y = item.angle;
+    mesh.castShadow = item.height > 0.03 && !item.light;
+    mesh.receiveShadow = true;
+    return mesh;
+  }
+
+  function buildFloor(spec: Floor3d, pointLights: Set<string>): FloorEntry {
+    const group = new THREE.Group();
+    group.name = spec.name;
+    const walls = new THREE.Group();
+    walls.name = "Walls";
+    group.add(walls);
+    if (spec.walls.length) {
+      const parts = spec.walls.map(boxGeometry);
+      const merged = mergeGeometries(parts);
+      for (const p of parts) p.dispose();
+      if (merged) {
+        const mesh = new THREE.Mesh(
+          merged,
+          new THREE.MeshStandardMaterial({
+            color: spec.wallColor,
+            roughness: 0.92,
+          }),
+        );
+        mesh.name = "Walls";
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        walls.add(mesh);
+      }
+    }
+    // Glass, blinds and garage doors, merged per look.
+    const byLook = new Map<string, THREE.BufferGeometry[]>();
+    for (const pane of spec.panes) {
+      const key = `${pane.kind}|${pane.color}|${pane.opacity}`;
+      const list = byLook.get(key) ?? [];
+      list.push(boxGeometry(pane.box));
+      byLook.set(key, list);
+    }
+    for (const [key, parts] of byLook) {
+      const [kind, color, opacity] = key.split("|") as [string, string, string];
+      const merged = mergeGeometries(parts);
+      for (const p of parts) p.dispose();
+      if (!merged) continue;
+      const op = Number(opacity);
+      const mesh = new THREE.Mesh(
+        merged,
+        new THREE.MeshStandardMaterial({
+          color,
+          roughness: kind === "glass" ? 0.05 : 0.7,
+          metalness: kind === "glass" ? 0.1 : 0,
+          transparent: op < 1,
+          opacity: op,
+          depthWrite: op >= 1,
+        }),
+      );
+      mesh.name =
+        kind === "glass"
+          ? "Windows"
+          : kind === "door"
+            ? "Garage doors"
+            : "Blinds";
+      mesh.castShadow = kind !== "glass";
+      mesh.receiveShadow = kind !== "glass";
+      walls.add(mesh);
+    }
+    // Room floors.
+    for (const slab of spec.slabs) {
+      const geom = new THREE.ExtrudeGeometry(floorShape(slab.points), {
+        depth: SLAB_M,
+        bevelEnabled: false,
+      });
+      geom.rotateX(-Math.PI / 2);
+      geom.translate(0, slab.outdoor ? -SLAB_M - 0.02 : -SLAB_M, 0);
+      const mat = new THREE.MeshStandardMaterial({
+        color: slab.color,
+        roughness: 0.9,
+      });
+      if (slab.emissive) {
+        mat.emissive = new THREE.Color(slab.emissive);
+        mat.emissiveIntensity = slab.emissiveIntensity;
+      }
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.name = slab.name || `Room ${slab.id}`;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    }
+    const furniture = new THREE.Group();
+    furniture.name = "Furniture";
+    group.add(furniture);
+    for (const item of spec.items) {
+      furniture.add(buildItem(item));
+      if (item.light && pointLights.has(item.id)) {
+        const light = new THREE.PointLight(
+          item.light.color,
+          1 + 3 * item.light.level,
+          0,
+          2,
+        );
+        light.name = `${item.name} light`;
+        light.position.set(item.x, item.light.y, item.z);
+        furniture.add(light);
+      }
+    }
+    const scanGroup = new THREE.Group();
+    scanGroup.name = "Scans";
+    group.add(scanGroup);
+    return { spec, group, walls, scans: scanGroup, order: 0 };
+  }
+
+  function placeFloors(): void {
+    for (const f of floors.values())
+      f.group.position.y = f.spec.baseY + spread * f.order;
+  }
+
+  /** The visible building's bounds (ignores the ground). */
+  function bounds(): THREE.Box3 {
+    const box = new THREE.Box3();
+    root.updateMatrixWorld(true);
+    box.expandByObject(root, false);
+    if (box.isEmpty())
+      box.set(new THREE.Vector3(-5, 0, -5), new THREE.Vector3(5, 3, 5));
+    return box;
+  }
+
+  let sunDir = new THREE.Vector3(0.4, 0.8, 0.3);
+  function placeSun(): void {
+    const box = bounds();
+    const center = box.getCenter(new THREE.Vector3());
+    const radius = Math.max(
+      4,
+      box.getSize(new THREE.Vector3()).length() / 2 + 1,
+    );
+    sun.position.copy(center).addScaledVector(sunDir, radius * 2);
+    sun.target.position.copy(center);
+    const cam = sun.shadow.camera;
+    cam.left = -radius;
+    cam.right = radius;
+    cam.top = radius;
+    cam.bottom = -radius;
+    cam.near = 0.1;
+    cam.far = radius * 4;
+    cam.updateProjectionMatrix();
+    ground.position.x = center.x;
+    ground.position.z = center.z;
+  }
+
+  function setScene(spec: Scene3d): void {
+    // Keep scans: they're re-parented into the rebuilt floors below.
+    for (const s of scans.values()) s.group.removeFromParent();
+    for (const f of floors.values()) {
+      f.group.removeFromParent();
+      disposeObject(f.group);
+    }
+    floors.clear();
+    // The brightest linked lights get a real point light.
+    const lit = spec.floors
+      .flatMap((f) => f.items)
+      .filter((i) => i.light)
+      .sort((a, b) => b.light!.level - a.light!.level)
+      .slice(0, MAX_POINT_LIGHTS);
+    const pointLights = new Set(lit.map((i) => i.id));
+    const ordered = [...spec.floors].sort((a, b) => a.baseY - b.baseY);
+    ordered.forEach((f, i) => {
+      const entry = buildFloor(f, pointLights);
+      entry.order = i;
+      floors.set(f.floorId, entry);
+      root.add(entry.group);
+    });
+    placeFloors();
+    for (const s of scans.values()) attachScan(s);
+    applyWallHiding();
+
+    scene.background = new THREE.Color(spec.background);
+    groundMat.color.set(spec.dark ? "#2c3229" : "#c9d4c0");
+    hemi.color.set(spec.ambient.sky);
+    hemi.groundColor.set(spec.ambient.ground);
+    hemi.intensity = spec.ambient.intensity * AMBIENT_SCALE;
+    if (spec.sun) {
+      sun.visible = true;
+      sun.color.set(spec.sun.color);
+      sun.intensity = spec.sun.intensity * SUN_SCALE;
+      sunDir = new THREE.Vector3(...spec.sun.dir).normalize();
+    } else {
+      sun.visible = false;
+    }
+    placeSun();
+    if (!fitted) {
+      fitted = true;
+      view("orbit");
+    }
+    invalidate();
+  }
+
+  // --- camera -------------------------------------------------------------
+
+  function view(kind: "orbit" | "top" | "fit"): void {
+    const box = bounds();
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const span = Math.max(size.x, size.z, 4);
+    const fov = camera.fov * RAD;
+    const dist = (span / 2 / Math.tan(fov / 2)) * (kind === "top" ? 1.1 : 1.25);
+    controls.target.copy(center);
+    if (kind === "top") {
+      // A hair off vertical, from the plan's bottom, so north-up stays up.
+      camera.position.set(center.x, center.y + dist, center.z + dist * 0.001);
+    } else if (kind === "fit") {
+      const dir = camera.position.clone().sub(controls.target).normalize();
+      camera.position.copy(center).addScaledVector(dir, dist);
+    } else {
+      // Three-quarter view from the plan's bottom-left.
+      const dir = new THREE.Vector3(-0.55, 0.85, 0.75).normalize();
+      camera.position.copy(center).addScaledVector(dir, dist);
+    }
+    camera.near = Math.max(0.02, dist / 500);
+    camera.far = dist * 20 + 500;
+    camera.updateProjectionMatrix();
+    controls.update();
+    invalidate();
+  }
+
+  // --- scans ----------------------------------------------------------------
+
+  const loader = new GLTFLoader();
+
+  function applyPlacement(s: ScanEntry): void {
+    const p = s.placement;
+    s.group.position.set(p.x, p.elevation, p.z);
+    s.group.rotation.set(0, -p.rotationDeg * RAD, 0);
+    s.group.scale.setScalar(p.scale);
+    s.group.visible = p.visible;
+    for (const m of s.materials) {
+      const op = m.opacity * p.opacity;
+      m.material.transparent = m.transparent || op < 0.999;
+      m.material.opacity = op;
+      m.material.depthWrite = op >= 0.999;
+      m.material.needsUpdate = true;
+    }
+  }
+
+  function attachScan(s: ScanEntry): void {
+    const floor = floors.get(s.placement.floorId);
+    if (floor) floor.scans.add(s.group);
+    else s.group.removeFromParent();
+  }
+
+  function applyWallHiding(): void {
+    for (const [floorId, f] of floors) {
+      const hide = [...scans.values()].some(
+        (s) =>
+          s.placement.floorId === floorId &&
+          s.placement.visible &&
+          s.placement.hideWalls &&
+          s.content,
+      );
+      f.walls.visible = !hide;
+    }
+  }
+
+  /** Vertices to align with (≤ 40k) and the scan's wall grid angle. */
+  function analyse(s: ScanEntry, content: THREE.Object3D): void {
+    content.updateMatrixWorld(true);
+    const meshes: THREE.Mesh[] = [];
+    let vertexCount = 0;
+    content.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh && mesh.geometry?.attributes["position"]) {
+        meshes.push(mesh);
+        vertexCount += mesh.geometry.attributes["position"].count;
+      }
+    });
+    const stride = Math.max(1, Math.ceil(vertexCount / 40000));
+    const out: number[] = [];
+    const v = new THREE.Vector3();
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    const c = new THREE.Vector3();
+    const n = new THREE.Vector3();
+    const angles: { angle: number; weight: number }[] = [];
+    for (const mesh of meshes) {
+      const pos = mesh.geometry.attributes["position"] as THREE.BufferAttribute;
+      const m = mesh.matrixWorld;
+      for (let i = 0; i < pos.count; i += stride) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(m);
+        out.push(v.x, v.y, v.z);
+      }
+      // Wall-facing triangles vote for the grid angle.
+      const index = mesh.geometry.index;
+      const triCount = index ? index.count / 3 : pos.count / 3;
+      const triStride = Math.max(1, Math.ceil(triCount / 60000));
+      for (let t = 0; t < triCount; t += triStride) {
+        const i0 = index ? index.getX(t * 3) : t * 3;
+        const i1 = index ? index.getX(t * 3 + 1) : t * 3 + 1;
+        const i2 = index ? index.getX(t * 3 + 2) : t * 3 + 2;
+        a.fromBufferAttribute(pos, i0).applyMatrix4(m);
+        b.fromBufferAttribute(pos, i1).applyMatrix4(m);
+        c.fromBufferAttribute(pos, i2).applyMatrix4(m);
+        n.subVectors(c, b).cross(a.clone().sub(b));
+        const area = n.length() / 2;
+        if (area <= 0) continue;
+        n.normalize();
+        if (Math.abs(n.y) > 0.3) continue;
+        // The wall runs perpendicular to its normal.
+        angles.push({ angle: Math.atan2(n.z, n.x) / RAD + 90, weight: area });
+      }
+    }
+    s.samples = new Float32Array(out);
+    s.angle = dominantAngle(angles);
+  }
+
+  function loadScan(s: ScanEntry): void {
+    const id = s.placement.id;
+    options.onScanStatus?.(id, "loading");
+    options
+      .fetchScan(id)
+      .then(
+        (buf) =>
+          new Promise<THREE.Object3D>((resolve, reject) =>
+            loader.parse(buf, "", (gltf) => resolve(gltf.scene), reject),
+          ),
+      )
+      .then((content) => {
+        if (destroyed || scans.get(id) !== s) {
+          disposeObject(content, false);
+          return;
+        }
+        content.name = "Scan";
+        content.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          mesh.userData["scanId"] = id;
+          const mats = Array.isArray(mesh.material)
+            ? mesh.material
+            : [mesh.material];
+          for (const material of mats) {
+            material.side = THREE.DoubleSide;
+            // Drawn over the room slabs it lies on, not fighting them.
+            material.polygonOffset = true;
+            material.polygonOffsetFactor = -2;
+            material.polygonOffsetUnits = -2;
+            s.materials.push({
+              material,
+              opacity: material.opacity,
+              transparent: material.transparent,
+            });
+          }
+        });
+        // In its own frame: before it joins the placed group.
+        analyse(s, content);
+        s.content = content;
+        s.group.add(content);
+        applyPlacement(s);
+        applyWallHiding();
+        placeSun();
+        options.onScanStatus?.(id, "ready");
+        invalidate();
+      })
+      .catch((err: unknown) => {
+        options.onScanStatus?.(
+          id,
+          "error",
+          (err as { message?: string })?.message ?? String(err),
+        );
+      });
+  }
+
+  function setScans(list: ScanPlacement3d[]): void {
+    const ids = new Set(list.map((p) => p.id));
+    for (const [id, s] of scans) {
+      if (ids.has(id)) continue;
+      s.group.removeFromParent();
+      disposeObject(s.group, false);
+      scans.delete(id);
+    }
+    for (const placement of list) {
+      let s = scans.get(placement.id);
+      if (!s) {
+        const group = new THREE.Group();
+        group.name = `Scan ${placement.id}`;
+        s = {
+          placement,
+          group,
+          content: null,
+          samples: null,
+          angle: null,
+          materials: [],
+        };
+        scans.set(placement.id, s);
+        loadScan(s);
+      }
+      const moved = s.placement.floorId !== placement.floorId;
+      s.placement = placement;
+      if (moved || !s.group.parent) attachScan(s);
+      applyPlacement(s);
+    }
+    applyWallHiding();
+    invalidate();
+  }
+
+  /** The plan's wall faces on a scan's floor, in a frame turned so the
+   * building's grid is axis-aligned: lines of constant u or v. */
+  function wallLines(floor: FloorEntry, frameDeg: number) {
+    const cos = Math.cos(-frameDeg * RAD);
+    const sin = Math.sin(-frameDeg * RAD);
+    const toFrame = ([x, z]: Vec2): Vec2 => [
+      x * cos - z * sin,
+      x * sin + z * cos,
+    ];
+    const uLines: WallLine[] = [];
+    const vLines: WallLine[] = [];
+    for (const face of floor.spec.wallFaces) {
+      const [pu, pv] = toFrame(face.a);
+      const [qu, qv] = toFrame(face.b);
+      const [nu, nv] = toFrame(face.normal);
+      const du = qu - pu;
+      const dv = qv - pv;
+      const len = Math.hypot(du, dv);
+      if (len < 0.2) continue;
+      if (Math.abs(dv) / len < 0.05)
+        vLines.push({
+          at: (pv + qv) / 2,
+          from: Math.min(pu, qu),
+          to: Math.max(pu, qu),
+          facing: Math.sign(nv),
+        });
+      else if (Math.abs(du) / len < 0.05)
+        uLines.push({
+          at: (pu + qu) / 2,
+          from: Math.min(pv, qv),
+          to: Math.max(pv, qv),
+          facing: Math.sign(nu),
+        });
+    }
+    return { uLines, vLines, toFrame, cos, sin };
+  }
+
+  function planGridAngle(floor: FloorEntry): number {
+    return (
+      dominantAngle(
+        floor.spec.wallFaces.map(({ a: [x1, z1], b: [x2, z2] }) => ({
+          angle: Math.atan2(z2 - z1, x2 - x1) / RAD,
+          weight: Math.hypot(x2 - x1, z2 - z1),
+        })),
+      ) ?? 0
+    );
+  }
+
+  /** Where the scan should move to put its outer edges on the nearest
+   * wall faces (within `reach`), for a pose. */
+  function snapPose(s: ScanEntry, pose: ScanPose, reach: number): ScanPose {
+    const floor = floors.get(s.placement.floorId);
+    if (!floor || !s.samples || s.samples.length < 9) return pose;
+    const grid = planGridAngle(floor);
+    const { uLines, vLines, toFrame, cos, sin } = wallLines(floor, grid);
+    if (!uLines.length && !vLines.length) return pose;
+    const r = pose.rotationDeg * RAD;
+    const rc = Math.cos(r);
+    const rs = Math.sin(r);
+    const k = s.placement.scale;
+    const n = s.samples.length / 3;
+    const us = new Float32Array(n);
+    const vs = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const lx = s.samples[i * 3]! * k;
+      const lz = s.samples[i * 3 + 2]! * k;
+      const [u, v] = toFrame([
+        pose.x + lx * rc - lz * rs,
+        pose.z + lx * rs + lz * rc,
+      ]);
+      us[i] = u;
+      vs[i] = v;
+    }
+    us.sort();
+    vs.sort();
+    // Robust extents: a stray point outside a window shouldn't count.
+    const u0 = percentile(us, 0.01);
+    const u1 = percentile(us, 0.99);
+    const v0 = percentile(vs, 0.01);
+    const v1 = percentile(vs, 0.99);
+    // The scan's low edge is a wall surface looking toward +u (into the
+    // room), so it can only sit on a face looking the same way; likewise
+    // the high edge.
+    const best = (
+      lines: WallLine[],
+      edges: [number, number][],
+      lo: number,
+      hi: number,
+    ) => {
+      let shift = 0;
+      let dist = reach;
+      for (const line of lines) {
+        // Only walls that run alongside the scan.
+        if (line.to < lo - 0.3 || line.from > hi + 0.3) continue;
+        for (const [e, facing] of edges) {
+          if (line.facing !== facing) continue;
+          const d = line.at - e;
+          if (Math.abs(d) < Math.abs(dist)) {
+            dist = d;
+            shift = d;
+          }
+        }
+      }
+      return Math.abs(dist) < reach ? shift : 0;
+    };
+    const du = best(
+      uLines,
+      [
+        [u0, 1],
+        [u1, -1],
+      ],
+      v0,
+      v1,
+    );
+    const dv = best(
+      vLines,
+      [
+        [v0, 1],
+        [v1, -1],
+      ],
+      u0,
+      u1,
+    );
+    // Back from the frame to world: rotate (du, dv) by +grid.
+    return {
+      ...pose,
+      x: pose.x + du * cos + dv * sin,
+      z: pose.z - du * sin + dv * cos,
+    };
+  }
+
+  function autoAlignScan(id: string): void {
+    const s = scans.get(id);
+    const floor = s ? floors.get(s.placement.floorId) : undefined;
+    if (!s || !floor || !s.samples) return;
+    let rotationDeg = s.placement.rotationDeg;
+    if (s.angle !== null) {
+      const grid = planGridAngle(floor);
+      // world angle = local angle + rotation; nearest rotation that lines
+      // the scan's grid up with the plan's.
+      const base = grid - s.angle;
+      const turns = Math.round((rotationDeg - base) / 90);
+      rotationDeg = base + turns * 90;
+    }
+    let pose: ScanPose = { x: s.placement.x, z: s.placement.z, rotationDeg };
+    // Twice: the second pass settles the axis the first one moved across.
+    pose = snapPose(s, pose, AUTO_SNAP_M);
+    pose = snapPose(s, pose, AUTO_SNAP_M);
+    pose.elevation = -scanFloorOffset(s) * s.placement.scale;
+    s.placement = { ...s.placement, ...pose };
+    applyPlacement(s);
+    invalidate();
+    options.onScanMove?.(id, pose, true);
+  }
+
+  /** The lowest few percent of a scan's points: where its floor is. */
+  function scanFloorOffset(s: ScanEntry): number {
+    if (!s.samples) return 0;
+    const n = s.samples.length / 3;
+    const ys = new Float32Array(n);
+    for (let i = 0; i < n; i++) ys[i] = s.samples[i * 3 + 1]!;
+    ys.sort();
+    return percentile(ys, 0.02);
+  }
+
+  // --- dragging a scan --------------------------------------------------------
+
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+  let drag: {
+    id: string;
+    plane: THREE.Plane;
+    offset: THREE.Vector3;
+    pointerId: number;
+  } | null = null;
+
+  function setPointer(e: PointerEvent): void {
+    const rect = renderer.domElement.getBoundingClientRect();
+    pointer.set(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    raycaster.setFromCamera(pointer, camera);
+  }
+
+  const onPointerDown = (e: PointerEvent) => {
+    if (!editScanId || e.button !== 0) return;
+    const s = scans.get(editScanId);
+    if (!s?.content || !s.group.visible) return;
+    setPointer(e);
+    const hit = raycaster.intersectObject(s.content, true)[0];
+    if (!hit) return;
+    const y = s.group.getWorldPosition(new THREE.Vector3()).y;
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -y);
+    const at = raycaster.ray.intersectPlane(plane, new THREE.Vector3());
+    if (!at) return;
+    const parent = s.group.parent;
+    const local = parent ? parent.worldToLocal(at.clone()) : at.clone();
+    drag = {
+      id: s.placement.id,
+      plane,
+      offset: new THREE.Vector3(
+        s.placement.x - local.x,
+        0,
+        s.placement.z - local.z,
+      ),
+      pointerId: e.pointerId,
+    };
+    controls.enabled = false;
+    renderer.domElement.setPointerCapture(e.pointerId);
+    e.stopPropagation();
+  };
+
+  const onPointerMove = (e: PointerEvent) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const s = scans.get(drag.id);
+    if (!s) return;
+    setPointer(e);
+    const at = raycaster.ray.intersectPlane(drag.plane, new THREE.Vector3());
+    if (!at) return;
+    const local = s.group.parent ? s.group.parent.worldToLocal(at.clone()) : at;
+    let pose: ScanPose = {
+      x: local.x + drag.offset.x,
+      z: local.z + drag.offset.z,
+      rotationDeg: s.placement.rotationDeg,
+    };
+    if (editSnap && !e.shiftKey) pose = snapPose(s, pose, DRAG_SNAP_M);
+    s.placement = { ...s.placement, ...pose };
+    applyPlacement(s);
+    invalidate();
+    options.onScanMove?.(drag.id, pose, false);
+  };
+
+  const onPointerUp = (e: PointerEvent) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const s = scans.get(drag.id);
+    if (s) {
+      options.onScanMove?.(
+        drag.id,
+        {
+          x: s.placement.x,
+          z: s.placement.z,
+          rotationDeg: s.placement.rotationDeg,
+        },
+        true,
+      );
+    }
+    drag = null;
+    controls.enabled = true;
+  };
+
+  const canvas = renderer.domElement;
+  // Capture phase: ahead of OrbitControls' own listener.
+  canvas.addEventListener("pointerdown", onPointerDown, true);
+  canvas.addEventListener("pointermove", onPointerMove);
+  canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("pointercancel", onPointerUp);
+
+  // --- export ---------------------------------------------------------------
+
+  async function exportGlb(): Promise<Blob> {
+    const exporter = new GLTFExporter();
+    const result = await exporter.parseAsync(root, {
+      binary: true,
+      onlyVisible: true,
+      maxTextureSize: 1024,
+    });
+    return new Blob([result as ArrayBuffer], { type: "model/gltf-binary" });
+  }
+
+  return {
+    setScene,
+    setScans,
+    setEditScan(id, snap) {
+      editScanId = id;
+      editSnap = snap;
+      canvas.style.cursor = id ? "move" : "";
+    },
+    autoAlignScan,
+    setSpread(metres) {
+      spread = metres;
+      placeFloors();
+      placeSun();
+      invalidate();
+    },
+    view,
+    exportGlb,
+    resize,
+    destroy() {
+      destroyed = true;
+      if (raf) cancelAnimationFrame(raf);
+      observer.disconnect();
+      canvas.removeEventListener("pointerdown", onPointerDown, true);
+      canvas.removeEventListener("pointermove", onPointerMove);
+      canvas.removeEventListener("pointerup", onPointerUp);
+      canvas.removeEventListener("pointercancel", onPointerUp);
+      controls.dispose();
+      disposeObject(scene, false);
+      for (const t of textures.values()) t.dispose();
+      renderer.dispose();
+      renderer.forceContextLoss();
+      canvas.remove();
+    },
+  };
+}
+
+const glue: View3dModule = { createView3d, supportsWebgl };
+export default glue;
+export { createView3d, supportsWebgl };

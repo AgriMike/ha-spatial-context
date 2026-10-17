@@ -28,7 +28,8 @@
     "@versatiles/style": "^6.2.0",
     "lit": "^3.3.3",
     "maplibre-gl": "^6.12.0",
-    "polylabel": "^2.1.0"
+    "polylabel": "^2.1.0",
+    "three": "^0.170.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -39,6 +40,7 @@
     "@rollup/plugin-replace": "^6.0.1",
     "@rollup/plugin-terser": "^1.0.0",
     "@rollup/plugin-typescript": "^12.1.1",
+    "@types/three": "^0.170.0",
     "chokidar": "^5.0.0",
     "concurrently": "^10.0.1",
     "dotenv": "^17.4.2",

@@ -61,6 +61,11 @@ export interface SpatialContextCardConfig {
   weather_entity?: string;
   /** A furniture item linked to an entity (a lamp, say). */
   item_tap_action?: TapAction;
+  /** "3d" shows the floor in 3D (three.js loads on demand) instead of
+   * the plan; taps and overlay buttons are 2D-only. */
+  view?: "2d" | "3d";
+  /** 3D only: stack every floor of the building. */
+  dollhouse?: boolean;
 }
 
 /** The canvas element's surface the card drives (see floorplan-canvas.ts). */
@@ -104,6 +109,9 @@ class SpatialContextCard extends HTMLElement {
   private _floorName = "";
   private _entities = new Map<string, PlaceableEntity>();
   private _canvas: CanvasElement | null = null;
+  /** <floorplan-3d-view>, when the card shows 3D. */
+  private _view3d: CanvasElement | null = null;
+  private _floors: FloorMeta[] = [];
   private _root: ShadowRoot;
   private _loadedFor: string | null = null;
   private _liveSig = "";
@@ -176,6 +184,14 @@ class SpatialContextCard extends HTMLElement {
     ] as ((h: HomeAssistant) => void) | undefined;
     setLanguage?.(hass);
     if (first) void this._load();
+    if (this._view3d) {
+      this._view3d["hass"] = hass;
+      this._view3d["dark"] = hass.themes?.darkMode ?? false;
+      this._view3d["sky"] = skyFromWeather(
+        hass.states,
+        this._config.weather_entity ?? this._weatherSetting,
+      );
+    }
     this._applyLive();
     if (this._canvas) this._canvas["dark"] = hass.themes?.darkMode ?? false;
   }
@@ -260,6 +276,7 @@ class SpatialContextCard extends HTMLElement {
       const key = floorId;
       if (this._loadedFor === key) return;
       this._loadedFor = key;
+      this._floors = floors;
       this._floorName =
         floors.find((f) => f.floor_id === floorId)?.name ?? floorId;
       const [layout, entities] = await Promise.all([
@@ -377,6 +394,16 @@ class SpatialContextCard extends HTMLElement {
     plan.style.display = this._layout ? "" : "none";
     if (!this._layout || !customElements.get("floorplan-canvas")) return;
 
+    if (this._config.view === "3d" && customElements.get("floorplan-3d-view")) {
+      this._render3d(plan);
+      return;
+    }
+    if (this._view3d) {
+      this._view3d.remove();
+      this._view3d = null;
+    }
+    if (this._canvas && !this._canvas.isConnected)
+      plan.appendChild(this._canvas);
     if (!this._canvas) {
       this._canvas = document.createElement(
         "floorplan-canvas",
@@ -432,6 +459,31 @@ class SpatialContextCard extends HTMLElement {
         : null;
     this._liveSig = "";
     this._applyLive();
+  }
+
+  /** The 3D view in place of the plan (config `view: 3d`). */
+  private _render3d(plan: HTMLElement): void {
+    this._canvas?.remove();
+    if (!this._view3d) {
+      this._view3d = document.createElement(
+        "floorplan-3d-view",
+      ) as unknown as CanvasElement;
+      this._view3d.style.cssText = "display:block;position:absolute;inset:0;";
+      plan.appendChild(this._view3d);
+    }
+    const v = this._view3d;
+    v["hass"] = this._hass;
+    v["floorId"] = this._loadedFor;
+    v["layout"] = this._layout;
+    v["floors"] = this._floors;
+    v["dark"] = this._hass?.themes?.darkMode ?? false;
+    v["dollhouse"] = this._config.dollhouse === true;
+    v["sky"] = this._hass
+      ? skyFromWeather(
+          this._hass.states,
+          this._config.weather_entity ?? this._weatherSetting,
+        )
+      : null;
   }
 
   /** Pushes live light/cover/pin state to the canvas when it changed. */
@@ -611,6 +663,11 @@ class SpatialContextCardEditor extends HTMLElement {
         .row label { flex: 1; }
         select, input[type=text], input[type=number] { flex: 1; padding: 6px; }
       </style>
+      <div class="row"><label>View</label><select data-key="view">
+        ${option("2d", "Floor plan", c.view ?? "2d")}
+        ${option("3d", "3D", c.view)}
+      </select></div>
+      <div class="row"><label>Dollhouse: stack the building's floors (3D)</label><input type="checkbox" data-flag="dollhouse" ${c.dollhouse === true ? "checked" : ""}></div>
       <div class="row"><label>Floor</label><select data-key="floor_id">
         ${option("", "First floor with a plan", c.floor_id)}
         ${this._floors.map((f) => option(f.floor_id, f.name, c.floor_id)).join("")}

@@ -116,6 +116,7 @@ import "./views/icon-picker-dialog";
 import { localize } from "./i18n";
 import { panMap, rotateMapTo, zoomMap } from "./map/map-camera";
 import "./views/settings-menu";
+import "./views/floorplan-3d-view";
 import type { PropertyBuilding } from "./views/property-overlay";
 
 /** Snap mode is per-browser, like the picker sidebar's width — a drawing
@@ -223,6 +224,34 @@ export class SpatialContextPanel extends LitElement {
         position: relative;
         /* Room for the controls row the overlay draws across the top. */
         padding-top: 56px;
+      }
+      /* The 3D view covers the plan and its controls row; the plan stays
+       * mounted underneath, so going back keeps its pan/zoom. */
+      floorplan-3d-view {
+        position: absolute;
+        inset: 0;
+        z-index: 5;
+      }
+      .header-icon-button {
+        width: 48px;
+        height: 48px;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        font-weight: 600;
+        font-size: var(--sc-fs-small);
+      }
+      .header-icon-button.active {
+        color: var(--sc-accent);
+        background: color-mix(in srgb, var(--sc-accent) 14%, transparent);
+      }
+      @media (max-width: 600px) {
+        .header-icon-button {
+          width: 40px;
+          height: var(--sc-h-control);
+        }
       }
       .canvas-area.drag-over {
         outline: 2px dashed var(--sc-accent);
@@ -387,6 +416,9 @@ export class SpatialContextPanel extends LitElement {
   @state() private _settings: Settings = emptySettings();
   @state() private _settingsPopoverOpen = false;
   @state() private _moreOptionsPopoverOpen = false;
+
+  /** The floor shown in 3D over the plan (see floorplan-3d-view.ts). */
+  @state() private _view3dOpen = false;
 
   // --- Property tab ---------------------------------------------------
   @state() private _view: "floor" | "property" = "floor";
@@ -4611,6 +4643,19 @@ export class SpatialContextPanel extends LitElement {
               </icon-popover>`
             : nothing
         }
+        ${
+          this._view === "floor"
+            ? html`<button
+                slot="end"
+                class="header-icon-button ${this._view3dOpen ? "active" : ""}"
+                title=${localize("view3d.open")}
+                aria-pressed=${this._view3dOpen ? "true" : "false"}
+                @click=${() => (this._view3dOpen = !this._view3dOpen)}
+              >
+                3D
+              </button>`
+            : nothing
+        }
         <icon-popover
           slot="end"
           icon="mdi:cog"
@@ -5059,6 +5104,21 @@ export class SpatialContextPanel extends LitElement {
                     @mesh-stub-goto-floor-click=${this._onMeshStubGotoFloorClick}
                     >${this._renderBackgroundPopover()}</canvas-overlay
                   >
+                  ${
+                    this._view3dOpen
+                      ? html`<floorplan-3d-view
+                          .hass=${this._hass}
+                          .floorId=${this._currentFloorId}
+                          .layout=${this._layout}
+                          .floors=${this._floors}
+                          .sky=${this._sky}
+                          .dark=${this._hass?.themes?.darkMode ?? false}
+                          editable
+                          closable
+                          @close-3d=${() => (this._view3dOpen = false)}
+                        ></floorplan-3d-view>`
+                      : nothing
+                  }
                 </div>
                 ${
                   this._mode === "place"
