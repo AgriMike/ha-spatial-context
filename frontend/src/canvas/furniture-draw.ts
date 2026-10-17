@@ -1020,6 +1020,37 @@ const T: Record<string, Template> = {
     if (flag(o, "apron")) out.push(line(0, d - 4, w, d - 4));
     return out;
   },
+  // A bezelless (undermount) sink: just one basin outline, the faucet
+  // behind it and the drain — offset to the back right unless centred.
+  // Stretches to any size; faucet and drain keep their real size.
+  bezellessSink: (w, d, o) => {
+    const top = Math.min(10, d * 0.2);
+    // Square, tight corners (a plain rect would get the soft ones).
+    const out: Prim[] = [
+      path(
+        roundedPolyPath(
+          [
+            [0.5, top],
+            [w - 0.5, top],
+            [w - 0.5, d - 0.5],
+            [0.5, d - 0.5],
+          ],
+          true,
+          1.5,
+        ),
+      ),
+    ];
+    out.push(
+      circ(w / 2, top * 0.4, Math.min(2.4, top * 0.3)),
+      line(w / 2, top * 0.4 + Math.min(2.4, top * 0.3), w / 2, top + 3),
+      circ(w / 2, top + 4, 1),
+    );
+    const [dx, dy] = flag(o, "centreDrain")
+      ? [w / 2, top + (d - top) * 0.55]
+      : [w - 7, top + 7];
+    out.push(circ(dx, dy, 2.4), circ(dx, dy, 0.7));
+    return out;
+  },
   range: (w, d, o) => {
     const burners = num(o, "burners", 4);
     const cols = burners >= 6 ? 3 : burners === 5 ? 3 : 2;
