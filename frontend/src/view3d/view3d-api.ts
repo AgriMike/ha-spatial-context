@@ -69,7 +69,7 @@ export interface Item3d {
   light: { color: string; level: number; y: number } | null;
   /** Drawn as an extruded block with its 2D drawing on top ("block"), or
    * modelled: a potted plant, a tree, a lamp. */
-  shape: "block" | "plant" | "tree" | "lamp";
+  shape: "block" | "plant" | "tree" | "lamp" | "shower";
 }
 
 export interface Floor3d {

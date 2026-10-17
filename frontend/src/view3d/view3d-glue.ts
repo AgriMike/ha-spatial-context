@@ -185,7 +185,29 @@ function modelItem(item: Item3d): THREE.Group {
     g.add(mesh);
     return mesh;
   };
-  if (item.shape === "plant") {
+  if (item.shape === "shower") {
+    // A shower: its tray, and a glass enclosure you can see into.
+    const tray = add(
+      new THREE.BoxGeometry(item.width, 0.08, item.depth),
+      modelMaterial("#f2f2f0"),
+      0.04,
+    );
+    tray.castShadow = false;
+    const glass = new THREE.MeshStandardMaterial({
+      color: "#cfe8f3",
+      roughness: 0.05,
+      transparent: true,
+      opacity: 0.22,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    add(
+      new THREE.BoxGeometry(item.width, h - 0.08, item.depth),
+      glass,
+      0.08 + (h - 0.08) / 2,
+      false,
+    );
+  } else if (item.shape === "plant") {
     const potH = Math.min(0.35, h * 0.28);
     add(
       new THREE.CylinderGeometry(r * 0.55, r * 0.42, potH, 14),

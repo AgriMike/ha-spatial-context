@@ -33,6 +33,7 @@ import {
   distance,
   nearestPointOnPolyline,
   pointInPolygon,
+  pointToSegmentDistance,
 } from "../canvas/geometry";
 import { wallThicknessCm } from "../canvas/materials";
 import {
@@ -77,6 +78,7 @@ function itemShape(
   entry: CatalogItem | undefined,
 ): Item3d["shape"] {
   if (/stand|pedestal|basket/.test(kind)) return "block";
+  if (/shower(?!_bench)/.test(kind)) return "shower";
   if (/tree|olive/.test(kind) && entry?.category === "outdoor") return "tree";
   if (
     /plant|monstera|fiddle|palm|cactus|bonsai|fern|succulent|orchid|pothos|calathea|_zz|rubber|dracaena|jade|pilea|aloe|herb|shrub|hedge|houseplant|bird_of_paradise|philodendron|spider|tree|olive/.test(
@@ -605,11 +607,25 @@ function buildFloor(
       bySeg.set(segmentIndex, list);
     }
 
+    // A line drawn out and back over itself would be drawn twice.
+    const drawn: [number, number, number, number][] = [];
+    const onDrawn = (x: number, y: number) =>
+      drawn.some(
+        ([x1, y1, x2, y2]) =>
+          pointToSegmentDistance(x, y, x1, y1, x2, y2) * m < 0.02,
+      );
     for (let i = 0; i < pts.length - 1; i++) {
       const [ax, ay] = pts[i]!;
       const [bx, by] = pts[i + 1]!;
       const L = distance(ax, ay, bx, by) * m;
       if (L < 0.005) continue;
+      if (
+        onDrawn(ax, ay) &&
+        onDrawn(bx, by) &&
+        onDrawn((ax + bx) / 2, (ay + by) / 2)
+      )
+        continue;
+      drawn.push([ax, ay, bx, by]);
       const dx = ((bx - ax) * m) / L;
       const dz = ((by - ay) * m) / L;
       const angle = Math.atan2(-dz, dx);
