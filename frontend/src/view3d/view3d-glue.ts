@@ -649,6 +649,7 @@ function createView3d(options: View3dOptions): View3dHandle {
   let terrain: THREE.Mesh | null = null;
   /** The building's roof, shown while the floors stand together. */
   let roof: THREE.Mesh | null = null;
+  let roofSpec: Roof3d | null = null;
 
   const hemi = new THREE.HemisphereLight("#dcecff", "#b9a88f", 1);
   scene.add(hemi);
@@ -913,13 +914,16 @@ function createView3d(options: View3dOptions): View3dHandle {
     for (const s of scans.values()) attachScan(s);
     applyWallHiding();
 
-    if (roof) {
+    // The same roof back (the building didn't change): keep its mesh.
+    if (roof && roofSpec !== spec.roof) {
       roof.removeFromParent();
       roof.geometry.dispose();
       (roof.material as THREE.Material).dispose();
       roof = null;
     }
-    if (spec.roof) {
+    roofSpec = spec.roof;
+    if (roof) roof.visible = spread === 0;
+    else if (spec.roof) {
       roof = new THREE.Mesh(
         roofGeometry(spec.roof),
         new THREE.MeshStandardMaterial({

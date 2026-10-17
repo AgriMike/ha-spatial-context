@@ -71,7 +71,7 @@ export const DEFAULT_WALL_HEIGHT_M = 2.4;
 /** Outside walls and the roof. */
 const SIDING = "#9aa1a8";
 const SIDING_DARK = "#4d535a";
-const SHINGLE = "#4a4f57";
+const SHINGLE = "#565b63";
 const SHINGLE_DARK = "#2d3036";
 /** Roof: rise per metre of run, eave overhang, and the grid it's
  * sampled on. */
@@ -1126,7 +1126,7 @@ export function buildScene(input: SceneInput): Scene3d {
       intensity: 0.55 + 0.7 * day,
     },
     terrain: input.ground ? terrain(input, input.ground, northDeg) : null,
-    roof: input.roof ? buildRoof(input, northDeg, floors) : null,
+    roof: input.roof ? cachedRoof(input, northDeg, floors) : null,
     background: dark
       ? day > 0
         ? "#1f2a33"
@@ -1224,6 +1224,40 @@ function fillRoofGaps(eave: Float32Array, nx: number, nz: number): void {
       }
     }
   }
+}
+
+/** The last roof built and what it was built from: the scene rebuilds
+ * every minute for the sun, the roof only when the building changes (the
+ * same object back, so the 3D view keeps its mesh). */
+let lastRoof: {
+  layouts: FloorLayout[];
+  key: string;
+  roof: Roof3d | null;
+} | null = null;
+
+function cachedRoof(
+  input: SceneInput,
+  northDeg: number,
+  built: Floor3d[],
+): Roof3d | null {
+  const layouts = input.floors.map((f) => f.layout);
+  const key = JSON.stringify([
+    input.floors.map((f) => [f.floorId, f.baseY, f.wallHeight]),
+    input.ground,
+    input.dark,
+    northDeg,
+    built.map((f) => f.porches),
+  ]);
+  if (
+    lastRoof &&
+    lastRoof.key === key &&
+    lastRoof.layouts.length === layouts.length &&
+    lastRoof.layouts.every((l, i) => l === layouts[i])
+  )
+    return lastRoof.roof;
+  const roof = buildRoof(input, northDeg, built);
+  lastRoof = { layouts, key, roof };
+  return roof;
 }
 
 /** A roof over the whole building, from its rooms alone. Every spot is
