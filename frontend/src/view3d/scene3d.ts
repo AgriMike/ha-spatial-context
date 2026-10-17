@@ -1472,7 +1472,16 @@ function buildRoof(
     if (e > -Infinity) levels.add(Math.round(e * 100) / 100);
   const over = Math.round(EAVE_M / step);
   for (const level of levels) {
-    const part = (k: number) => eave[k]! >= level - 0.005;
+    // This level's part, with slivers of a lower part between its rooms
+    // (a recess a few centimetres wide) closed over, so they don't split
+    // its roof.
+    const raw = new Uint8Array(N);
+    for (let k = 0; k < N; k++) raw[k] = eave[k]! >= level - 0.005 ? 1 : 0;
+    const gap = Math.max(1, Math.round(ROOF_GAP_M / 2 / step));
+    const grownPart = growMask(raw, nx, nz, gap);
+    for (let k = 0; k < N; k++) grownPart[k] = grownPart[k] ? 0 : 1;
+    const beyond = growMask(grownPart, nx, nz, gap);
+    const part = (k: number) => !!raw[k] || !beyond[k];
     const inside = (l: number, k: number) => part(at(l, k));
     // A hip over all of this level's part, rising from its outside edges
     // only (so it never sinks where another part carries on), its eaves
