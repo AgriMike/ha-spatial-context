@@ -80,15 +80,14 @@ function wallGeometry(
   const g = boxGeometry(b);
   const count = g.getAttribute("position").count;
   const colors = new Float32Array(count * 3);
-  // BoxGeometry's faces come +X, -X, +Y, -Y, +Z, -Z, four corners each;
-  // an outside wall's top is sided too, under a roof's gable.
-  const sided = b.outside === 1 ? 16 : b.outside === -1 ? 20 : -1;
+  // BoxGeometry's faces come +X, -X, +Y, -Y, +Z, -Z, four corners each.
+  // An outside wall is sided all over but its indoor face: its top under
+  // a gable, its ends at corners and round windows and doors.
+  const indoor = b.outside === 1 ? 20 : b.outside === -1 ? 16 : -1;
   for (let v = 0; v < count; v++) {
     const c =
       own ??
-      (sided >= 0 && ((v >= sided && v < sided + 4) || (v >= 8 && v < 12))
-        ? outdoor
-        : paint);
+      (indoor >= 0 && !(v >= indoor && v < indoor + 4) ? outdoor : paint);
     colors[v * 3] = c.r;
     colors[v * 3 + 1] = c.g;
     colors[v * 3 + 2] = c.b;
@@ -138,8 +137,17 @@ function roofGeometry(roof: Roof3d): THREE.BufferGeometry {
       a.copy(P(i, j));
       b.copy(P(i, j + 1));
       c.copy(P(i + 1, j));
-      tri(a, b, c);
-      tri(c, b, P(i + 1, j + 1));
+      const d = P(i + 1, j + 1);
+      // Split along the diagonal the surface folds on (a hip, or where a
+      // gable meets a roof crossing the grid), so its edges run straight
+      // instead of stepping cell by cell.
+      if (Math.abs(a.y - d.y) < Math.abs(b.y - c.y)) {
+        tri(a, b, d);
+        tri(a, d, c);
+      } else {
+        tri(a, b, c);
+        tri(c, b, d);
+      }
     }
   // Gable ends: where the roof stops above its eave, siding down to it.
   const skirt = (i0: number, j0: number, i1: number, j1: number) => {
