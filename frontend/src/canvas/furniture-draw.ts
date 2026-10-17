@@ -2931,7 +2931,18 @@ export function freeformPrims(
 
 /** Imported icons by id: their image URL and whether they keep their
  * own colours (set from the catalog's setCustomIcons). */
-const CUSTOM_IMAGES = new Map<string, { href: string; colors: boolean }>();
+const CUSTOM_IMAGES = new Map<
+  string,
+  { href: string; colors: boolean; solidHref: string }
+>();
+
+/** The icon with every shape filled in: its footprint, for "Solid" — so
+ * the opaque fill covers the drawing's own shapes, not its whole box. */
+function filledSvg(svgText: string): string {
+  const style =
+    "<style>rect,circle,ellipse,polygon,path{fill:#000 !important;fill-opacity:1 !important}</style>";
+  return svgText.replace(/<svg(?=[\s>])[^>]*>/i, (open) => open + style);
+}
 
 export function setCustomImages(icons: CustomIcon[]): void {
   CUSTOM_IMAGES.clear();
@@ -2939,8 +2950,24 @@ export function setCustomImages(icons: CustomIcon[]): void {
     CUSTOM_IMAGES.set(icon.id, {
       href: svgDataUrl(icon.svg),
       colors: icon.colors === true,
+      solidHref: svgDataUrl(filledSvg(icon.svg)),
     });
   }
+}
+
+/** An imported icon's solid fill, shaped like the icon's own filled shapes
+ * (masked by them), or its box when the icon is gone. */
+function solidImage(p: { id: string; w: number; d: number }) {
+  const w = max(0.01, p.w);
+  const h = max(0.01, p.d);
+  const img = CUSTOM_IMAGES.get(p.id);
+  if (!img)
+    return svg`<rect class="fx-solid" x="0" y="0" width=${w} height=${h} rx=${softRadius(w, h)}></rect>`;
+  const id = `fx-solid-${p.id}-${Math.round(w * 10)}x${Math.round(h * 10)}`;
+  return svg`<mask id=${id} style="mask-type:alpha" maskUnits="userSpaceOnUse" x="0" y="0" width=${w} height=${h}>
+      <image href=${img.solidHref} x="0" y="0" width=${w} height=${h} preserveAspectRatio="xMidYMid meet"></image>
+    </mask>
+    <rect class="fx-solid" x="0" y="0" width=${w} height=${h} mask="url(#${id})"></rect>`;
 }
 
 /** SVG for a drawing's primitives. Strokes keep a constant on-screen width
@@ -2961,9 +2988,11 @@ export function renderPrims(
   const body = prims[0];
   if (solid && body) {
     out.unshift(
-      body.t === "image" || body.t === "icon"
-        ? svg`<rect class="fx-solid" x="0" y="0" width=${max(0.01, body.w)} height=${max(0.01, body.d)} rx=${softRadius(body.w, body.d)}></rect>`
-        : renderPrim(body, "fx-solid"),
+      body.t === "image"
+        ? solidImage(body)
+        : body.t === "icon"
+          ? svg`<rect class="fx-solid" x="0" y="0" width=${max(0.01, body.w)} height=${max(0.01, body.d)} rx=${softRadius(body.w, body.d)}></rect>`
+          : renderPrim(body, "fx-solid"),
     );
   }
   return out;
