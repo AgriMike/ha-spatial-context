@@ -1226,6 +1226,59 @@ function fillRoofGaps(eave: Float32Array, nx: number, nz: number): void {
   }
 }
 
+/** A level's part of the building as a few big rectangles, in grid steps
+ * along the ridge (l) and across it (k), inclusive: each the largest part
+ * still uncovered, then stretched along the ridge as far as the part
+ * goes, so a wing's roof runs back into the main one rather than ending in
+ * a gable inside it. Each gets one clean roof and the building's roof is
+ * where they meet, as framed roofs are; a part that jogs no longer steps
+ * its ridge. Slivers under `minCells` are left out. */
+function roofRects(
+  inside: (l: number, k: number) => boolean,
+  lines: number,
+  len: number,
+  minCells: number,
+): { l0: number; l1: number; k0: number; k1: number }[] {
+  const covered = new Uint8Array(lines * len);
+  const rects: { l0: number; l1: number; k0: number; k1: number }[] = [];
+  const hist = new Int32Array(len + 1);
+  const stack: number[] = [];
+  for (let n = 0; n < 200; n++) {
+    // The largest rectangle of uncovered cells: the largest under each
+    // line's histogram of uncovered runs.
+    hist.fill(0);
+    let best = { area: 0, l0: 0, l1: 0, k0: 0, k1: 0 };
+    for (let l = 0; l < lines; l++) {
+      for (let k = 0; k < len; k++)
+        hist[k] = inside(l, k) && !covered[l * len + k] ? hist[k]! + 1 : 0;
+      stack.length = 0;
+      for (let k = 0; k <= len; k++) {
+        while (stack.length && hist[stack[stack.length - 1]!]! >= hist[k]!) {
+          const height = hist[stack.pop()!]!;
+          const left = stack.length ? stack[stack.length - 1]! + 1 : 0;
+          const area = height * (k - left);
+          if (area > best.area)
+            best = { area, l0: l - height + 1, l1: l, k0: left, k1: k - 1 };
+        }
+        stack.push(k);
+      }
+    }
+    if (best.area < minCells) break;
+    const { k0, k1 } = best;
+    let { l0, l1 } = best;
+    const whole = (l: number) => {
+      for (let k = k0; k <= k1; k++) if (!inside(l, k)) return false;
+      return true;
+    };
+    while (l0 > 0 && whole(l0 - 1)) l0--;
+    while (l1 < lines - 1 && whole(l1 + 1)) l1++;
+    for (let l = l0; l <= l1; l++)
+      for (let k = k0; k <= k1; k++) covered[l * len + k] = 1;
+    rects.push({ l0, l1, k0, k1 });
+  }
+  return rects;
+}
+
 /** The last roof built and what it was built from: the scene rebuilds
  * every minute for the sun, the roof only when the building changes (the
  * same object back, so the 3D view keeps its mesh). */
@@ -1363,60 +1416,48 @@ function buildRoof(
   for (const level of levels) {
     const inside = (line: number, k: number) =>
       eave[at(line, k)]! >= level - 0.005;
-    // Steps (chessboard) to the nearest point outside this level's part:
-    // a hip rises from there.
-    const cheb = new Float32Array(N);
-    for (let k = 0; k < N; k++) cheb[k] = eave[k]! >= level - 0.005 ? 1e9 : 0;
-    for (let j = 0; j < nz; j++)
-      for (let i = 0; i < nx; i++) {
-        const k = j * nx + i;
-        if (!cheb[k]) continue;
-        let d = cheb[k]!;
-        if (i > 0) d = Math.min(d, cheb[k - 1]! + 1);
-        if (j > 0) {
-          d = Math.min(d, cheb[k - nx]! + 1);
-          if (i > 0) d = Math.min(d, cheb[k - nx - 1]! + 1);
-          if (i < nx - 1) d = Math.min(d, cheb[k - nx + 1]! + 1);
-        }
-        cheb[k] = d;
-      }
-    for (let j = nz - 1; j >= 0; j--)
-      for (let i = nx - 1; i >= 0; i--) {
-        const k = j * nx + i;
-        if (!cheb[k]) continue;
-        let d = cheb[k]!;
-        if (i < nx - 1) d = Math.min(d, cheb[k + 1]! + 1);
-        if (j < nz - 1) {
-          d = Math.min(d, cheb[k + nx]! + 1);
-          if (i < nx - 1) d = Math.min(d, cheb[k + nx + 1]! + 1);
-          if (i > 0) d = Math.min(d, cheb[k + nx - 1]! + 1);
-        }
-        cheb[k] = d;
-      }
-    for (let line = 0; line < lines; line++) {
-      let k = 0;
-      while (k < len) {
-        if (!inside(line, k)) {
-          k++;
-          continue;
-        }
-        const k0 = k;
-        while (k < len && inside(line, k)) k++;
-        const k1 = k - 1;
-        const hipped = (k1 - k0 + 1) * step > GABLE_MAX_M;
+    const roofed = new Uint8Array(N);
+    for (const r of roofRects(
+      inside,
+      lines,
+      len,
+      Math.round((0.4 / step) ** 2),
+    )) {
+      // A narrow wing is gabled toward the street, a wide block hipped.
+      const hipped = (r.k1 - r.k0 + 1) * step > GABLE_MAX_M;
+      const reach = hipped ? over : 0;
+      for (
+        let l = Math.max(0, r.l0 - reach);
+        l <= Math.min(lines - 1, r.l1 + reach);
+        l++
+      )
         for (
-          let q = Math.max(0, k0 - over);
-          q <= Math.min(len - 1, k1 + over);
+          let q = Math.max(0, r.k0 - over);
+          q <= Math.min(len - 1, r.k1 + over);
           q++
         ) {
-          const k = at(line, q);
-          let run = Math.min(q - (k0 - 0.5), k1 + 0.5 - q) * step;
-          if (hipped && q >= k0 && q <= k1)
-            run = Math.min(run, (cheb[k]! - 0.5) * step);
-          raise(k, level + ROOF_PITCH * run, level);
+          const inRect = l >= r.l0 && l <= r.l1 && q >= r.k0 && q <= r.k1;
+          // Eaves reach out only over what's beyond this level.
+          if (!inRect && inside(l, q)) continue;
+          const across = Math.min(q - (r.k0 - 0.5), r.k1 + 0.5 - q) * step;
+          const along = Math.min(l - (r.l0 - 0.5), r.l1 + 0.5 - l) * step;
+          const k = at(l, q);
+          raise(
+            k,
+            level + ROOF_PITCH * (hipped ? Math.min(across, along) : across),
+            level,
+          );
+          if (inRect) roofed[k] = 1;
         }
-      }
     }
+    // Slivers no rectangle took (a jog's corner): just above the eave,
+    // under the roofs round them.
+    for (let l = 0; l < lines; l++)
+      for (let q = 0; q < len; q++) {
+        const k = at(l, q);
+        if (!roofed[k] && inside(l, q))
+          raise(k, level + ROOF_PITCH * step, level);
+      }
   }
   // Porch roofs: hipped down from the wall to the eave on the open sides.
   for (const p of porches) {
