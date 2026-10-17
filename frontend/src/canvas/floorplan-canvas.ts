@@ -133,7 +133,23 @@ export interface AlignOverlay {
   opacity: number;
 }
 
-type FurnitureHandle = "rotate" | "corner" | "right" | "bottom" | "move";
+/** Resize handles by compass point (n = the item's back, y = 0), plus
+ * rotate and the small-item move grip. */
+type ResizeHandle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+type FurnitureHandle = ResizeHandle | "rotate" | "move";
+
+/** Which way a resize handle pulls: -1/1 moves that side, 0 leaves it. */
+const RESIZE_DIRS: Record<ResizeHandle, [number, number]> = {
+  n: [0, -1],
+  s: [0, 1],
+  e: [1, 0],
+  w: [-1, 0],
+  ne: [1, -1],
+  nw: [-1, -1],
+  se: [1, 1],
+  sw: [-1, 1],
+};
+const RESIZE_HANDLES = Object.keys(RESIZE_DIRS) as ResizeHandle[];
 
 /** Alignment guides while dragging an item: the line it snapped to, drawn
  * from `a` to `b` across both boxes (like PowerPoint's smart guides). */
@@ -544,6 +560,15 @@ export class FloorplanCanvas extends LitElement {
       .furniture-handle.corner {
         cursor: nwse-resize;
       }
+      .furniture-handle.corner-nesw {
+        cursor: nesw-resize;
+      }
+      .furniture-handle.edge-ew {
+        cursor: ew-resize;
+      }
+      .furniture-handle.edge-ns {
+        cursor: ns-resize;
+      }
       .furniture-handle.move {
         cursor: move;
       }
@@ -886,6 +911,7 @@ export class FloorplanCanvas extends LitElement {
     if (changed.has("armedFurnitureKind")) {
       this._pendingTrace = null;
       this._drawBox = null;
+      this._furnitureGuides = { x: null, y: null };
     }
     if (
       this.autoFit &&
@@ -1337,13 +1363,15 @@ export class FloorplanCanvas extends LitElement {
     const item = this._effectiveFurniture(raw);
     const { w, d, small } = this._furnitureFrame(item);
     const off = this._pxToUnits(FURNITURE_ROTATE_HANDLE_PX) / this.unitsPerCm;
-    return {
+    const out: Partial<Record<FurnitureHandle, [number, number]>> = {
       rotate: this._furnitureToImage(item, 0, -d - off),
-      corner: this._furnitureToImage(item, w, d),
-      right: this._furnitureToImage(item, w, 0),
-      bottom: this._furnitureToImage(item, 0, d),
       ...(small ? { move: this._furnitureToImage(item, 0, d + off) } : {}),
     };
+    for (const h of RESIZE_HANDLES) {
+      const [sx, sy] = RESIZE_DIRS[h];
+      out[h] = this._furnitureToImage(item, sx * w, sy * d);
+    }
+    return out;
   }
 
   /** An item's axis-aligned bounding box (stored units). */
@@ -1443,9 +1471,9 @@ export class FloorplanCanvas extends LitElement {
     };
   }
 
-  /** A rotate/resize handle dragged to `image`. Resizing keeps the opposite
-   * side fixed and snaps to whole centimetres; rotation snaps to 15 degrees
-   * (Shift frees both). */
+  /** A rotate/resize handle dragged to `image`. Any side or corner can be
+   * dragged: resizing keeps the opposite side fixed and snaps to whole
+   * centimetres; rotation snaps to 15 degrees (Shift frees both). */
   private _furnitureHandleEdit(
     item: FurnitureItem,
     handle: FurnitureHandle,
@@ -1472,18 +1500,21 @@ export class FloorplanCanvas extends LitElement {
     const [lx, ly] = this._imageToFurniture(item, image.x, image.y);
     const snap = (v: number) =>
       Math.max(FURNITURE_MIN_CM, free ? v : Math.round(v));
+    if (handle === "move") return base;
+    const [sx, sy] = RESIZE_DIRS[handle];
     const w =
-      handle === "bottom"
+      sx === 0
         ? item.width_cm
-        : snap(item.width_cm + lx - startLocal[0]);
+        : snap(item.width_cm + sx * (lx - startLocal[0]));
     const d =
-      handle === "right"
+      sy === 0
         ? item.depth_cm
-        : snap(item.depth_cm + ly - startLocal[1]);
+        : snap(item.depth_cm + sy * (ly - startLocal[1]));
+    // The centre moves half the growth toward the dragged side.
     const [x, y] = this._furnitureToImage(
       item,
-      (w - item.width_cm) / 2,
-      (d - item.depth_cm) / 2,
+      (sx * (w - item.width_cm)) / 2,
+      (sy * (d - item.depth_cm)) / 2,
     );
     return { ...base, x, y, width_cm: w, depth_cm: d };
   }
@@ -1633,9 +1664,14 @@ export class FloorplanCanvas extends LitElement {
         for (const handle of [
           "move",
           "rotate",
-          "corner",
-          "right",
-          "bottom",
+          "se",
+          "sw",
+          "ne",
+          "nw",
+          "e",
+          "w",
+          "s",
+          "n",
         ] as const) {
           const at = handles[handle];
           if (!at) continue;
@@ -1728,11 +1764,15 @@ export class FloorplanCanvas extends LitElement {
       // the only thing this component does with it is preview where a
       // wall/room-trace click would actually land, so the snap is visible
       // before you commit to it rather than only after.
-      if (
-        this.mode === "wall" ||
-        this.mode === "trace" ||
-        this._drawingFreeform
-      ) {
+      if (this._drawingFreeform) {
+        const image = this._clientToImage(e.clientX, e.clientY);
+        this._hoverSnap = this._freeformPoint(
+          this._pendingTrace?.points ?? [],
+          image.x,
+          image.y,
+          e.shiftKey,
+        );
+      } else if (this.mode === "wall" || this.mode === "trace") {
         const image = this._clientToImage(e.clientX, e.clientY);
         this._hoverSnap = this._snappedGeometryPoint(
           this._pendingTrace?.points ?? [],
@@ -2279,7 +2319,7 @@ export class FloorplanCanvas extends LitElement {
       const trace = this._pendingTrace ?? startTrace();
       const {
         point: [sx, sy],
-      } = this._snappedGeometryPoint(trace.points, image.x, image.y, shiftKey);
+      } = this._freeformPoint(trace.points, image.x, image.y, shiftKey);
       const result = addTracePoint(trace, sx, sy, closeThreshold);
       if (result.closed) {
         this._placeFreeform(trace.points, true);
@@ -2495,10 +2535,54 @@ export class FloorplanCanvas extends LitElement {
     );
   }
 
+  /** Where a free-form corner lands: onto a wall or room edge when it's
+   * that close, else lined up with other items' edges and centres (and
+   * wall faces) by the same smart guides as dragging an item, drawn while
+   * hovering — so a new shape can start square with what's there. Shift
+   * places it freely. */
+  private _freeformPoint(
+    points: [number, number][],
+    x: number,
+    y: number,
+    free: boolean,
+  ): {
+    point: [number, number];
+    kind: "geometry" | "axis" | "none";
+    lockedX: boolean;
+    lockedY: boolean;
+  } {
+    const geo = this._snappedGeometryPoint(points, x, y, free);
+    if (free || this.snapMode === "off" || geo.kind === "geometry") {
+      this._furnitureGuides = { x: null, y: null };
+      return geo;
+    }
+    const probe: FurnitureItem = {
+      id: "__freeform__",
+      kind: FREEFORM_KIND,
+      x,
+      y,
+      rotation_deg: 0,
+      width_cm: 0,
+      depth_cm: 0,
+      stroke_width: 1,
+    };
+    const snapped = this._snapFurnitureMove(probe, x, y);
+    this._furnitureGuides = snapped.guides;
+    if (!snapped.guides.x && !snapped.guides.y) return geo;
+    return {
+      ...geo,
+      point: [
+        snapped.guides.x ? snapped.x : geo.point[0],
+        snapped.guides.y ? snapped.y : geo.point[1],
+      ],
+    };
+  }
+
   /** A traced outline as a free-form item: its bounding box becomes the
    * item's position and size, the corners fractions of it. */
   private _placeFreeform(points: [number, number][], closed: boolean): void {
     this._pendingTrace = null;
+    this._furnitureGuides = { x: null, y: null };
     if (points.length < 2) return;
     const xs = points.map(([x]) => x);
     const ys = points.map(([, y]) => y);
@@ -3444,12 +3528,15 @@ export class FloorplanCanvas extends LitElement {
             item.width_cm,
             item.depth_cm,
             item.closed !== false,
+            item.corners,
           )
         : drawItem(
             entry?.draw ?? "box",
             item.width_cm,
             item.depth_cm,
-            entry?.opts ?? {},
+            item.corners?.length
+              ? { ...entry?.opts, corners: item.corners.join(",") }
+              : (entry?.opts ?? {}),
           );
     const selected = !ghost && item.id === this.selectedFurnitureId;
     const transform = `translate(${item.x} ${item.y}) rotate(${item.rotation_deg}) scale(${k} ${k})`;
@@ -3495,7 +3582,7 @@ export class FloorplanCanvas extends LitElement {
           : nothing
       }
       <g class="furniture ${ghost ? "ghost" : ""} ${stateClass}" style=${style} transform=${transform}>
-        <g transform=${inner}>${renderPrims(prims, !!item.fill || !!live?.active)}</g>
+        <g transform=${inner}>${renderPrims(prims, !!item.fill || !!live?.active, !!item.solid)}</g>
         ${
           selected
             ? (() => {
@@ -3547,9 +3634,12 @@ export class FloorplanCanvas extends LitElement {
     return svg`
       <line class="furniture-outline" x1=${top[0]} y1=${top[1]} x2=${rotate[0]} y2=${rotate[1]}></line>
       <circle class="furniture-handle rotate" cx=${rotate[0]} cy=${rotate[1]} r=${r}></circle>
-      ${square(h.right, r * 0.8)}
-      ${square(h.bottom, r * 0.8)}
-      ${square(h.corner, r, "corner")}
+      ${(["n", "s", "e", "w"] as const).map((k) =>
+        square(h[k], r * 0.8, k === "n" || k === "s" ? "edge-ns" : "edge-ew"),
+      )}
+      ${(["ne", "nw", "se", "sw"] as const).map((k) =>
+        square(h[k], r, k === "ne" || k === "sw" ? "corner-nesw" : "corner"),
+      )}
       ${moveGrip}
     `;
   }
@@ -3776,18 +3866,14 @@ export class FloorplanCanvas extends LitElement {
           // Sizes follow the whole opening, so a half doesn't throw a
           // stubbier patch than the full window would.
           const base = Math.max(fullWidth * 1.4, 1.2 * m);
-          // A garage door shows its state with the door itself: no
-          // shade while closed, only light while open.
-          const shades = !opening.garage;
-          if (openness === null) {
-            if (shades) soft(fullWidth * 1.2, "#9e9e9e", 0.25);
-            continue;
-          }
+          // A closed (or unavailable) cover lets no light in and throws
+          // nothing: the cover itself shows its state, and a dark patch
+          // read as light. Partly open lets in its share.
+          if (openness === null || openness < 0.05) continue;
           if (!sun) {
-            // No compass: open = bright, closed = shade.
+            // No compass: brighter the more it's open.
             const depth = Math.max(fullWidth * 1.6, 1.2 * m);
-            if (openness >= 0.05) soft(depth, "#ffd54f", 0.2 + 0.5 * openness);
-            else if (shades) soft(depth, "#263238", 0.45, false);
+            soft(depth, "#ffd54f", 0.2 + 0.5 * openness);
             continue;
           }
           const day = daylight(sun.elevation);
@@ -3797,9 +3883,6 @@ export class FloorplanCanvas extends LitElement {
           // blue-grey, like a soft shadow, as clouds thicken.
           if (day < 1) soft(base, NIGHT_COLOR, 0.3 * (1 - day) * openness);
           // Behind a closed cover: charcoal shade, day or night.
-          if (shades && segLinked && openness < 0.95) {
-            soft(base, SHADE_COLOR, 0.45 * (1 - openness), false);
-          }
           if (day <= 0) continue;
           // Clouds: the direct beam fades out as they thicken (gone when
           // overcast).

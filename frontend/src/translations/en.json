@@ -504,7 +504,21 @@
     "deleteIconConfirm": "Remove “{name}” from the library? Items already placed show as an empty outline.",
     "iconColors": "Use the file's own colours (otherwise drawn in the item's line colour)",
     "noCustom": "No imported icons yet.",
-    "searchEntity": "Search entities…"
+    "searchEntity": "Search entities…",
+    "solid": "Solid (hides what's beneath)",
+    "forward": "Bring forward",
+    "backward": "Send backward",
+    "corners": "Corners",
+    "allCorners": "All corners ({pct}%)",
+    "allCornersMixed": "All corners (mixed)",
+    "cornerN": "Corner {n} ({pct}%)",
+    "resetCorners": "Reset to soft corners",
+    "corner": {
+      "topLeft": "Top left ({pct}%)",
+      "topRight": "Top right ({pct}%)",
+      "bottomRight": "Bottom right ({pct}%)",
+      "bottomLeft": "Bottom left ({pct}%)"
+    }
   },
   "compass": {
     "title": "North is {dir} of the plan's top",

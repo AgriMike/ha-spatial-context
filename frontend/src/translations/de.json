@@ -504,7 +504,21 @@
     "deleteIconConfirm": "„{name}“ aus der Bibliothek entfernen? Bereits platzierte Objekte erscheinen als leerer Umriss.",
     "iconColors": "Eigene Farben der Datei verwenden (sonst in der Linienfarbe des Objekts)",
     "noCustom": "Noch keine importierten Symbole.",
-    "searchEntity": "Entitäten suchen…"
+    "searchEntity": "Entitäten suchen…",
+    "solid": "Deckend (verdeckt Darunterliegendes)",
+    "forward": "Eine Ebene nach vorne",
+    "backward": "Eine Ebene nach hinten",
+    "corners": "Ecken",
+    "allCorners": "Alle Ecken ({pct} %)",
+    "allCornersMixed": "Alle Ecken (gemischt)",
+    "cornerN": "Ecke {n} ({pct} %)",
+    "resetCorners": "Auf weiche Ecken zurücksetzen",
+    "corner": {
+      "topLeft": "Oben links ({pct} %)",
+      "topRight": "Oben rechts ({pct} %)",
+      "bottomRight": "Unten rechts ({pct} %)",
+      "bottomLeft": "Unten links ({pct} %)"
+    }
   },
   "compass": {
     "title": "Norden relativ zur Oberkante des Plans: {dir}",

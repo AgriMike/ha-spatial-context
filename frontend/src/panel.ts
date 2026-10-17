@@ -3503,13 +3503,37 @@ export class SpatialContextPanel extends LitElement {
   }
 
   /** Draw order: front = drawn last (on top). */
-  private _onFurnitureOrder = (e: CustomEvent<{ front: boolean }>) => {
+  private _onFurnitureOrder = (
+    e: CustomEvent<{ front: boolean; step?: boolean }>,
+  ) => {
     const item = this._selectedFurniture;
     if (!item) return;
-    const rest = this._layout.furniture.filter((f) => f.id !== item.id);
-    this._updateLayout({
-      furniture: e.detail.front ? [...rest, item] : [item, ...rest],
-    });
+    const all = this._layout.furniture;
+    const rest = all.filter((f) => f.id !== item.id);
+    if (!e.detail.step) {
+      this._updateLayout({
+        furniture: e.detail.front ? [...rest, item] : [item, ...rest],
+      });
+      return;
+    }
+    // One layer: past the next item it overlaps (stacking order only
+    // shows where items overlap), else nothing to do.
+    const perM = this._unitsPerMeter();
+    const k = perM ? perM / 100 : 0.5; // units per cm (the canvas fallback)
+    const reach = (f: FurnitureItem) =>
+      (Math.hypot(f.width_cm, f.depth_cm) / 2) * k;
+    const overlaps = (f: FurnitureItem) =>
+      Math.hypot(f.x - item.x, f.y - item.y) < reach(f) + reach(item);
+    const index = all.findIndex((f) => f.id === item.id);
+    const order = e.detail.front
+      ? all.slice(index + 1)
+      : all.slice(0, index).reverse();
+    const past = order.find(overlaps);
+    if (!past) return;
+    const at = rest.findIndex((f) => f.id === past.id);
+    const next = [...rest];
+    next.splice(e.detail.front ? at + 1 : at, 0, item);
+    this._updateLayout({ furniture: next });
   };
 
   private _onOverlayToggle = (

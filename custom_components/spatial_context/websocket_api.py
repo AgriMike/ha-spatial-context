@@ -156,6 +156,7 @@ _FURNITURE_SCHEMA = {
     ),
     vol.Optional("color"): vol.Any(vol.Match(r"^#[0-9a-fA-F]{6}$"), None),
     vol.Optional("fill"): bool,
+    vol.Optional("solid"): bool,
     vol.Optional("label"): vol.Any(str, None),
     vol.Optional("show_label"): bool,
     vol.Optional("mirrored"): bool,
@@ -169,6 +170,14 @@ _FURNITURE_SCHEMA = {
         vol.Length(max=500),
     ),
     vol.Optional("closed"): bool,
+    # A drawn shape's per-corner rounding, 0-100 % each.
+    vol.Optional("corners"): vol.Any(
+        None,
+        vol.All(
+            [vol.All(vol.Coerce(float), vol.Range(min=0, max=100))],
+            vol.Length(max=500),
+        ),
+    ),
 }
 
 _SCALE_SCHEMA = vol.Any(

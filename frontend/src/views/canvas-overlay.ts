@@ -59,7 +59,8 @@ import {
   toolRowStyles,
 } from "../styles";
 import { localize } from "../i18n";
-import { catalogItem } from "../canvas/furniture-catalog";
+import { catalogItem, isShapeKind } from "../canvas/furniture-catalog";
+import { defaultCornerPct, shapeCornerCount } from "../canvas/furniture-draw";
 import {
   isToggleable,
   type ItemState,
@@ -1347,6 +1348,74 @@ export class CanvasOverlay extends LitElement {
     </div>`;
   }
 
+  /** A drawn shape's corner rounding: all at once, then each corner (up
+   * to eight; the rest follow "All corners"), 0 % square to 100 % as
+   * round as the shorter side allows. */
+  private _renderCorners(item: FurnitureItem) {
+    const entry = catalogItem(item.kind);
+    if (!entry || !isShapeKind(item.kind)) return nothing;
+    const count = shapeCornerCount(entry.draw, entry.opts, item.points);
+    if (count === 0) return nothing;
+    const fallback = defaultCornerPct(item.width_cm, item.depth_cm);
+    const values = Array.from(
+      { length: count },
+      (_, i) => item.corners?.[i] ?? fallback,
+    );
+    const all = values.every((v) => v === values[0]) ? values[0]! : null;
+    const change = (corners: number[] | null) =>
+      this._fire("furniture-change", { patch: { corners } });
+    const names =
+      entry.draw === "shapeRect" && !item.points
+        ? ["topLeft", "topRight", "bottomRight", "bottomLeft"]
+        : null;
+    const slider = (value: number, onInput: (v: number) => void) =>
+      html`<input
+        type="range"
+        class="stroke-range"
+        min="0"
+        max="100"
+        step="1"
+        style="--pct:${value}%"
+        .value=${String(value)}
+        @input=${(e: Event) =>
+          onInput(Number((e.target as HTMLInputElement).value))}
+      />`;
+    return html`<div class="info-group">
+      <div class="info-group-title">${localize("furniture.corners")}</div>
+      ${this._fieldRow(
+        "mdi:rounded-corner",
+        all === null
+          ? localize("furniture.allCornersMixed")
+          : localize("furniture.allCorners", { pct: all }),
+        slider(all ?? fallback, (v) => change(Array(count).fill(v))),
+      )}
+      ${
+        count <= 8
+          ? values.map((v, i) =>
+              this._fieldRow(
+                "mdi:vector-square",
+                names
+                  ? localize(`furniture.corner.${names[i]}`, { pct: v })
+                  : localize("furniture.cornerN", { n: i + 1, pct: v }),
+                slider(v, (next) =>
+                  change(values.map((old, j) => (j === i ? next : old))),
+                ),
+              ),
+            )
+          : nothing
+      }
+      ${
+        item.corners
+          ? this._actionRow(
+              "mdi:restore",
+              localize("furniture.resetCorners"),
+              () => change(null),
+            )
+          : nothing
+      }
+    </div>`;
+  }
+
   private _renderFurnitureCard(item: FurnitureItem) {
     const entry = catalogItem(item.kind);
     const unit =
@@ -1370,7 +1439,7 @@ export class CanvasOverlay extends LitElement {
     const toggle = (
       icon: string,
       label: string,
-      key: "fill" | "show_label" | "mirrored" | "locked",
+      key: "fill" | "solid" | "show_label" | "mirrored" | "locked",
     ) =>
       this._fieldRow(
         icon,
@@ -1531,10 +1600,11 @@ export class CanvasOverlay extends LitElement {
             </span>`,
           )}
           ${toggle("mdi:format-color-fill", localize("furniture.fill"), "fill")}
+          ${toggle("mdi:layers-outline", localize("furniture.solid"), "solid")}
           ${toggle("mdi:flip-horizontal", localize("furniture.mirror"), "mirrored")}
           ${toggle("mdi:lock-outline", localize("furniture.lock"), "locked")}
         </div>
-        ${this._renderItemEntity(item)}
+        ${this._renderCorners(item)} ${this._renderItemEntity(item)}
         <div class="info-group">
           ${this._actionRow(
             "mdi:content-copy",
@@ -1545,6 +1615,18 @@ export class CanvasOverlay extends LitElement {
             "mdi:arrange-bring-to-front",
             localize("furniture.toFront"),
             () => this._fire("furniture-order-click", { front: true }),
+          )}
+          ${this._actionRow(
+            "mdi:arrange-bring-forward",
+            localize("furniture.forward"),
+            () =>
+              this._fire("furniture-order-click", { front: true, step: true }),
+          )}
+          ${this._actionRow(
+            "mdi:arrange-send-backward",
+            localize("furniture.backward"),
+            () =>
+              this._fire("furniture-order-click", { front: false, step: true }),
           )}
           ${this._actionRow(
             "mdi:arrange-send-to-back",

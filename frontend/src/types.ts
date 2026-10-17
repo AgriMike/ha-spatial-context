@@ -214,6 +214,8 @@ export interface FurnitureItem {
   color?: string | null;
   /** Shade the item's footprint in its line colour. */
   fill?: boolean;
+  /** Not see-through: its body hides whatever is drawn beneath it. */
+  solid?: boolean;
   /** Display name; null uses the catalog name. */
   label?: string | null;
   show_label?: boolean;
@@ -231,6 +233,9 @@ export interface FurnitureItem {
   points?: [number, number][];
   /** Whether that outline is closed (clicked back to its first corner). */
   closed?: boolean;
+  /** A drawn shape's corner rounding, one 0–100 % per corner (0 square);
+   * absent or null = the usual soft corners. */
+  corners?: number[] | null;
 }
 
 /** The canvas's visible region in its own stored coordinate space — what

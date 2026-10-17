@@ -1004,11 +1004,16 @@ const T: Record<string, Template> = {
     const basins = num(o, "basins", 1);
     const out = [rect(0, 0, w, d)];
     const bw = (w - 16 - (basins - 1) * 6) / basins;
+    // A rear drain sits in the basin's back right corner (an offset drain
+    // leaves the basin clear for big pots).
+    const rear = flag(o, "rearDrain");
     for (let i = 0; i < basins; i++) {
       const x = 8 + i * (bw + 6);
       out.push(
         rect(x, 12, bw, d - 22, 5),
-        circ(x + bw / 2, 12 + (d - 22) * 0.6, 2.5),
+        rear
+          ? circ(x + bw - 7, 19, 2.5)
+          : circ(x + bw / 2, 12 + (d - 22) * 0.6, 2.5),
       );
     }
     out.push(line(w / 2, 3, w / 2, 10), circ(w / 2, 4, 2));
@@ -1137,11 +1142,30 @@ const T: Record<string, Template> = {
   vanity: (w, d, o) => {
     const basins = num(o, "basins", 1);
     const out = [rect(0, 0, w, d), line(0, d - 3, w, d - 3)];
-    for (const x of centres(0, w, basins))
-      out.push(
-        ell(x, d * 0.5, min(22, w / basins / 2 - 5), d * 0.28),
-        circ(x, d * 0.18, 2),
-      );
+    // One long trough basin with a tap per basin's worth of width.
+    if (flag(o, "trough")) {
+      const taps = Math.max(1, num(o, "taps", 2));
+      out.push(rect(10, d * 0.28, w - 20, d * 0.5, 4));
+      for (const x of centres(10, w - 10, taps))
+        out.push(circ(x, d * 0.15, 2), circ(x, d * 0.6, 2));
+      return out;
+    }
+    for (const x of centres(0, w, basins)) {
+      if (flag(o, "rect")) {
+        // A rectangular undermount basin, drain in the middle.
+        const bw = min(46, w / basins - 14);
+        out.push(
+          rect(x - bw / 2, d * 0.28, bw, d * 0.5, 4),
+          circ(x, d * 0.53, 2),
+          circ(x, d * 0.15, 2),
+        );
+      } else {
+        out.push(
+          ell(x, d * 0.5, min(22, w / basins / 2 - 5), d * 0.28),
+          circ(x, d * 0.18, 2),
+        );
+      }
+    }
     return out;
   },
   pedestalSink: (w, d) => [
@@ -2484,31 +2508,60 @@ const T: Record<string, Template> = {
     ),
   ],
   // Basic shapes: the same soft corners and line weight as the items.
-  shapeRect: (w, d) => [rect(0, 0, w, d)],
+  shapeRect: (w, d, o) => [
+    o["corners"]
+      ? shapePoly(
+          w,
+          d,
+          [
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [0, 1],
+          ],
+          o,
+        )
+      : rect(0, 0, w, d),
+  ],
   shapeEllipse: (w, d) => [ell(w / 2, d / 2, w / 2, d / 2)],
-  shapeTriangle: (w, d) => [
-    shapePoly(w, d, [
-      [0.5, 0],
-      [1, 1],
-      [0, 1],
-    ]),
+  shapeTriangle: (w, d, o) => [
+    shapePoly(
+      w,
+      d,
+      [
+        [0.5, 0],
+        [1, 1],
+        [0, 1],
+      ],
+      o,
+    ),
   ],
-  shapeRightTriangle: (w, d) => [
-    shapePoly(w, d, [
-      [0, 0],
-      [1, 1],
-      [0, 1],
-    ]),
+  shapeRightTriangle: (w, d, o) => [
+    shapePoly(
+      w,
+      d,
+      [
+        [0, 0],
+        [1, 1],
+        [0, 1],
+      ],
+      o,
+    ),
   ],
-  shapeDiamond: (w, d) => [
-    shapePoly(w, d, [
-      [0.5, 0],
-      [1, 0.5],
-      [0.5, 1],
-      [0, 0.5],
-    ]),
+  shapeDiamond: (w, d, o) => [
+    shapePoly(
+      w,
+      d,
+      [
+        [0.5, 0],
+        [1, 0.5],
+        [0.5, 1],
+        [0, 0.5],
+      ],
+      o,
+    ),
   ],
-  shapePolygon: (w, d, o) => [shapePoly(w, d, ring(num(o, "sides", 6)))],
+  shapePolygon: (w, d, o) => [shapePoly(w, d, ring(num(o, "sides", 6)), o)],
   shapeStar: (w, d, o) => {
     const n = num(o, "points", 5);
     const outer = ring(n);
@@ -2518,70 +2571,96 @@ const T: Record<string, Template> = {
         w,
         d,
         outer.flatMap((p, i): Pt[] => [p, inner[i]!]),
+        o,
       ),
     ];
   },
-  shapeL: (w, d) => [
-    shapePoly(w, d, [
-      [0, 0],
-      [0.45, 0],
-      [0.45, 0.55],
-      [1, 0.55],
-      [1, 1],
-      [0, 1],
-    ]),
+  shapeL: (w, d, o) => [
+    shapePoly(
+      w,
+      d,
+      [
+        [0, 0],
+        [0.45, 0],
+        [0.45, 0.55],
+        [1, 0.55],
+        [1, 1],
+        [0, 1],
+      ],
+      o,
+    ),
   ],
-  shapeU: (w, d) => [
-    shapePoly(w, d, [
-      [0, 0],
-      [0.3, 0],
-      [0.3, 0.6],
-      [0.7, 0.6],
-      [0.7, 0],
-      [1, 0],
-      [1, 1],
-      [0, 1],
-    ]),
+  shapeU: (w, d, o) => [
+    shapePoly(
+      w,
+      d,
+      [
+        [0, 0],
+        [0.3, 0],
+        [0.3, 0.6],
+        [0.7, 0.6],
+        [0.7, 0],
+        [1, 0],
+        [1, 1],
+        [0, 1],
+      ],
+      o,
+    ),
   ],
-  shapePlus: (w, d) => [
-    shapePoly(w, d, [
-      [0.35, 0],
-      [0.65, 0],
-      [0.65, 0.35],
-      [1, 0.35],
-      [1, 0.65],
-      [0.65, 0.65],
-      [0.65, 1],
-      [0.35, 1],
-      [0.35, 0.65],
-      [0, 0.65],
-      [0, 0.35],
-      [0.35, 0.35],
-    ]),
+  shapePlus: (w, d, o) => [
+    shapePoly(
+      w,
+      d,
+      [
+        [0.35, 0],
+        [0.65, 0],
+        [0.65, 0.35],
+        [1, 0.35],
+        [1, 0.65],
+        [0.65, 0.65],
+        [0.65, 1],
+        [0.35, 1],
+        [0.35, 0.65],
+        [0, 0.65],
+        [0, 0.35],
+        [0.35, 0.35],
+      ],
+      o,
+    ),
   ],
-  shapeArrow: (w, d) => [
-    shapePoly(w, d, [
-      [0, 0.32],
-      [0.68, 0.32],
-      [0.68, 0],
-      [1, 0.5],
-      [0.68, 1],
-      [0.68, 0.68],
-      [0, 0.68],
-    ]),
+  shapeArrow: (w, d, o) => [
+    shapePoly(
+      w,
+      d,
+      [
+        [0, 0.32],
+        [0.68, 0.32],
+        [0.68, 0],
+        [1, 0.5],
+        [0.68, 1],
+        [0.68, 0.68],
+        [0, 0.68],
+      ],
+      o,
+    ),
   ],
   shapeSemicircle: (w, d) => [path(`M0,${d} A${w / 2},${d} 0 0 1 ${w},${d} Z`)],
   shapeQuarter: (w, d) => [path(`M0,0 A${w},${d} 0 0 1 ${w},${d} L0,${d} Z`)],
   shapeLine: (w, d) => [line(0, d / 2, w, d / 2)],
   shapeDashedLine: (w, d) => [line(0, d / 2, w, d / 2, true)],
-  shapeFreeform: (w, d) => [
-    shapePoly(w, d, [
-      [0.1, 0.2],
-      [0.55, 0],
-      [1, 0.35],
-      [0.8, 1],
-      [0.2, 0.85],
-    ]),
+  shapeFreeform: (w, d, o) => [
+    shapePoly(
+      w,
+      d,
+      [
+        [0.1, 0.2],
+        [0.55, 0],
+        [1, 0.35],
+        [0.8, 1],
+        [0.2, 0.85],
+      ],
+      o,
+    ),
   ],
   custom: (w, d, o) => [
     {
@@ -2760,7 +2839,7 @@ export function softRadius(w: number, d: number): number {
 export function roundedPolyPath(
   points: Pt[],
   closed: boolean,
-  r: number,
+  r: number | number[],
 ): string {
   const n = points.length;
   if (n < 2) return "";
@@ -2771,7 +2850,8 @@ export function roundedPolyPath(
     const b = points[(i + 1) % n]!;
     const la = Math.hypot(a[0] - p[0], a[1] - p[1]) || 1;
     const lb = Math.hypot(b[0] - p[0], b[1] - p[1]) || 1;
-    const k = Math.min(r, la / 2, lb / 2);
+    const ri = typeof r === "number" ? r : (r[i] ?? 0);
+    const k = Math.max(0, Math.min(ri, la / 2, lb / 2));
     return {
       p,
       inn: [p[0] + ((a[0] - p[0]) / la) * k, p[1] + ((a[1] - p[1]) / la) * k],
@@ -2796,15 +2876,83 @@ export function roundedPolyPath(
   return `${d} Z`;
 }
 
+/** Each corner's rounding: from the item's own per-corner percentages
+ * (opts.corners, "0,50,100…": 0 square, 100 as round as the shorter side
+ * allows), else the usual soft corners. */
+function cornerRadii(
+  o: Opts,
+  w: number,
+  d: number,
+  n: number,
+  fallback: number,
+): number | number[] {
+  const raw = o["corners"];
+  if (typeof raw !== "string" || !raw) return fallback;
+  const pcts = raw.split(",").map(Number);
+  const full = Math.min(w, d) / 2;
+  return Array.from({ length: n }, (_, i) => {
+    const pct = pcts[i];
+    return pct === undefined || !Number.isFinite(pct)
+      ? fallback
+      : (Math.max(0, Math.min(100, pct)) / 100) * full;
+  });
+}
+
 /** A soft-cornered polygon, fitted to w x d from 0–1 fractions. */
-const shapePoly = (w: number, d: number, frac: Pt[], closed = true): Prim =>
+const shapePoly = (
+  w: number,
+  d: number,
+  frac: Pt[],
+  o: Opts = {},
+  closed = true,
+): Prim =>
   path(
     roundedPolyPath(
       frac.map(([fx, fy]): Pt => [fx * w, fy * d]),
       closed,
-      softRadius(w, d),
+      cornerRadii(o, w, d, frac.length, softRadius(w, d)),
     ),
   );
+
+/** How many corners a drawn shape has, for its per-corner rounding — 0
+ * for anything without (circles, arcs, lines, furniture). */
+export function shapeCornerCount(
+  template: string,
+  opts: Opts,
+  points?: [number, number][] | null,
+): number {
+  if (points && points.length >= 2) return points.length;
+  switch (template) {
+    case "shapeRect":
+    case "shapeDiamond":
+      return 4;
+    case "shapeTriangle":
+    case "shapeRightTriangle":
+      return 3;
+    case "shapePolygon":
+      return num(opts, "sides", 6);
+    case "shapeStar":
+      return num(opts, "points", 5) * 2;
+    case "shapeL":
+      return 6;
+    case "shapeU":
+      return 8;
+    case "shapePlus":
+      return 12;
+    case "shapeArrow":
+      return 7;
+    case "shapeFreeform":
+      return 5;
+    default:
+      return 0;
+  }
+}
+
+/** The usual soft rounding as a percentage, for a corner left unset. */
+export function defaultCornerPct(w: number, d: number): number {
+  const full = Math.min(w, d) / 2;
+  return full > 0 ? Math.round((softRadius(w, d) / full) * 100) : 0;
+}
 
 /** n points round an ellipse, the first at the top. */
 const ring = (n: number, k = 1, turn = 0): Pt[] =>
@@ -2820,10 +2968,18 @@ export function freeformPrims(
   w: number,
   d: number,
   closed: boolean,
+  corners?: number[] | null,
 ): Prim[] {
   if (points.length < 2) return [];
   const pts = points.map(([fx, fy]): Pt => [fx * w, fy * d]);
-  return [path(roundedPolyPath(pts, closed, 6))];
+  const radii = cornerRadii(
+    corners?.length ? { corners: corners.join(",") } : {},
+    w,
+    d,
+    pts.length,
+    6,
+  );
+  return [path(roundedPolyPath(pts, closed, radii))];
 }
 
 /** Imported icons by id: their image URL and whether they keep their
@@ -2845,59 +3001,77 @@ export function setCustomImages(icons: CustomIcon[]): void {
 export function renderPrims(
   prims: Prim[],
   fillFirst: boolean,
+  solid = false,
 ): SVGTemplateResult[] {
-  return prims.map((p, i) => {
-    const cls = `${p.dash ? "fx dash" : "fx"}${fillFirst && i === 0 ? " body" : ""}`;
-    switch (p.t) {
-      case "rect": {
-        // Friendlier than square: every box gets soft corners (a pill when
-        // thin), whatever radius its template asked for at least.
-        const w = max(0.01, p.w);
-        const h = max(0.01, p.h);
-        const rx = max(p.r ?? 0, Math.min(Math.min(w, h) * 0.22, 6));
-        return p.rot
-          ? svg`<rect class=${cls} x=${p.x} y=${p.y} width=${w} height=${h} rx=${Math.min(rx, Math.min(w, h) / 2)} transform="rotate(${p.rot} ${p.x + w / 2} ${p.y + h / 2})"></rect>`
-          : svg`<rect class=${cls} x=${p.x} y=${p.y} width=${w} height=${h} rx=${Math.min(rx, Math.min(w, h) / 2)}></rect>`;
-      }
-      case "icon": {
-        const icon = UI_ICONS[p.name];
-        if (!icon) return svg``;
-        const s = Math.min(p.w, p.d) / 64;
-        return svg`<g class="fx-icon" transform="translate(${(p.w - 64 * s) / 2} ${(p.d - 64 * s) / 2}) scale(${s})">${unsafeSVG(icon.svg)}</g>`;
-      }
-      case "image": {
-        const img = CUSTOM_IMAGES.get(p.id);
-        const w = max(0.01, p.w);
-        const h = max(0.01, p.d);
-        // A deleted icon: just its footprint.
-        if (!img)
-          return svg`<rect class="fx dash" x="0" y="0" width=${w} height=${h}></rect>`;
-        if (img.colors)
-          return svg`<image href=${img.href} x="0" y="0" width=${w} height=${h} preserveAspectRatio="xMidYMid meet"></image>`;
-        // One colour: the drawing's shapes cut a fill in the item's line
-        // colour, so it follows the theme and live state like the rest.
-        const id = `fx-mask-${p.id}-${Math.round(w * 10)}x${Math.round(h * 10)}`;
-        return svg`<mask id=${id} style="mask-type:alpha" maskUnits="userSpaceOnUse" x="0" y="0" width=${w} height=${h}>
-            <image href=${img.href} x="0" y="0" width=${w} height=${h} preserveAspectRatio="xMidYMid meet"></image>
-          </mask>
-          <rect class="fx-tint" x="0" y="0" width=${w} height=${h} mask="url(#${id})"></rect>`;
-      }
-      case "ellipse":
-        return p.rot
-          ? svg`<ellipse class=${cls} cx=${p.cx} cy=${p.cy} rx=${max(0.01, p.rx)} ry=${max(0.01, p.ry)} transform="rotate(${p.rot} ${p.cx} ${p.cy})"></ellipse>`
-          : svg`<ellipse class=${cls} cx=${p.cx} cy=${p.cy} rx=${max(0.01, p.rx)} ry=${max(0.01, p.ry)}></ellipse>`;
-      case "line":
-        return svg`<line class=${cls} x1=${p.x1} y1=${p.y1} x2=${p.x2} y2=${p.y2}></line>`;
-      case "poly": {
-        const pts = p.points.map(([x, y]) => `${x},${y}`).join(" ");
-        return p.closed
-          ? svg`<polygon class=${cls} points=${pts}></polygon>`
-          : svg`<polyline class=${cls} points=${pts}></polyline>`;
-      }
-      case "path":
-        return svg`<path class=${cls} d=${p.d}></path>`;
+  const out = prims.map((p, i) =>
+    renderPrim(
+      p,
+      `${p.dash ? "fx dash" : "fx"}${fillFirst && i === 0 ? " body" : ""}`,
+    ),
+  );
+  // Solid: an opaque copy of the main body underneath, so whatever is
+  // drawn below the item (chairs tucked under a table) is hidden.
+  const body = prims[0];
+  if (solid && body) {
+    out.unshift(
+      body.t === "image" || body.t === "icon"
+        ? svg`<rect class="fx-solid" x="0" y="0" width=${max(0.01, body.w)} height=${max(0.01, body.d)} rx=${softRadius(body.w, body.d)}></rect>`
+        : renderPrim(body, "fx-solid"),
+    );
+  }
+  return out;
+}
+
+function renderPrim(p: Prim, cls: string): SVGTemplateResult {
+  switch (p.t) {
+    case "rect": {
+      // Friendlier than square: every box gets soft corners (a pill when
+      // thin), whatever radius its template asked for at least.
+      const w = max(0.01, p.w);
+      const h = max(0.01, p.h);
+      const rx = max(p.r ?? 0, Math.min(Math.min(w, h) * 0.22, 6));
+      return p.rot
+        ? svg`<rect class=${cls} x=${p.x} y=${p.y} width=${w} height=${h} rx=${Math.min(rx, Math.min(w, h) / 2)} transform="rotate(${p.rot} ${p.x + w / 2} ${p.y + h / 2})"></rect>`
+        : svg`<rect class=${cls} x=${p.x} y=${p.y} width=${w} height=${h} rx=${Math.min(rx, Math.min(w, h) / 2)}></rect>`;
     }
-  });
+    case "icon": {
+      const icon = UI_ICONS[p.name];
+      if (!icon) return svg``;
+      const s = Math.min(p.w, p.d) / 64;
+      return svg`<g class="fx-icon" transform="translate(${(p.w - 64 * s) / 2} ${(p.d - 64 * s) / 2}) scale(${s})">${unsafeSVG(icon.svg)}</g>`;
+    }
+    case "image": {
+      const img = CUSTOM_IMAGES.get(p.id);
+      const w = max(0.01, p.w);
+      const h = max(0.01, p.d);
+      // A deleted icon: just its footprint.
+      if (!img)
+        return svg`<rect class="fx dash" x="0" y="0" width=${w} height=${h}></rect>`;
+      if (img.colors)
+        return svg`<image href=${img.href} x="0" y="0" width=${w} height=${h} preserveAspectRatio="xMidYMid meet"></image>`;
+      // One colour: the drawing's shapes cut a fill in the item's line
+      // colour, so it follows the theme and live state like the rest.
+      const id = `fx-mask-${p.id}-${Math.round(w * 10)}x${Math.round(h * 10)}`;
+      return svg`<mask id=${id} style="mask-type:alpha" maskUnits="userSpaceOnUse" x="0" y="0" width=${w} height=${h}>
+          <image href=${img.href} x="0" y="0" width=${w} height=${h} preserveAspectRatio="xMidYMid meet"></image>
+        </mask>
+        <rect class="fx-tint" x="0" y="0" width=${w} height=${h} mask="url(#${id})"></rect>`;
+    }
+    case "ellipse":
+      return p.rot
+        ? svg`<ellipse class=${cls} cx=${p.cx} cy=${p.cy} rx=${max(0.01, p.rx)} ry=${max(0.01, p.ry)} transform="rotate(${p.rot} ${p.cx} ${p.cy})"></ellipse>`
+        : svg`<ellipse class=${cls} cx=${p.cx} cy=${p.cy} rx=${max(0.01, p.rx)} ry=${max(0.01, p.ry)}></ellipse>`;
+    case "line":
+      return svg`<line class=${cls} x1=${p.x1} y1=${p.y1} x2=${p.x2} y2=${p.y2}></line>`;
+    case "poly": {
+      const pts = p.points.map(([x, y]) => `${x},${y}`).join(" ");
+      return p.closed
+        ? svg`<polygon class=${cls} points=${pts}></polygon>`
+        : svg`<polyline class=${cls} points=${pts}></polyline>`;
+    }
+    case "path":
+      return svg`<path class=${cls} d=${p.d}></path>`;
+  }
 }
 
 /** Shared CSS for drawn items — `--fx-stroke-width` / `--fx-color` set per
@@ -2923,4 +3097,8 @@ export const FURNITURE_STYLES = `
   .fx-icon * { vector-effect: non-scaling-stroke; }
   .fx.body { fill: var(--fx-color, currentColor); fill-opacity: 0.16; }
   .fx-tint { fill: var(--fx-color, currentColor); stroke: none; }
+  .fx-solid {
+    fill: color-mix(in srgb, var(--fx-color, currentColor) 10%, var(--sc-bg, #fff));
+    stroke: none;
+  }
 `;
