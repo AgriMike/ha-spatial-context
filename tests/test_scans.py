@@ -180,6 +180,7 @@ class ScansTest(unittest.TestCase):
                 view = await self.scans.async_get_view3d(self.hass, "ground")
                 self.assertEqual([s["id"] for s in view["scans"]], [scan["id"]])
                 self.assertIsNone(view["wall_height_m"])
+                self.assertIsNone(view["floor_elevation_m"])
             finally:
                 await client.close()
 
@@ -253,6 +254,39 @@ class ScansTest(unittest.TestCase):
 
             again = await self.scans.async_get_view3d(self.hass, "ground")
             self.assertEqual(again, result)
+
+        self._run(run())
+
+    def test_floor_elevation_saved_and_kept_when_left_out(self) -> None:
+        async def run() -> None:
+            # Never saved: automatic stacking.
+            view = await self.scans.async_get_view3d(self.hass, "upstairs")
+            self.assertIsNone(view["floor_elevation_m"])
+
+            result = await self.scans.async_save_view3d(
+                self.hass, "upstairs", None, [], floor_elevation_m=3.91
+            )
+            self.assertEqual(result["floor_elevation_m"], 3.91)
+            self.assertIsNone(result["wall_height_m"])
+
+            # A save without the field (an older frontend) keeps it.
+            result = await self.scans.async_save_view3d(
+                self.hass, "upstairs", 2.4, []
+            )
+            self.assertEqual(result["floor_elevation_m"], 3.91)
+            self.assertEqual(result["wall_height_m"], 2.4)
+            again = await self.scans.async_get_view3d(self.hass, "upstairs")
+            self.assertEqual(again["floor_elevation_m"], 3.91)
+
+            # Explicit None goes back to automatic stacking.
+            result = await self.scans.async_save_view3d(
+                self.hass, "upstairs", 2.4, [], floor_elevation_m=None
+            )
+            self.assertIsNone(result["floor_elevation_m"])
+
+            # Other floors are untouched.
+            other = await self.scans.async_get_view3d(self.hass, "ground")
+            self.assertIsNone(other["floor_elevation_m"])
 
         self._run(run())
 

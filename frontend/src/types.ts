@@ -270,6 +270,9 @@ export interface RoomScan {
 export interface View3dSettings {
   /** Null = the default (2.4 m). */
   wall_height_m: number | null;
+  /** Metres above the building's ground level, for stacking floors in the
+   * 3D view (split levels). Null = a full storey apart by floor level. */
+  floor_elevation_m: number | null;
   scans: RoomScan[];
 }
 

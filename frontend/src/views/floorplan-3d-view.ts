@@ -53,7 +53,7 @@ function loadModule(url: string): Promise<View3dModule> {
 }
 
 function emptyView3d(): View3dSettings {
-  return { wall_height_m: null, scans: [] };
+  return { wall_height_m: null, floor_elevation_m: null, scans: [] };
 }
 
 type HomeConfig = HomeAssistant["config"];
@@ -539,7 +539,10 @@ export class Floorplan3dView extends LitElement {
   private _rebuild = (): void => {
     const handle = this._handle;
     if (!handle) return;
-    const inputs: (FloorInput & { level: number | null })[] = [];
+    const inputs: (FloorInput & {
+      level: number | null;
+      elevation: number | null;
+    })[] = [];
     for (const floorId of this._shownFloorIds) {
       const layout = this._layoutOf(floorId);
       if (!layout) continue;
@@ -551,6 +554,7 @@ export class Floorplan3dView extends LitElement {
         wallHeight: this._wallHeight(floorId),
         baseY: 0,
         level: meta?.level ?? null,
+        elevation: this._view3d.get(floorId)?.floor_elevation_m ?? null,
       });
     }
     if (!inputs.length) return;
@@ -945,6 +949,9 @@ export class Floorplan3dView extends LitElement {
     const scans = this._scans;
     const sel = this._selectedScan;
     const wallHeight = this.floorId ? this._wallHeight(this.floorId) : 2.4;
+    const elevation = this.floorId
+      ? (this._view3d.get(this.floorId)?.floor_elevation_m ?? null)
+      : null;
     return html`<div class="sheet floating-panel">
       <h3>${localize("view3d.scans")}</h3>
       <div class="row">
@@ -959,6 +966,26 @@ export class Floorplan3dView extends LitElement {
             const v = Number((e.target as HTMLInputElement).value);
             if (v >= 1 && v <= 10)
               this._patchView3d((s) => ({ ...s, wall_height_m: v }), "now");
+          }}
+        />
+        <span>m</span>
+      </div>
+      <div class="row" title=${localize("view3d.floorElevationHint")}>
+        <span>${localize("view3d.floorElevation")}</span>
+        <input
+          type="number"
+          min="-10"
+          max="50"
+          step="0.01"
+          placeholder=${localize("view3d.floorElevationAuto")}
+          .value=${elevation === null ? "" : String(elevation)}
+          @change=${(e: Event) => {
+            const input = e.target as HTMLInputElement;
+            const raw = input.value.trim();
+            const v = raw === "" ? null : Number(raw);
+            if (v === null || (Number.isFinite(v) && v >= -50 && v <= 100))
+              this._patchView3d((s) => ({ ...s, floor_elevation_m: v }), "now");
+            else input.value = elevation === null ? "" : String(elevation);
           }}
         />
         <span>m</span>

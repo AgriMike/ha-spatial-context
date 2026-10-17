@@ -252,6 +252,7 @@ export class HaClient {
       type: "spatial_context/save_view3d",
       floor_id: floorId,
       wall_height_m: settings.wall_height_m,
+      floor_elevation_m: settings.floor_elevation_m,
       scans: settings.scans.map((s) => ({
         id: s.id,
         name: s.name,

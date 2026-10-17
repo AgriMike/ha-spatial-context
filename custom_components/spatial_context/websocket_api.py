@@ -535,6 +535,10 @@ _SCAN_SCHEMA = {
         vol.Required("wall_height_m"): vol.Any(
             None, vol.All(vol.Coerce(float), vol.Range(min=1, max=10))
         ),
+        # Left out by an older frontend: the stored elevation is kept.
+        vol.Optional("floor_elevation_m"): vol.Any(
+            None, vol.All(vol.Coerce(float), vol.Range(min=-50, max=100))
+        ),
         vol.Required("scans"): [vol.Schema(_SCAN_SCHEMA, extra=vol.REMOVE_EXTRA)],
     }
 )
@@ -544,9 +548,15 @@ async def ws_save_view3d(
     connection: websocket_api.ActiveConnection,
     msg: dict,
 ) -> None:
-    """Update a floor's wall height and its scans' placement and look."""
+    """Update a floor's wall height, elevation and its scans' placement
+    and look."""
+    extra = (
+        {"floor_elevation_m": msg["floor_elevation_m"]}
+        if "floor_elevation_m" in msg
+        else {}
+    )
     result = await scans.async_save_view3d(
-        hass, msg["floor_id"], msg["wall_height_m"], msg["scans"]
+        hass, msg["floor_id"], msg["wall_height_m"], msg["scans"], **extra
     )
     connection.send_result(msg["id"], result)
 

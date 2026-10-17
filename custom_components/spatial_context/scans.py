@@ -61,7 +61,10 @@ def scans_dir(hass: HomeAssistant) -> Path:
 
 
 def _empty_floor() -> dict[str, Any]:
-    return {"wall_height_m": None, "scans": []}
+    # floor_elevation_m: metres above the building's ground level, for
+    # stacking floors in the 3D view (split levels); None = stack them a
+    # full storey apart by HA floor level.
+    return {"wall_height_m": None, "floor_elevation_m": None, "scans": []}
 
 
 async def _async_load(hass: HomeAssistant) -> dict[str, Any]:
@@ -77,6 +80,7 @@ async def async_get_view3d(hass: HomeAssistant, floor_id: str) -> dict[str, Any]
     floor = data["floors"].get(floor_id) or _empty_floor()
     return {
         "wall_height_m": floor.get("wall_height_m"),
+        "floor_elevation_m": floor.get("floor_elevation_m"),
         "scans": floor.get("scans", []),
     }
 
@@ -127,6 +131,9 @@ async def async_add_scan(
     return scan
 
 
+# A save that leaves out the floor elevation keeps the stored one.
+_KEEP: Any = object()
+
 # What a save may change on an existing scan — never its id, file or size.
 _EDITABLE = (
     "name",
@@ -146,8 +153,9 @@ async def async_save_view3d(
     floor_id: str,
     wall_height_m: float | None,
     scans: list[dict[str, Any]],
+    floor_elevation_m: float | None = _KEEP,
 ) -> dict[str, Any]:
-    """Update a floor's wall height and its scans' placement/look.
+    """Update a floor's wall height, elevation and its scans' placement/look.
 
     Scans are matched by id: listed ones are updated, unknown ids ignored
     (a file only ever arrives through the upload view), and scans left out
@@ -158,6 +166,8 @@ async def async_save_view3d(
         data = await _async_load(hass)
         floor = data["floors"].setdefault(floor_id, _empty_floor())
         floor["wall_height_m"] = wall_height_m
+        if floor_elevation_m is not _KEEP:
+            floor["floor_elevation_m"] = floor_elevation_m
         by_id = {scan["id"]: scan for scan in scans}
         for scan in floor.setdefault("scans", []):
             patch = by_id.get(scan["id"])
@@ -166,7 +176,11 @@ async def async_save_view3d(
                     if key in patch:
                         scan[key] = patch[key]
         await _store(hass).async_save(data)
-        return {"wall_height_m": floor["wall_height_m"], "scans": floor["scans"]}
+        return {
+            "wall_height_m": floor["wall_height_m"],
+            "floor_elevation_m": floor.get("floor_elevation_m"),
+            "scans": floor["scans"],
+        }
 
 
 async def async_delete_scan(hass: HomeAssistant, scan_id: str) -> bool:

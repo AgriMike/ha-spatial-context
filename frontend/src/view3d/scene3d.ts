@@ -751,19 +751,43 @@ export function buildScene(input: SceneInput): Scene3d {
 }
 
 /** Each floor of a building stacked by level (lowest first), with its
- * vertical position: the lowest floor at or above ground level sits at 0,
- * basements below it. */
+ * vertical position.
+ *
+ * Without explicit elevations, floors sit a full storey apart: the lowest
+ * floor at or above ground level at 0, basements below it. A floor with an
+ * `elevation` (metres above the building's ground level, where the ground
+ * plane is — split levels) sits exactly there; floors without one keep
+ * their storey spacing from the nearest floor that has one (below it, else
+ * above it). */
 export function stackFloors<
-  T extends { level: number | null; wallHeight: number },
+  T extends {
+    level: number | null;
+    wallHeight: number;
+    elevation?: number | null;
+  },
 >(floors: T[]): (T & { baseY: number })[] {
   const sorted = [...floors].sort((a, b) => (a.level ?? 0) - (b.level ?? 0));
+  // Each floor's position with every floor a full storey apart.
   let y = 0;
   const stacked = sorted.map((f) => {
     const out = { ...f, baseY: y };
     y += f.wallHeight + STOREY_GAP_M;
     return out;
   });
-  const ground = stacked.find((f) => (f.level ?? 0) >= 0)?.baseY ?? 0;
-  for (const f of stacked) f.baseY -= ground;
+  const fixed = stacked.filter((f) => f.elevation != null);
+  const first = fixed[0];
+  if (!first) {
+    const ground = stacked.find((f) => (f.level ?? 0) >= 0)?.baseY ?? 0;
+    for (const f of stacked) f.baseY -= ground;
+    return stacked;
+  }
+  // Shift each floor by its anchor's offset from automatic stacking.
+  const shift = new Map<T, number>();
+  let anchor = first;
+  for (const f of stacked) {
+    if (f.elevation != null) anchor = f;
+    shift.set(f, (anchor.elevation ?? 0) - anchor.baseY);
+  }
+  for (const f of stacked) f.baseY += shift.get(f) ?? 0;
   return stacked;
 }
