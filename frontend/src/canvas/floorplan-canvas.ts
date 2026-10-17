@@ -151,6 +151,22 @@ const RESIZE_DIRS: Record<ResizeHandle, [number, number]> = {
 };
 const RESIZE_HANDLES = Object.keys(RESIZE_DIRS) as ResizeHandle[];
 
+/** The resize cursor for a handle as it points on screen — the item's
+ * rotation turns its handles, so a rotated item's top handle may pull
+ * sideways. (Screen y runs down, so down-right is "nwse".) */
+function resizeCursor(handle: ResizeHandle, rotationDeg: number): string {
+  const [sx, sy] = RESIZE_DIRS[handle];
+  const deg = (Math.atan2(sy, sx) * 180) / Math.PI + rotationDeg;
+  const axis = (((Math.round(deg / 45) * 45) % 180) + 180) % 180;
+  return axis === 0
+    ? "edge-ew"
+    : axis === 45
+      ? "corner"
+      : axis === 90
+        ? "edge-ns"
+        : "corner-nesw";
+}
+
 /** Alignment guides while dragging an item: the line it snapped to, drawn
  * from `a` to `b` across both boxes (like PowerPoint's smart guides). */
 interface Guide {
@@ -3635,10 +3651,10 @@ export class FloorplanCanvas extends LitElement {
       <line class="furniture-outline" x1=${top[0]} y1=${top[1]} x2=${rotate[0]} y2=${rotate[1]}></line>
       <circle class="furniture-handle rotate" cx=${rotate[0]} cy=${rotate[1]} r=${r}></circle>
       ${(["n", "s", "e", "w"] as const).map((k) =>
-        square(h[k], r * 0.8, k === "n" || k === "s" ? "edge-ns" : "edge-ew"),
+        square(h[k], r * 0.8, resizeCursor(k, live.rotation_deg)),
       )}
       ${(["ne", "nw", "se", "sw"] as const).map((k) =>
-        square(h[k], r, k === "ne" || k === "sw" ? "corner-nesw" : "corner"),
+        square(h[k], r, resizeCursor(k, live.rotation_deg)),
       )}
       ${moveGrip}
     `;
