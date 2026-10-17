@@ -528,11 +528,22 @@ function buildFloor(
         const { opening } = hole;
         if (hole.s0 > cursor) walls.push(box(cursor, hole.s0, 0, H));
         const isDoor = opening.type === "door";
+        // A window's kind sets its glass: a transom is a ~45 cm strip just
+        // under the ceiling, floor-to-ceiling runs the full wall height.
+        const style = isDoor ? undefined : opening.window_style;
+        const defaultHead =
+          style === "transom" ? H - 0.15 : style === "full" ? H : WINDOW_HEAD_M;
         const head = Math.min(
           H,
-          isDoor ? DOOR_HEAD_M : (opening.daylight?.head_m ?? WINDOW_HEAD_M),
+          isDoor ? DOOR_HEAD_M : (opening.daylight?.head_m ?? defaultHead),
         );
-        const sill = isDoor ? 0 : Math.min(WINDOW_SILL_M, head - 0.1);
+        const sill = isDoor
+          ? 0
+          : style === "transom"
+            ? Math.max(0, head - 0.45)
+            : style === "full"
+              ? 0
+              : Math.min(WINDOW_SILL_M, head - 0.1);
         if (sill > 0) walls.push(box(hole.s0, hole.s1, 0, sill));
         if (head < H - 0.005) walls.push(box(hole.s0, hole.s1, head, H));
         if (!isDoor)
