@@ -12,6 +12,7 @@
 import { svg, type SVGTemplateResult } from "lit";
 import { unsafeSVG } from "lit/directives/unsafe-svg.js";
 import { UI_ICONS } from "./ui-icons";
+import { ART } from "./art-items";
 import { svgDataUrl, type CustomIcon } from "./custom-icons";
 
 export type Pt = [number, number];
@@ -47,6 +48,8 @@ export type Prim =
     }
   | { t: "poly"; points: Pt[]; closed: boolean; dash?: boolean | undefined }
   | { t: "path"; d: string; dash?: boolean | undefined }
+  /** A baked-in detailed drawing (see art-items.ts), stretched to w x d. */
+  | { t: "art"; name: string; w: number; d: number; dash?: boolean | undefined }
   /** An imported SVG (see custom-icons.ts), fitted into w x d. */
   | { t: "image"; id: string; w: number; d: number; dash?: boolean | undefined }
   /** A 64x64 single-colour icon (see ui-icons.ts), fitted into w x d. */
@@ -677,6 +680,48 @@ const T: Record<string, Template> = {
     for (const x of dividers(0, w, max(0, Math.round(w / bay) - 1)))
       out.push(line(x, 0, x, d));
     out.push(line(2, d * 0.5, w - 2, d * 0.5, true));
+    return out;
+  },
+  // A floating shelf: up on the wall, so dashed like wall cabinets, with
+  // its solid back edge along the wall it's fixed to.
+  floatingShelf: (w, d) => [rect(0, 0, w, d, 1, true), line(0, 0.6, w, 0.6)],
+  // A 3D printer: frame, build plate, the gantry across it with the print
+  // head, and the filament spool on the back. Enclosed ones get a second
+  // outline for the cabinet.
+  printer3d: (w, d, o) => {
+    const spool = Math.min(d * 0.22, 12);
+    const top = spool * 0.9;
+    const fd = d - top;
+    const out: Prim[] = [rect(0, top, w, fd, 3)];
+    if (flag(o, "enclosed")) out.push(rect(2.5, top + 2.5, w - 5, fd - 5, 2));
+    const m = Math.min(w, fd) * 0.16;
+    const plate = Math.min(w - 2 * m, fd - 2 * m);
+    const px = (w - plate) / 2;
+    const py = top + (fd - plate) / 2 + m * 0.2;
+    out.push(rect(px, py, plate, plate, 1, true));
+    const gy = py + plate * 0.42;
+    out.push(line(m * 0.5, gy, w - m * 0.5, gy));
+    out.push(rect(w * 0.55 - 3.5, gy - 3.5, 7, 7, 1.5));
+    out.push(
+      circ(w / 2, top * 0.55, spool * 0.55),
+      circ(w / 2, top * 0.55, spool * 0.18),
+    );
+    return out;
+  },
+  // A hydroponic garden: the tray and its lid lip, with a grid of net pots
+  // that fills whatever size it's set to (one about every 15 cm).
+  hydroBed: (w, d, o) => {
+    const out: Prim[] = [rect(0, 0, w, d, 3), rect(2.5, 2.5, w - 5, d - 5, 2)];
+    const pitch = num(o, "pitch", 15);
+    const cols = Math.max(1, Math.round((w - 5) / pitch));
+    const rows = Math.max(1, Math.round((d - 5) / pitch));
+    const r = Math.min((w - 5) / cols, (d - 5) / rows) * 0.26;
+    for (let c = 0; c < cols; c++)
+      for (let k = 0; k < rows; k++) {
+        const x = 2.5 + ((w - 5) / cols) * (c + 0.5);
+        const y = 2.5 + ((d - 5) / rows) * (k + 0.5);
+        out.push(circ(x, y, r), circ(x, y, r * 0.4));
+      }
     return out;
   },
   closetRod: (w, d) => {
@@ -2575,6 +2620,9 @@ const T: Record<string, Template> = {
   shapeFreeform: (w, d, o) => [
     shapePoly(w, d, shapeCornerFractions("shapeFreeform", o), o),
   ],
+  art: (w, d, o) => [
+    { t: "art", name: typeof o["art"] === "string" ? o["art"] : "", w, d },
+  ],
   custom: (w, d, o) => [
     {
       t: "image",
@@ -2718,6 +2766,7 @@ function offset(p: Prim, dx: number, dy: number): Prim {
     case "path":
     case "icon":
     case "image":
+    case "art":
       return p; // only used for leaf ellipses (see planter)
   }
 }
@@ -3021,9 +3070,11 @@ export function renderPrims(
     out.unshift(
       body.t === "image"
         ? solidImage(body)
-        : body.t === "icon"
-          ? svg`<rect class="fx-solid" x="0" y="0" width=${max(0.01, body.w)} height=${max(0.01, body.d)} rx=${softRadius(body.w, body.d)}></rect>`
-          : renderPrim(body, "fx-solid"),
+        : body.t === "art"
+          ? renderPrim(body, "fx-solid")
+          : body.t === "icon"
+            ? svg`<rect class="fx-solid" x="0" y="0" width=${max(0.01, body.w)} height=${max(0.01, body.d)} rx=${softRadius(body.w, body.d)}></rect>`
+            : renderPrim(body, "fx-solid"),
     );
   }
   return out;
@@ -3040,6 +3091,11 @@ function renderPrim(p: Prim, cls: string): SVGTemplateResult {
       return p.rot
         ? svg`<rect class=${cls} x=${p.x} y=${p.y} width=${w} height=${h} rx=${Math.min(rx, Math.min(w, h) / 2)} transform="rotate(${p.rot} ${p.x + w / 2} ${p.y + h / 2})"></rect>`
         : svg`<rect class=${cls} x=${p.x} y=${p.y} width=${w} height=${h} rx=${Math.min(rx, Math.min(w, h) / 2)}></rect>`;
+    }
+    case "art": {
+      const art = ART[p.name];
+      if (!art) return svg``;
+      return svg`<svg class=${cls.includes("fx-solid") ? "fx-art fx-art-solid" : "fx-art"} x="0" y="0" width=${max(0.01, p.w)} height=${max(0.01, p.d)} viewBox="0 0 ${art.w} ${art.h}" preserveAspectRatio="none" overflow="visible">${unsafeSVG(art.svg)}</svg>`;
     }
     case "icon": {
       const icon = UI_ICONS[p.name];
@@ -3104,6 +3160,22 @@ export const FURNITURE_STYLES = `
   .fx-icon * { vector-effect: non-scaling-stroke; }
   .fx.body { fill: var(--fx-color, currentColor); fill-opacity: 0.16; }
   .fx-tint { fill: var(--fx-color, currentColor); stroke: none; }
+  .fx-art * {
+    fill: none;
+    stroke: var(--fx-color, currentColor);
+    stroke-width: var(--fx-stroke-width, 1.5px);
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+  }
+  .fx-art .thin { stroke-width: calc(var(--fx-stroke-width, 1.5px) * 0.55); }
+  .fx-art .thick { stroke-width: calc(var(--fx-stroke-width, 1.5px) * 1.7); }
+  .fx-art .dash { stroke-dasharray: 4 3; }
+  .fx-art .dot { fill: var(--fx-color, currentColor); }
+  .fx-art-solid * {
+    fill: color-mix(in srgb, var(--fx-color, currentColor) 10%, var(--sc-bg, #fff));
+    stroke: none;
+  }
   .fx-solid {
     fill: color-mix(in srgb, var(--fx-color, currentColor) 10%, var(--sc-bg, #fff));
     stroke: none;

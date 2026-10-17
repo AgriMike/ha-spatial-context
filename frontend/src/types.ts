@@ -176,6 +176,10 @@ export interface Opening {
   /** A garage door: drawn as an overhead door that rolls up into the
    * garage with its cover's position. */
   garage?: boolean;
+  /** A window's kind: "standard" (absent), "transom" — a short strip high
+   * on the wall, drawn as a thin line inside the wall and letting in less
+   * light — or "full", floor to ceiling, letting in more. */
+  window_style?: "standard" | "transom" | "full";
   /** Fine-tuning for the daylight drawn through this opening (see
    * floorplan-canvas.ts's _renderDaylight). Every field is optional. */
   daylight?: OpeningDaylight;

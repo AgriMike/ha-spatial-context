@@ -235,6 +235,10 @@ const LIVING: Row[] = [
   ["bookcase", "Bookcase", 90, 35, "shelf"],
   ["bookcase_wide", "Wide bookcase", 160, 35, "shelf"],
   ["bookcase_corner", "Corner bookcase", 60, 60, "box", { x: true }],
+  ["floating_shelf_60", "Floating shelf 60 cm", 60, 20, "floatingShelf"],
+  ["floating_shelf_90", "Floating shelf 90 cm", 90, 25, "floatingShelf"],
+  ["floating_shelf_120", "Floating shelf 120 cm", 120, 25, "floatingShelf"],
+  ["floating_shelf_180", "Floating shelf 180 cm", 180, 25, "floatingShelf"],
   ["cube_shelf_2x2", "Cube shelf 2×2", 78, 39, "cubby", { cols: 2 }],
   ["cube_shelf_4x4", "Cube shelf 4×4", 147, 39, "cubby", { cols: 4 }],
   ["display_cabinet", "Display cabinet", 100, 45, "cabinet", { doors: 2 }],
@@ -924,6 +928,14 @@ const BATHROOM: Row[] = [
 ];
 
 const OFFICE: Row[] = [
+  [
+    "monitor_curved_34",
+    "Curved monitor 34″ (1000R)",
+    84,
+    20,
+    "art",
+    { art: "monitor_curved_34" },
+  ],
   ["desk_small", "Desk (small)", 100, 50, "desk"],
   ["desk", "Desk", 140, 70, "desk", { monitor: true }],
   [
@@ -966,6 +978,15 @@ const OFFICE: Row[] = [
   ["desk_u", "U-shaped desk", 200, 180, "uDesk"],
   ["desk_computer", "Computer desk", 120, 60, "desk", { monitor: true }],
   ["desk_chair", "Desk chair", 48, 55, "deskChair"],
+  ["printer_3d", "3D printer", 40, 46, "printer3d"],
+  [
+    "printer_3d_enclosed",
+    "3D printer (enclosed)",
+    46,
+    54,
+    "printer3d",
+    { enclosed: true },
+  ],
   ["office_chair", "Office chair", 65, 65, "officeChair"],
   ["executive_chair", "Executive chair", 72, 72, "officeChair"],
   ["gaming_chair", "Gaming chair", 70, 70, "officeChair"],
@@ -1050,7 +1071,6 @@ const OFFICE: Row[] = [
   ["storage_cabinet", "Storage cabinet", 90, 45, "cabinet", { doors: 2 }],
   ["printer", "Printer", 45, 40, "printer"],
   ["printer_large", "Office copier", 60, 65, "printer"],
-  ["printer_3d", "3D printer", 50, 50, "box", { inset: 6, x: true }],
   ["shredder", "Paper shredder", 35, 25, "trash"],
   ["safe", "Safe", 50, 50, "device", { button: true }],
   ["whiteboard", "Whiteboard (wall)", 180, 6, "box", { r: 1 }],
@@ -1148,6 +1168,18 @@ const LAUNDRY: Row[] = [
 ];
 
 const ELECTRONICS: Row[] = [
+  ["record_player", "Record player", 45, 36, "art", { art: "record_player" }],
+  ["sonos_one", "Sonos One", 12, 12, "art", { art: "sonos_one" }],
+  ["sonos_era_100", "Sonos Era 100", 12, 13, "art", { art: "sonos_era_100" }],
+  ["sonos_beam", "Sonos Beam", 65.1, 10, "art", { art: "sonos_beam" }],
+  ["sonos_ray", "Sonos Ray", 55.9, 9.5, "art", { art: "sonos_ray" }],
+  ["sonos_roam", "Sonos Roam", 6.2, 6, "art", { art: "sonos_roam" }],
+  ["tv_wall_43", "Wall-mounted TV 43″", 96.5, 6, "art", { art: "tv_wall_43" }],
+  ["tv_wall_50", "Wall-mounted TV 50″", 112, 6, "art", { art: "tv_wall_50" }],
+  ["tv_wall_55", "Wall-mounted TV 55″", 123, 6, "art", { art: "tv_wall_55" }],
+  ["tv_wall_65", "Wall-mounted TV 65″", 145, 6, "art", { art: "tv_wall_65" }],
+  ["tv_wall_75", "Wall-mounted TV 75″", 168, 6, "art", { art: "tv_wall_75" }],
+  ["tv_wall_85", "Wall-mounted TV 85″", 190, 6, "art", { art: "tv_wall_85" }],
   ["tv_32", 'TV 32"', 73, 18, "tv", { stand: true }],
   ["tv_43", 'TV 43"', 97, 22, "tv", { stand: true }],
   ["tv_50", 'TV 50"', 112, 25, "tv", { stand: true }],
@@ -1155,9 +1187,6 @@ const ELECTRONICS: Row[] = [
   ["tv_65", 'TV 65"', 145, 30, "tv", { stand: true }],
   ["tv_75", 'TV 75"', 168, 35, "tv", { stand: true }],
   ["tv_85", 'TV 85"', 190, 38, "tv", { stand: true }],
-  ["tv_wall_55", 'Wall TV 55"', 123, 6, "tv"],
-  ["tv_wall_65", 'Wall TV 65"', 145, 6, "tv"],
-  ["tv_wall_75", 'Wall TV 75"', 168, 6, "tv"],
   ["projector", "Projector", 35, 28, "projector"],
   ["projection_screen", "Projection screen", 240, 10, "screen"],
   ["soundbar", "Soundbar", 90, 10, "soundbar"],
@@ -1659,6 +1688,48 @@ const OUTDOOR: Row[] = [
 ];
 
 const GARAGE: Row[] = [
+  [
+    "snowblower_single",
+    "Snowblower (single-stage)",
+    56,
+    132,
+    "art",
+    { art: "snowblower_single" },
+  ],
+  [
+    "snowblower_two",
+    "Snowblower (two-stage)",
+    70,
+    150,
+    "art",
+    { art: "snowblower_two" },
+  ],
+  ["mower_push_30", "Push mower 30″", 86, 170, "art", { art: "mower_push_30" }],
+  ["lawn_tractor", "Lawn tractor", 112, 183, "art", { art: "lawn_tractor" }],
+  [
+    "mini_skid_steer",
+    "Mini skid steer (tracks, bucket)",
+    100,
+    240,
+    "art",
+    { art: "mini_skid_steer" },
+  ],
+  [
+    "car_land_rover_discovery",
+    "Land Rover Discovery",
+    222,
+    497,
+    "art",
+    { art: "car_land_rover_discovery" },
+  ],
+  [
+    "car_mercedes_glc",
+    "Mercedes-Benz GLC",
+    208,
+    472,
+    "art",
+    { art: "car_mercedes_glc" },
+  ],
   ["car_compact", "Compact car", 175, 410, "car"],
   ["car_sedan", "Sedan", 185, 480, "car"],
   ["car_suv", "SUV", 195, 490, "car"],
@@ -1872,6 +1943,16 @@ const PETS: Row[] = [
 ];
 
 const DECOR: Row[] = [
+  ["hydroponic_square", "Hydroponic garden (square)", 60, 60, "hydroBed"],
+  ["hydroponic_rect", "Hydroponic garden (rectangle)", 120, 60, "hydroBed"],
+  [
+    "hydroponic_countertop",
+    "Countertop hydroponic garden",
+    40,
+    20,
+    "hydroBed",
+    { pitch: 10 },
+  ],
   ["plant_small", "Plant (small)", 35, 35, "plant", { leaves: 6 }],
   ["plant_medium", "Plant (medium)", 55, 55, "plant"],
   ["plant_large", "Plant (large)", 80, 80, "plant", { leaves: 9 }],

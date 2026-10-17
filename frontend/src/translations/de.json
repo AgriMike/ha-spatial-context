@@ -116,7 +116,13 @@
       "left": "Links",
       "right": "Rechts",
       "garage": "Garagentor",
-      "garageHint": "Als Sektionaltor gezeichnet, das mit der Position der Beschattung in die Garage hochfährt. Der Sonnenfleck steht unter Tageslicht."
+      "garageHint": "Als Sektionaltor gezeichnet, das mit der Position der Beschattung in die Garage hochfährt. Der Sonnenfleck steht unter Tageslicht.",
+      "windowStyle": "Fenstertyp",
+      "windowStyles": {
+        "standard": "Standard",
+        "transom": "Oberlicht (hoher Streifen)",
+        "full": "Bodentief"
+      }
     },
     "meshStub": {
       "goToFloor": "Zur Etage"

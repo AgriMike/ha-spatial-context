@@ -420,6 +420,20 @@ export class FloorplanCanvas extends LitElement {
       .opening-line.window {
         stroke: #81d4fa;
       }
+      .opening-transom {
+        stroke: #29b6f6;
+        stroke-width: 2.5px;
+        vector-effect: non-scaling-stroke;
+        stroke-linecap: round;
+        pointer-events: none;
+      }
+      .opening-transom.selected {
+        stroke: var(--sc-danger);
+      }
+      .opening-hit {
+        stroke: transparent;
+        cursor: pointer;
+      }
       .opening-line.selected {
         stroke: var(--sc-danger);
       }
@@ -3472,6 +3486,36 @@ export class FloorplanCanvas extends LitElement {
     const tickHalf = (parseFloat(strokeWidth ?? "6") / 2) * 1.5;
     const px = (-(y2 - y1) / len) * tickHalf;
     const py = ((x2 - x1) / len) * tickHalf;
+    // A transom sits high in the wall: just a thin blue line along the
+    // wall's middle, the wall itself still drawn around it — plus a wide
+    // invisible line to click.
+    if (opening.type === "window" && opening.window_style === "transom") {
+      return svg`
+        <line
+          class="opening-hit"
+          x1=${x1}
+          y1=${y1}
+          x2=${x2}
+          y2=${y2}
+          style=${strokeWidth ? `stroke-width:${strokeWidth}` : nothing}
+        ><title>transom window</title></line>
+        <line
+          class="opening-transom ${selected ? "selected" : ""}"
+          x1=${x1}
+          y1=${y1}
+          x2=${x2}
+          y2=${y2}
+        ></line>
+        ${
+          selected
+            ? svg`
+              <circle class="opening-handle" cx=${x1} cy=${y1} r=${hr}></circle>
+              <circle class="opening-handle" cx=${x2} cy=${y2} r=${hr}></circle>
+            `
+            : nothing
+        }
+      `;
+    }
     const jamb = (cx: number, cy: number) => svg`
       <line
         class="opening-jamb-case"
@@ -3789,7 +3833,13 @@ export class FloorplanCanvas extends LitElement {
     for (const opening of this.openings) {
       const tune = opening.daylight ?? {};
       if (tune.enabled === false) continue;
-      const strengthK = tune.strength ?? 1;
+      // A window's kind sets its light: a transom is a short strip high
+      // up (less light, from 2.4 m), floor-to-ceiling glass more.
+      const style =
+        opening.type === "window" ? opening.window_style : undefined;
+      const styleK = style === "transom" ? 0.35 : style === "full" ? 1.5 : 1;
+      const styleHead = style === "transom" || style === "full" ? 2.4 : 2.1;
+      const strengthK = (tune.strength ?? 1) * styleK;
       const reachK = tune.reach ?? 1;
       const linked = this.coverOpenness.has(opening.id);
       if (!linked && !(sun && opening.type === "window")) continue;
@@ -3954,7 +4004,7 @@ export class FloorplanCanvas extends LitElement {
                 7,
                 Math.max(
                   0.6,
-                  (tune.head_m ?? 2.1) /
+                  (tune.head_m ?? styleHead) /
                     Math.tan(sun.elevation * (Math.PI / 180)),
                 ),
               ) *

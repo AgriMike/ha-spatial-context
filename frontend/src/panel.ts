@@ -3688,6 +3688,22 @@ export class SpatialContextPanel extends LitElement {
     });
   };
 
+  private _onOpeningStyleChange = (
+    e: CustomEvent<{ style: "standard" | "transom" | "full" }>,
+  ) => {
+    const opening = this._selectedOpening;
+    if (!opening) return;
+    this._updateLayout({
+      openings: this._layout.openings.map((o) => {
+        if (o.id !== opening.id) return o;
+        const { window_style: _old, ...rest } = o;
+        return e.detail.style === "standard"
+          ? rest
+          : { ...rest, window_style: e.detail.style };
+      }),
+    });
+  };
+
   /** Swaps an opening's left and right covers. */
   private _onOpeningCoverSwap = () => {
     const opening = this._selectedOpening;
@@ -5031,6 +5047,7 @@ export class SpatialContextPanel extends LitElement {
                     @opening-daylight-change=${this._onOpeningDaylightChange}
                     @opening-cover-swap=${this._onOpeningCoverSwap}
                     @opening-garage-change=${this._onOpeningGarageChange}
+                    @opening-style-change=${this._onOpeningStyleChange}
                     @room-outdoor-change=${this._onRoomOutdoorChange}
                     @room-label-change=${this._onRoomLabelChange}
                     .selectedCoverOpennessRight=${

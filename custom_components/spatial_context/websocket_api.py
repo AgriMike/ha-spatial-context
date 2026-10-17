@@ -138,6 +138,8 @@ _OPENING_SCHEMA = {
     vol.Optional("cover_right_entity_id"): vol.Any(str, None),
     # A garage door, drawn as an overhead door rolling up with its cover.
     vol.Optional("garage"): bool,
+    # A window's kind: standard, transom (high strip) or full height.
+    vol.Optional("window_style"): vol.In(["standard", "transom", "full"]),
     # Per-opening daylight fine-tuning (see types.ts's OpeningDaylight).
     vol.Optional("daylight"): {
         vol.Optional("enabled"): bool,

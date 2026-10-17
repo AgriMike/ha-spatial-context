@@ -116,7 +116,13 @@
       "left": "Left",
       "right": "Right",
       "garage": "Garage door",
-      "garageHint": "Drawn as an overhead door that rolls up into the garage with its cover's position. Its sun patch is under Daylight."
+      "garageHint": "Drawn as an overhead door that rolls up into the garage with its cover's position. Its sun patch is under Daylight.",
+      "windowStyle": "Window type",
+      "windowStyles": {
+        "standard": "Standard",
+        "transom": "Transom (high strip)",
+        "full": "Floor to ceiling"
+      }
     },
     "meshStub": {
       "goToFloor": "Go to floor"

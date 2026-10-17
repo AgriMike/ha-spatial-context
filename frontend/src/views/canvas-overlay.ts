@@ -2219,6 +2219,32 @@ export class CanvasOverlay extends LitElement {
                 </div>`
               : nothing
           }
+          ${
+            opening.type === "window"
+              ? this._fieldRow(
+                  "mdi:window-closed-variant",
+                  localize("canvas.opening.windowStyle"),
+                  this._selectWrap(
+                    html`<select
+                      @change=${(e: Event) =>
+                        this._fire("opening-style-change", {
+                          style: (e.target as HTMLSelectElement).value,
+                        })}
+                    >
+                      ${(["standard", "transom", "full"] as const).map(
+                        (v) =>
+                          html`<option
+                            value=${v}
+                            ?selected=${(opening.window_style ?? "standard") === v}
+                          >
+                            ${localize(`canvas.opening.windowStyles.${v}`)}
+                          </option>`,
+                      )}
+                    </select>`,
+                  ),
+                )
+              : nothing
+          }
           ${this._renderCoverPickers(opening)}
           ${this._renderOpeningDaylight(opening)}
           ${
