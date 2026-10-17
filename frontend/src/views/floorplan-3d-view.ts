@@ -7,11 +7,12 @@ import { HaClient, fetchScan } from "../ha-client";
 import type {
   FloorLayout,
   FloorMeta,
+  GroundSetting,
   HomeAssistant,
   RoomScan,
   View3dSettings,
 } from "../types";
-import type { Sky } from "../canvas/sun";
+import { COMPASS_POINTS, type Sky } from "../canvas/sun";
 import {
   computeCoverOpenness,
   computeItemStates,
@@ -252,7 +253,8 @@ export class Floorplan3dView extends LitElement {
       .row > span:first-child {
         flex: 1;
       }
-      .row input[type="number"] {
+      .row input[type="number"],
+      .row select {
         width: 84px;
         height: var(--sc-h-field);
         padding: 0 8px;
@@ -472,6 +474,54 @@ export class Floorplan3dView extends LitElement {
       .map((f) => f.floor_id);
   }
 
+  /** The floors of this floor's building (just this one when it isn't
+   * aligned to any) — the ground is shared by all of them. */
+  private get _buildingFloorIds(): string[] {
+    if (!this.floorId) return [];
+    const own = this.floors.find((f) => f.floor_id === this.floorId);
+    if (!own?.building_id) return [this.floorId];
+    return this.floors
+      .filter((f) => f.building_id === own.building_id)
+      .map((f) => f.floor_id);
+  }
+
+  /** The ground around the building: this floor's setting, else any
+   * shown floor's (they're saved together). */
+  private get _ground(): GroundSetting | null {
+    const own = this.floorId ? this._view3d.get(this.floorId)?.ground : null;
+    if (own) return own;
+    for (const id of this._shownFloorIds) {
+      const g = this._view3d.get(id)?.ground;
+      if (g) return g;
+    }
+    return null;
+  }
+
+  /** Changes one part of the ground, or clears it (null), on every floor
+   * of the building. A first change starts from a level site at this
+   * floor's own height. */
+  private _setGround(patch: Partial<GroundSetting> | null): void {
+    const base: GroundSetting = this._ground ?? {
+      uphill_m: 0,
+      downhill_m: 0,
+      downhill_deg: 0,
+    };
+    const next = patch === null ? null : { ...base, ...patch };
+    const ids = this._buildingFloorIds;
+    const map = new Map(this._view3d);
+    for (const id of ids) {
+      const v = map.get(id);
+      if (v) map.set(id, { ...v, ground: next });
+    }
+    this._view3d = map;
+    if (!this.editable) return;
+    void this._client?.saveGround(ids, next).catch((err: unknown) => {
+      this._error = localize("view3d.saveFailed", {
+        error: (err as { message?: string })?.message ?? String(err),
+      });
+    });
+  }
+
   private get _canDollhouse(): boolean {
     const own = this.floors.find((f) => f.floor_id === this.floorId);
     return (
@@ -558,7 +608,10 @@ export class Floorplan3dView extends LitElement {
       });
     }
     if (!inputs.length) return;
-    const floors = inputs.length > 1 ? stackFloors(inputs) : inputs;
+    // Even a floor shown alone stands at its height above the ground, so
+    // a main floor above a walk-out isn't drawn sitting on the grass.
+    const floors = stackFloors(inputs);
+    const ground = this._ground;
     const date = this._date;
     const live = floors
       .map((f) =>
@@ -577,6 +630,7 @@ export class Floorplan3dView extends LitElement {
       minute,
       this.dark,
       this.sky?.clouds ?? "",
+      JSON.stringify(ground),
     ].join("|");
     // Layout objects are replaced on every edit, so identity is enough.
     const layoutsChanged = floors.some(
@@ -593,6 +647,7 @@ export class Floorplan3dView extends LitElement {
           date,
           sky: this.sky,
           showLights: true,
+          ground,
         }),
       );
       this._scanSig = "";
@@ -990,6 +1045,7 @@ export class Floorplan3dView extends LitElement {
         />
         <span>m</span>
       </div>
+      ${this._renderGround()}
       <div class="divider"></div>
       <span class="hint">${localize("view3d.scansIntro")}</span>
       <div class="buttons">
@@ -1039,6 +1095,70 @@ export class Floorplan3dView extends LitElement {
       )}
       ${sel ? this._renderScanControls(sel) : nothing}
     </div>`;
+  }
+
+  /** The ground around the building: grade on its high and low sides and
+   * which way it falls (a walk-out on a hill). Shared by the building's
+   * floors; empty = flat. */
+  private _renderGround() {
+    const g = this._ground;
+    const metres = (key: "uphill_m" | "downhill_m", label: string) =>
+      html`<div class="row">
+        <span>${label}</span>
+        <input
+          type="number"
+          min="-50"
+          max="100"
+          step="0.01"
+          placeholder="0"
+          .value=${g ? String(g[key]) : ""}
+          @change=${(e: Event) => {
+            const input = e.target as HTMLInputElement;
+            const v = Number(input.value.trim() || "0");
+            if (Number.isFinite(v) && v >= -50 && v <= 100)
+              this._setGround({ [key]: v });
+            else input.value = g ? String(g[key]) : "";
+          }}
+        />
+        <span>m</span>
+      </div>`;
+    return html`
+      <div class="divider"></div>
+      <div class="row" title=${localize("view3d.groundHint")}>
+        <span>${localize("view3d.ground")}</span>
+        ${
+          g
+            ? html`<button @click=${() => this._setGround(null)}>
+                ${localize("view3d.groundFlat")}
+              </button>`
+            : html`<span class="hint"
+                >${localize("view3d.groundFlatNow")}</span
+              >`
+        }
+      </div>
+      ${metres("uphill_m", localize("view3d.groundUphill"))}
+      ${metres("downhill_m", localize("view3d.groundDownhill"))}
+      <div class="row">
+        <span>${localize("view3d.groundToward")}</span>
+        <select
+          @change=${(e: Event) =>
+            this._setGround({
+              downhill_deg: Number((e.target as HTMLSelectElement).value),
+            })}
+        >
+          ${COMPASS_POINTS.filter((_, i) => i % 2 === 0).map(
+            (p) =>
+              html`<option
+                value=${p.deg}
+                ?selected=${(g?.downhill_deg ?? 0) === p.deg}
+              >
+                ${p.name}
+              </option>`,
+          )}
+        </select>
+      </div>
+      <span class="hint">${localize("view3d.groundHint")}</span>
+    `;
   }
 
   private _renderScanControls(scan: RoomScan) {

@@ -18,6 +18,7 @@ import type {
   WifiMesh,
   ZigbeeMesh,
   VersionInfo,
+  GroundSetting,
   RoomScan,
   View3dSettings,
   BluetoothAdvertisementEvent,
@@ -265,6 +266,19 @@ export class HaClient {
         opacity: s.opacity,
         hide_walls: s.hide_walls,
       })),
+    });
+  }
+
+  /** Sets the ground around a building on each of its floors (see
+   * scans.py's async_save_ground); null = flat. */
+  async saveGround(
+    floorIds: string[],
+    ground: GroundSetting | null,
+  ): Promise<void> {
+    await this.hass.connection.sendMessagePromise({
+      type: "spatial_context/save_ground",
+      floor_ids: floorIds,
+      ground,
     });
   }
 

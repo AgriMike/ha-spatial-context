@@ -64,7 +64,17 @@ def _empty_floor() -> dict[str, Any]:
     # floor_elevation_m: metres above the building's ground level, for
     # stacking floors in the 3D view (split levels); None = stack them a
     # full storey apart by HA floor level.
-    return {"wall_height_m": None, "floor_elevation_m": None, "scans": []}
+    # ground: the lot's grade around the building, for the 3D view's ground
+    # ({uphill_m, downhill_m, downhill_deg}: grade height on the high and
+    # low sides, metres on the floors' scale, and the compass bearing the
+    # ground falls toward); None = flat at the lowest floor. Set on every
+    # floor of a building together (async_save_ground).
+    return {
+        "wall_height_m": None,
+        "floor_elevation_m": None,
+        "ground": None,
+        "scans": [],
+    }
 
 
 async def _async_load(hass: HomeAssistant) -> dict[str, Any]:
@@ -81,6 +91,7 @@ async def async_get_view3d(hass: HomeAssistant, floor_id: str) -> dict[str, Any]
     return {
         "wall_height_m": floor.get("wall_height_m"),
         "floor_elevation_m": floor.get("floor_elevation_m"),
+        "ground": floor.get("ground"),
         "scans": floor.get("scans", []),
     }
 
@@ -179,8 +190,21 @@ async def async_save_view3d(
         return {
             "wall_height_m": floor["wall_height_m"],
             "floor_elevation_m": floor.get("floor_elevation_m"),
+            "ground": floor.get("ground"),
             "scans": floor["scans"],
         }
+
+
+async def async_save_ground(
+    hass: HomeAssistant, floor_ids: list[str], ground: dict[str, float] | None
+) -> None:
+    """Set the ground around a building on each of its floors, leaving
+    everything else about them as it is."""
+    async with _lock(hass):
+        data = await _async_load(hass)
+        for floor_id in floor_ids:
+            data["floors"].setdefault(floor_id, _empty_floor())["ground"] = ground
+        await _store(hass).async_save(data)
 
 
 async def async_delete_scan(hass: HomeAssistant, scan_id: str) -> bool:

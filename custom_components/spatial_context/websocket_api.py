@@ -563,6 +563,38 @@ async def ws_save_view3d(
 
 @websocket_api.websocket_command(
     {
+        vol.Required("type"): "spatial_context/save_ground",
+        vol.Required("floor_ids"): vol.All([str], vol.Length(min=1, max=50)),
+        vol.Required("ground"): vol.Any(
+            None,
+            {
+                vol.Required("uphill_m"): vol.All(
+                    vol.Coerce(float), vol.Range(min=-50, max=100)
+                ),
+                vol.Required("downhill_m"): vol.All(
+                    vol.Coerce(float), vol.Range(min=-50, max=100)
+                ),
+                vol.Required("downhill_deg"): vol.All(
+                    vol.Coerce(float), vol.Range(min=0, max=360)
+                ),
+            },
+        ),
+    }
+)
+@websocket_api.async_response
+async def ws_save_ground(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Set the ground around a building (its grade on the high and low
+    sides) on each of its floors."""
+    await scans.async_save_ground(hass, msg["floor_ids"], msg["ground"])
+    connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command(
+    {
         vol.Required("type"): "spatial_context/delete_scan",
         vol.Required("scan_id"): str,
     }
@@ -756,6 +788,7 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_save_settings)
     websocket_api.async_register_command(hass, ws_get_view3d)
     websocket_api.async_register_command(hass, ws_save_view3d)
+    websocket_api.async_register_command(hass, ws_save_ground)
     websocket_api.async_register_command(hass, ws_delete_scan)
     websocket_api.async_register_command(hass, ws_list_areas)
     websocket_api.async_register_command(hass, ws_list_placeable_entities)

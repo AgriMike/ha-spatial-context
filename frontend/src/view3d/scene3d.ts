@@ -9,6 +9,7 @@ import { render, svg } from "lit";
 import type {
   FloorLayout,
   FurnitureItem,
+  GroundSetting,
   HomeAssistant,
   Opening,
   Scale,
@@ -20,6 +21,7 @@ import type {
   Pane3d,
   Scene3d,
   Slab3d,
+  Terrain3d,
   Vec2,
 } from "./view3d-api";
 import {
@@ -427,6 +429,8 @@ export interface SceneInput {
   date: Date;
   sky: Sky | null;
   showLights: boolean;
+  /** The ground around the building, null for flat. */
+  ground: GroundSetting | null;
 }
 
 function buildFloor(
@@ -706,9 +710,10 @@ function buildFloor(
 export function buildScene(input: SceneInput): Scene3d {
   const { hass, dark } = input;
   // The sun: from HA's home location when known, else a pleasant
-  // afternoon so the scene still has shape. The plan's compass (north_deg)
-  // turns it; unset means north is up.
-  const northDeg = input.floors[0]?.layout.north_deg ?? 0;
+  // afternoon so the scene still has shape. The plan's compass (north_deg,
+  // from whichever floor has it set) turns it; unset means north is up.
+  const northDeg =
+    input.floors.find((f) => f.layout.north_deg != null)?.layout.north_deg ?? 0;
   const lat = hass?.config?.latitude;
   const lon = hass?.config?.longitude;
   const pos =
@@ -739,6 +744,7 @@ export function buildScene(input: SceneInput): Scene3d {
       ground: day > 0 ? "#b9a88f" : "#2a2a35",
       intensity: 0.55 + 0.7 * day,
     },
+    terrain: input.ground ? terrain(input, input.ground, northDeg) : null,
     background: dark
       ? day > 0
         ? "#1f2a33"
@@ -747,6 +753,33 @@ export function buildScene(input: SceneInput): Scene3d {
         ? "#e9f1f7"
         : "#2b3140",
     dark,
+  };
+}
+
+/** The hillside the building stands on: grade on its high and low sides,
+ * falling toward a compass bearing. Floors whose floor sits below the high
+ * side's grade have their rooms cut out of the ground, so a walk-out
+ * basement still shows inside. */
+function terrain(
+  input: SceneInput,
+  ground: GroundSetting,
+  northDeg: number,
+): Terrain3d {
+  const [dx, dz] = planVector(ground.downhill_deg, northDeg);
+  const top = Math.max(ground.uphill_m, ground.downhill_m);
+  const holes = input.floors
+    .filter((f) => f.baseY < top - 0.01)
+    .flatMap((f) => {
+      const m = metersPerUnit(f.layout.scale);
+      return f.layout.rooms
+        .filter((r) => !r.outdoor && r.points.length >= 3)
+        .map((r) => r.points.map(([x, y]): Vec2 => [x * m, y * m]));
+    });
+  return {
+    uphill: ground.uphill_m,
+    downhill: ground.downhill_m,
+    dir: [dx, dz],
+    holes,
   };
 }
 

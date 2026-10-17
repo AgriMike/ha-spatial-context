@@ -96,6 +96,22 @@ export interface Scene3d {
   ambient: { sky: string; ground: string; intensity: number };
   background: string;
   dark: boolean;
+  /** Ground sloping across the site, else null (flat, under the lowest
+   * floor). */
+  terrain: Terrain3d | null;
+}
+
+/** A hillside: the ground stands at `uphill` (world Y) on the building's
+ * high side and falls to `downhill` across its footprint, level beyond
+ * it either way. */
+export interface Terrain3d {
+  uphill: number;
+  downhill: number;
+  /** Downhill direction on the floor plane (x, z), unit length. */
+  dir: Vec2;
+  /** The footprints of floors that reach below the ground, cut out of it
+   * so their rooms show. */
+  holes: Vec2[][];
 }
 
 /** One scan placed on a floor, in world terms. */

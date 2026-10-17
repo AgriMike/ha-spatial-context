@@ -273,7 +273,20 @@ export interface View3dSettings {
   /** Metres above the building's ground level, for stacking floors in the
    * 3D view (split levels). Null = a full storey apart by floor level. */
   floor_elevation_m: number | null;
+  /** The lot's grade around the building, shared by all its floors;
+   * null (or absent from an older backend) = flat at the lowest floor. */
+  ground?: GroundSetting | null;
   scans: RoomScan[];
+}
+
+/** Ground that slopes across a building's site (a walk-out on a hill):
+ * the grade on the high and the low side, metres on the same scale as
+ * View3dSettings.floor_elevation_m, and the compass bearing it falls
+ * toward. */
+export interface GroundSetting {
+  uphill_m: number;
+  downhill_m: number;
+  downhill_deg: number;
 }
 
 /** The canvas's visible region in its own stored coordinate space — what

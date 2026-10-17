@@ -593,6 +593,13 @@
     "elevation": "Height offset",
     "opacity": "Opacity",
     "replaceWalls": "Replace the plan's walls",
-    "saveFailed": "Couldn't save: {error}"
+    "saveFailed": "Couldn't save: {error}",
+    "ground": "Ground",
+    "groundHint": "For a house on a slope: the ground's height on its high side and its low side (the same scale as Floor height), and which way it falls. A walk-out basement sits below the high side. Shared by every floor of the building.",
+    "groundFlat": "Make flat",
+    "groundFlatNow": "Flat",
+    "groundUphill": "High side",
+    "groundDownhill": "Low side",
+    "groundToward": "Slopes down toward"
   }
 }

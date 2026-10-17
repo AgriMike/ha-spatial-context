@@ -593,6 +593,13 @@
     "elevation": "Höhenversatz",
     "opacity": "Deckkraft",
     "replaceWalls": "Wände des Plans ersetzen",
-    "saveFailed": "Speichern fehlgeschlagen: {error}"
+    "saveFailed": "Speichern fehlgeschlagen: {error}",
+    "ground": "Gelände",
+    "groundHint": "Für ein Haus am Hang: die Geländehöhe auf der hohen und der niedrigen Seite (im selben Maß wie die Etagenhöhe) und wohin es abfällt. Ein Souterrain liegt unter der hohen Seite. Gilt für alle Etagen des Gebäudes.",
+    "groundFlat": "Eben machen",
+    "groundFlatNow": "Eben",
+    "groundUphill": "Hohe Seite",
+    "groundDownhill": "Niedrige Seite",
+    "groundToward": "Fällt ab nach"
   }
 }

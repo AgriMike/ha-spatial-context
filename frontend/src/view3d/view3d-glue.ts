@@ -10,6 +10,7 @@ import type {
   Scene3d,
   ScanPlacement3d,
   ScanPose,
+  Terrain3d,
   Vec2,
   View3dHandle,
   View3dModule,
@@ -139,6 +140,105 @@ function dominantAngle(
   return (((best + 0.5 + (w > 0 ? sum / w : 0)) % 90) + 90) % 90;
 }
 
+function insidePolygon(poly: Vec2[], x: number, z: number): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, zi] = poly[i]!;
+    const [xj, zj] = poly[j]!;
+    if (zi > z !== zj > z && x < xi + ((z - zi) * (xj - xi)) / (zj - zi))
+      inside = !inside;
+  }
+  return inside;
+}
+
+/** Grid lines along one axis: every `step` metres across [lo, hi], then
+ * ever wider out to `reach` on both sides. */
+function gridLines(lo: number, hi: number, step: number, reach: number) {
+  const out: number[] = [];
+  for (let v = lo; v < hi; v += step) out.push(v);
+  out.push(hi);
+  let s = step;
+  for (let v = lo; v > lo - reach;) {
+    s *= 1.4;
+    v -= s;
+    out.unshift(v);
+  }
+  s = step;
+  for (let v = hi; v < hi + reach;) {
+    s *= 1.4;
+    v += s;
+    out.push(v);
+  }
+  return out;
+}
+
+/** A hillside under the building (see Terrain3d): level at `uphill`
+ * before the building's high face, falling linearly across it to
+ * `downhill` past its low face, with the given rooms cut out. */
+function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
+  const [dx, dz] = t.dir;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const x of [box.min.x, box.max.x])
+    for (const z of [box.min.z, box.max.z]) {
+      const s = x * dx + z * dz;
+      lo = Math.min(lo, s);
+      hi = Math.max(hi, s);
+    }
+  // A hair under the stated grade: outdoor slabs sit just below 0.
+  const height = (x: number, z: number) => {
+    const s = x * dx + z * dz;
+    const k = hi > lo ? Math.min(1, Math.max(0, (s - lo) / (hi - lo))) : 0;
+    return t.uphill + (t.downhill - t.uphill) * k - 0.06;
+  };
+  const margin = 6;
+  const xs = gridLines(box.min.x - margin, box.max.x + margin, 0.2, 250);
+  const zs = gridLines(box.min.z - margin, box.max.z + margin, 0.2, 250);
+  const nx = xs.length;
+  const positions = new Float32Array(nx * zs.length * 3);
+  zs.forEach((z, j) =>
+    xs.forEach((x, i) => {
+      const k = (j * nx + i) * 3;
+      positions[k] = x;
+      positions[k + 1] = height(x, z);
+      positions[k + 2] = z;
+    }),
+  );
+  const inHole = (x: number, z: number) =>
+    x >= box.min.x - 0.5 &&
+    x <= box.max.x + 0.5 &&
+    z >= box.min.z - 0.5 &&
+    z <= box.max.z + 0.5 &&
+    t.holes.some((poly) => insidePolygon(poly, x, z));
+  const index: number[] = [];
+  for (let j = 0; j < zs.length - 1; j++) {
+    for (let i = 0; i < nx - 1; i++) {
+      const x0 = xs[i]!;
+      const x1 = xs[i + 1]!;
+      const z0 = zs[j]!;
+      const z1 = zs[j + 1]!;
+      if (
+        inHole((x0 + x1) / 2, (z0 + z1) / 2) ||
+        inHole(x0, z0) ||
+        inHole(x1, z0) ||
+        inHole(x0, z1) ||
+        inHole(x1, z1)
+      )
+        continue;
+      const a = j * nx + i;
+      const b = a + 1;
+      const c = a + nx;
+      const d = c + 1;
+      index.push(a, c, b, b, c, d);
+    }
+  }
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geom.setIndex(index);
+  geom.computeVertexNormals();
+  return geom;
+}
+
 function percentile(sorted: Float32Array, p: number): number {
   if (sorted.length === 0) return 0;
   return sorted[
@@ -219,6 +319,8 @@ function createView3d(options: View3dOptions): View3dHandle {
   ground.position.y = -0.06;
   ground.receiveShadow = true;
   scene.add(ground);
+  /** The sloping ground of a hillside site, in place of `ground`. */
+  let terrain: THREE.Mesh | null = null;
 
   const hemi = new THREE.HemisphereLight("#dcecff", "#b9a88f", 1);
   scene.add(hemi);
@@ -511,6 +613,22 @@ function createView3d(options: View3dOptions): View3dHandle {
     placeFloors();
     for (const s of scans.values()) attachScan(s);
     applyWallHiding();
+
+    if (terrain) {
+      terrain.removeFromParent();
+      terrain.geometry.dispose();
+      terrain = null;
+    }
+    ground.visible = !spec.terrain;
+    if (spec.terrain) {
+      terrain = new THREE.Mesh(
+        terrainGeometry(spec.terrain, bounds()),
+        groundMat,
+      );
+      terrain.name = "Ground";
+      terrain.receiveShadow = true;
+      scene.add(terrain);
+    }
 
     scene.background = new THREE.Color(spec.background);
     groundMat.color.set(spec.dark ? "#2c3229" : "#c9d4c0");
