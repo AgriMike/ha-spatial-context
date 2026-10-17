@@ -77,6 +77,8 @@ const SHINGLE_DARK = "#2d3036";
 const ROOF_PITCH = 0.55;
 const EAVE_M = 0.35;
 const ROOF_STEP_M = 0.1;
+/** Gaps between a floor's rooms narrower than this are roofed over. */
+const ROOF_GAP_M = 0.4;
 /** Wings up to this wide end in gables; wider blocks are hipped (a gable
  * that wide would tower). */
 const GABLE_MAX_M = 10;
@@ -1012,6 +1014,94 @@ export function buildScene(input: SceneInput): Scene3d {
   };
 }
 
+/** Grows (or, inverted, shrinks) a mask by `r` grid steps in every
+ * direction, square-wise. */
+function growMask(
+  mask: Uint8Array,
+  nx: number,
+  nz: number,
+  r: number,
+): Uint8Array {
+  const rows = new Uint8Array(mask.length);
+  for (let j = 0; j < nz; j++)
+    for (let i = 0; i < nx; i++) {
+      let on = 0;
+      for (let d = -r; d <= r && !on; d++) {
+        const x = i + d;
+        if (x >= 0 && x < nx) on = mask[j * nx + x]!;
+      }
+      rows[j * nx + i] = on;
+    }
+  const out = new Uint8Array(mask.length);
+  for (let j = 0; j < nz; j++)
+    for (let i = 0; i < nx; i++) {
+      let on = 0;
+      for (let d = -r; d <= r && !on; d++) {
+        const y = j + d;
+        if (y >= 0 && y < nz) on = rows[y * nx + i]!;
+      }
+      out[j * nx + i] = on;
+    }
+  return out;
+}
+
+/** A floor's roof eaves with its gaps filled from their neighbours: the
+ * spots its rooms don't cover that the outside can't reach (a stairwell),
+ * and slivers narrower than ROOF_GAP_M between rooms (a wall's thickness,
+ * a closet left undrawn). */
+function fillRoofGaps(eave: Float32Array, nx: number, nz: number): void {
+  const N = eave.length;
+  const solid = new Uint8Array(N);
+  for (let k = 0; k < N; k++) solid[k] = eave[k]! > -Infinity ? 1 : 0;
+  const r = Math.max(1, Math.round(ROOF_GAP_M / 2 / ROOF_STEP_M));
+  const grown = growMask(solid, nx, nz, r);
+  const notGrown = new Uint8Array(N);
+  for (let k = 0; k < N; k++) notGrown[k] = grown[k] ? 0 : 1;
+  const closed = growMask(notGrown, nx, nz, r);
+  // closed[k] set: outside the closed outline.
+  const open = new Uint8Array(N);
+  const queue: number[] = [];
+  const reach = (k: number) => {
+    if (!open[k] && closed[k]) {
+      open[k] = 1;
+      queue.push(k);
+    }
+  };
+  for (let i = 0; i < nx; i++) {
+    reach(i);
+    reach((nz - 1) * nx + i);
+  }
+  for (let j = 0; j < nz; j++) {
+    reach(j * nx);
+    reach(j * nx + nx - 1);
+  }
+  while (queue.length) {
+    const k = queue.pop()!;
+    const i = k % nx;
+    if (i > 0) reach(k - 1);
+    if (i < nx - 1) reach(k + 1);
+    if (k >= nx) reach(k - nx);
+    if (k < N - nx) reach(k + nx);
+  }
+  for (let pass = 0, changed = true; changed && pass < 400; pass++) {
+    changed = false;
+    for (let k = 0; k < N; k++) {
+      if (open[k] || eave[k] !== -Infinity) continue;
+      const i = k % nx;
+      const best = Math.max(
+        i > 0 ? eave[k - 1]! : -Infinity,
+        i < nx - 1 ? eave[k + 1]! : -Infinity,
+        k >= nx ? eave[k - nx]! : -Infinity,
+        k < N - nx ? eave[k + nx]! : -Infinity,
+      );
+      if (best > -Infinity) {
+        eave[k] = best;
+        changed = true;
+      }
+    }
+  }
+}
+
 /** A roof over the whole building, from its rooms alone. Every spot is
  * roofed from the eave of the highest room under it (that room's floor
  * level plus its storey), and each eave level's roof rises at ROOF_PITCH
@@ -1032,6 +1122,7 @@ function buildRoof(input: SceneInput, northDeg: number): Roof3d | null {
         const xs = points.map((p) => p[0]);
         const zs = points.map((p) => p[1]);
         return {
+          floorId: f.floorId,
           eave: f.baseY + (r.floor_offset_m ?? 0) + f.wallHeight,
           points,
           box: [
@@ -1055,62 +1146,28 @@ function buildRoof(input: SceneInput, northDeg: number): Roof3d | null {
   // A plan drawn at a silly scale: no roof rather than a frozen tab.
   if (nx * nz > 600_000) return null;
   const N = nx * nz;
-  // The eave over each grid point: the highest room's.
+  // The eave over each grid point: the highest floor's, each floor's gaps
+  // filled first so a stairwell doesn't let the roof sink to the floor
+  // below.
   const eave = new Float32Array(N).fill(-Infinity);
-  for (const r of rooms) {
-    const i0 = Math.max(0, Math.floor((r.box[0] - minX) / step));
-    const i1 = Math.min(nx - 1, Math.ceil((r.box[2] - minX) / step));
-    const j0 = Math.max(0, Math.floor((r.box[1] - minZ) / step));
-    const j1 = Math.min(nz - 1, Math.ceil((r.box[3] - minZ) / step));
-    for (let j = j0; j <= j1; j++)
-      for (let i = i0; i <= i1; i++) {
-        const k = j * nx + i;
-        if (eave[k]! >= r.eave) continue;
-        if (pointInPolygon(minX + i * step, minZ + j * step, r.points))
-          eave[k] = r.eave;
-      }
-  }
-  // Holes the outside can't reach: filled from their neighbours.
-  const open = new Uint8Array(N);
-  const queue: number[] = [];
-  const reach = (k: number) => {
-    if (!open[k] && eave[k] === -Infinity) {
-      open[k] = 1;
-      queue.push(k);
+  for (const f of input.floors) {
+    const own = new Float32Array(N).fill(-Infinity);
+    for (const r of rooms) {
+      if (r.floorId !== f.floorId) continue;
+      const i0 = Math.max(0, Math.floor((r.box[0] - minX) / step));
+      const i1 = Math.min(nx - 1, Math.ceil((r.box[2] - minX) / step));
+      const j0 = Math.max(0, Math.floor((r.box[1] - minZ) / step));
+      const j1 = Math.min(nz - 1, Math.ceil((r.box[3] - minZ) / step));
+      for (let j = j0; j <= j1; j++)
+        for (let i = i0; i <= i1; i++) {
+          const k = j * nx + i;
+          if (own[k]! >= r.eave) continue;
+          if (pointInPolygon(minX + i * step, minZ + j * step, r.points))
+            own[k] = r.eave;
+        }
     }
-  };
-  for (let i = 0; i < nx; i++) {
-    reach(i);
-    reach((nz - 1) * nx + i);
-  }
-  for (let j = 0; j < nz; j++) {
-    reach(j * nx);
-    reach(j * nx + nx - 1);
-  }
-  while (queue.length) {
-    const k = queue.pop()!;
-    const i = k % nx;
-    if (i > 0) reach(k - 1);
-    if (i < nx - 1) reach(k + 1);
-    if (k >= nx) reach(k - nx);
-    if (k < N - nx) reach(k + nx);
-  }
-  for (let pass = 0, changed = true; changed && pass < 200; pass++) {
-    changed = false;
-    for (let k = 0; k < N; k++) {
-      if (open[k] || eave[k] !== -Infinity) continue;
-      const i = k % nx;
-      const best = Math.max(
-        i > 0 ? eave[k - 1]! : -Infinity,
-        i < nx - 1 ? eave[k + 1]! : -Infinity,
-        k >= nx ? eave[k - nx]! : -Infinity,
-        k < N - nx ? eave[k + nx]! : -Infinity,
-      );
-      if (best > -Infinity) {
-        eave[k] = best;
-        changed = true;
-      }
-    }
+    fillRoofGaps(own, nx, nz);
+    for (let k = 0; k < N; k++) if (own[k]! > eave[k]!) eave[k] = own[k]!;
   }
 
   // Ridges toward the street: lines run across it, and each eave level's
