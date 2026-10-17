@@ -23,6 +23,9 @@ export interface Box3d {
   depth: number;
   /** Radians about +Y (three.js's rotation.y). */
   angle: number;
+  /** Which long face looks outdoors (and is sided): 1 the box's local +Z
+   * face, -1 its local -Z face; absent where rooms lie on both sides. */
+  outside?: 1 | -1;
 }
 
 export interface Pane3d {
@@ -80,6 +83,8 @@ export interface Floor3d {
   wallHeight: number;
   walls: Box3d[];
   wallColor: string;
+  /** Outdoor faces of the outside walls. */
+  sidingColor: string;
   panes: Pane3d[];
   slabs: Slab3d[];
   items: Item3d[];
@@ -104,6 +109,26 @@ export interface Scene3d {
   /** Ground sloping across the site, else null (flat, under the lowest
    * floor). */
   terrain: Terrain3d | null;
+  /** The building's roof, null when not shown. */
+  roof: Roof3d | null;
+}
+
+/** A roof as heights over a square grid on the floor plane: point (i, j)
+ * is at (x0 + i * step, z0 + j * step), row-major (j * nx + i). NaN where
+ * there's no roof. */
+export interface Roof3d {
+  x0: number;
+  z0: number;
+  step: number;
+  nx: number;
+  nz: number;
+  /** World Y of the roof surface. */
+  heights: Float32Array;
+  /** World Y of the eave the surface rises from at each point: a gable
+   * end is closed with siding from the surface down to it. */
+  eaves: Float32Array;
+  color: string;
+  sidingColor: string;
 }
 
 /** A hillside: the ground stands at `uphill` (world Y) on the building's

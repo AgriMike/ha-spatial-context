@@ -19,6 +19,7 @@ import type {
   Floor3d,
   Item3d,
   Pane3d,
+  Roof3d,
   Scene3d,
   Slab3d,
   Terrain3d,
@@ -66,6 +67,16 @@ import {
 } from "../canvas/sun";
 
 export const DEFAULT_WALL_HEIGHT_M = 2.4;
+/** Outside walls and the roof. */
+const SIDING = "#9aa1a8";
+const SIDING_DARK = "#4d535a";
+const SHINGLE = "#4a4f57";
+const SHINGLE_DARK = "#2d3036";
+/** Roof: rise per metre of run, eave overhang, and the grid it's
+ * sampled on. */
+const ROOF_PITCH = 0.55;
+const EAVE_M = 0.35;
+const ROOF_STEP_M = 0.1;
 /** Walls this thin (or thinner) are railings, drawn this high; walls
  * shorter than STUB_M in all are left out. */
 const RAIL_THICKNESS_M = 0.06;
@@ -464,6 +475,8 @@ export interface SceneInput {
   showLights: boolean;
   /** The ground around the building, null for flat. */
   ground: GroundSetting | null;
+  /** Put a roof on the building. */
+  roof?: boolean;
 }
 
 function buildFloor(
@@ -484,53 +497,92 @@ function buildFloor(
   const offsetRooms = layout.rooms.filter(
     (r) => (r.floor_offset_m ?? 0) !== 0 && r.points.length >= 3,
   );
-  /** The rooms either side of a wall, a little way out from it along its
-   * length: their floor offsets (Room.floor_offset_m, 0 when level with
-   * the floor) and the height of whatever floor above covers each spot
-   * (null where nothing does). */
+  /** The floor offsets (Room.floor_offset_m, 0 when level with the floor)
+   * of the rooms either side of a wall, a little way out from it along its
+   * length, and which side is outdoors (1 toward the segment's left-hand
+   * normal, -1 the other) when only one side has indoor rooms. */
   const wallSides = (a: Vec2, b: Vec2, t: number) => {
     const len = distance(a[0], a[1], b[0], b[1]);
     const nx = -(b[1] - a[1]) / len;
     const ny = (b[0] - a[0]) / len;
     const reach = (t / 2 + 0.2) / m;
     const offsets = new Set<number>();
-    const above: (number | null)[] = [];
+    const indoors = { 1: 0, [-1]: 0 } as Record<1 | -1, number>;
     for (const f of [0.2, 0.5, 0.8]) {
-      for (const side of [1, -1]) {
+      for (const side of [1, -1] as const) {
         const x = a[0] + (b[0] - a[0]) * f + nx * reach * side;
         const y = a[1] + (b[1] - a[1]) * f + ny * reach * side;
         const room = layout.rooms.find(
           (r) => r.points.length >= 3 && pointInPolygon(x, y, r.points),
         );
         if (room) offsets.add(room.floor_offset_m ?? 0);
-        above.push(floorAbove(x * m, y * m));
+        if (room && !room.outdoor) indoors[side]++;
       }
     }
-    return { offsets: [...offsets], above };
+    const outside: 1 | -1 | undefined =
+      indoors[1] && !indoors[-1]
+        ? -1
+        : indoors[-1] && !indoors[1]
+          ? 1
+          : undefined;
+    return { offsets: [...offsets], outside };
   };
-  /** A wall's vertical span (metres from the floor's level) and the level
-   * its doors and windows sit at. It reaches from the lowest room beside
-   * it to a storey above the highest; a split level's garage walls run
-   * from the landing. It stops at a floor above that covers it, and
-   * reaches up to meet one just above it rather than leave a gap. */
+  /** A wall's vertical span (metres from the floor's level) before any
+   * floor above trims it, and the level its doors and windows sit at. It
+   * reaches from the lowest room beside it to a storey above the highest;
+   * a split level's garage walls run from the landing. */
   const wallSpan = (a: Vec2, b: Vec2, t: number) => {
-    const { offsets, above } = wallSides(a, b, t);
+    const { offsets, outside } = wallSides(a, b, t);
     const base = offsets.length ? Math.min(...offsets) : 0;
     let top = (offsets.length ? Math.max(...offsets) : 0) + H;
     // Doors and windows: at the room's level when it's the only one, else
     // at the higher (steps go down into the lower room).
     const level = offsets.length ? Math.max(...offsets) : 0;
-    const covered = above.filter((u): u is number => u !== null);
-    if (covered.length === above.length && covered.length) {
-      top = Math.min(top, Math.max(...covered));
-    } else if (covered.length) {
-      const near = Math.min(...covered);
-      if (near > top && near <= top + 0.8) top = near;
-    }
     // Where a floor above has a wall on the same line, that wall carries
     // on from its level: stop there rather than stand beside it.
     top = Math.min(top, upperWallTop(a, b, top));
-    return { base, top: Math.max(top, base + 0.3), level };
+    return { base, top, level, outside };
+  };
+  /** A wall's top along its length (s in metres from `a`), in runs: it
+   * stops under a floor above that covers either side of it, and reaches
+   * up to meet one just above it rather than leave a gap. A wall only
+   * partly under an upper floor is trimmed only there, so it never stands
+   * up through that floor. */
+  const wallRuns = (
+    a: Vec2,
+    b: Vec2,
+    t: number,
+    base: number,
+    top: number,
+  ): { s0: number; s1: number; top: number }[] => {
+    const L = distance(a[0], a[1], b[0], b[1]) * m;
+    const ux = ((b[0] - a[0]) * m) / L;
+    const uz = ((b[1] - a[1]) * m) / L;
+    const reach = t / 2 + 0.2;
+    const n = Math.max(1, Math.round(L / 0.1));
+    const runs: { s0: number; s1: number; top: number }[] = [];
+    for (let k = 0; k < n; k++) {
+      const s = ((k + 0.5) * L) / n;
+      const x = a[0] * m + ux * s;
+      const z = a[1] * m + uz * s;
+      const covered = [
+        floorAbove(x - uz * reach, z + ux * reach),
+        floorAbove(x + uz * reach, z - ux * reach),
+      ].filter((u): u is number => u !== null);
+      let v = top;
+      if (covered.length) {
+        const c = Math.min(...covered);
+        if (c <= top + 0.8) v = c;
+      }
+      v = Math.max(v, base + 0.3);
+      const last = runs[runs.length - 1];
+      if (last && Math.abs(last.top - v) < 0.005) last.s1 = ((k + 1) * L) / n;
+      else runs.push({ s0: (k * L) / n, s1: ((k + 1) * L) / n, top: v });
+    }
+    // The joint overlaps past either end belong to the end runs.
+    runs[0]!.s0 = -Infinity;
+    runs[runs.length - 1]!.s1 = Infinity;
+    return runs;
   };
   /** The level of the lowest wall of a floor above that runs along this
    * one (parallel, within 35 cm, over most of its length), else `top`. */
@@ -630,7 +682,18 @@ function buildFloor(
       const dz = ((by - ay) * m) / L;
       const angle = Math.atan2(-dz, dx);
       const at = (s: number): Vec2 => [ax * m + dx * s, ay * m + dz * s];
-      const { base, top, level: off } = wallSpan([ax, ay], [bx, by], t);
+      const {
+        base,
+        top: fullTop,
+        level: off,
+        outside,
+      } = wallSpan([ax, ay], [bx, by], t);
+      const runs = wallRuns([ax, ay], [bx, by], t, base, fullTop);
+      /** The lowest top over [s0, s1]. */
+      const topOver = (s0: number, s1: number) =>
+        Math.min(
+          ...runs.filter((r) => r.s1 > s0 && r.s0 < s1).map((r) => r.top),
+        );
       // Overlap the next/previous segment at joints so corners close.
       const ext0 = i > 0 || closed ? t / 2 : 0;
       const ext1 = i < pts.length - 2 || closed ? t / 2 : 0;
@@ -642,7 +705,27 @@ function buildFloor(
         depth = t,
       ): Box3d => {
         const [x, z] = at((s0 + s1) / 2);
-        return { x, z, y0, y1, length: s1 - s0, depth, angle };
+        return {
+          x,
+          z,
+          y0,
+          y1,
+          length: s1 - s0,
+          depth,
+          angle,
+          ...(outside && depth === t ? { outside } : {}),
+        };
+      };
+      /** Solid wall over [s0, s1] from y0 up to `y1` (else the wall's
+       * top), cut where the top changes along it. */
+      const solid = (s0: number, s1: number, y0: number, y1?: number) => {
+        for (const r of runs) {
+          const p0 = Math.max(s0, r.s0);
+          const p1 = Math.min(s1, r.s1);
+          const hi = Math.min(y1 ?? r.top, r.top);
+          if (p1 - p0 > 0.001 && hi - y0 > 0.005)
+            walls.push(box(p0, p1, y0, hi));
+        }
       };
       const nx = -dz * (t / 2);
       const nz = dx * (t / 2);
@@ -674,7 +757,8 @@ function buildFloor(
       let cursor = -ext0;
       for (const hole of holes) {
         const { opening } = hole;
-        if (hole.s0 > cursor) walls.push(box(cursor, hole.s0, base, top));
+        if (hole.s0 > cursor) solid(cursor, hole.s0, base);
+        const top = topOver(hole.s0, hole.s1);
         const isDoor = opening.type === "door";
         // A window's kind sets its glass: a transom is a ~45 cm strip just
         // under the ceiling, floor-to-ceiling runs the full wall height.
@@ -694,7 +778,7 @@ function buildFloor(
               : style === "full"
                 ? 0
                 : Math.min(WINDOW_SILL_M, head - off - 0.1)) + off;
-        if (sill > base) walls.push(box(hole.s0, hole.s1, base, sill));
+        if (sill > base) solid(hole.s0, hole.s1, base, sill);
         if (head < top - 0.005) walls.push(box(hole.s0, hole.s1, head, top));
         if (!isDoor)
           panes.push({
@@ -751,7 +835,7 @@ function buildFloor(
         }
         cursor = hole.s1;
       }
-      if (L + ext1 > cursor) walls.push(box(cursor, L + ext1, base, top));
+      if (L + ext1 > cursor) solid(cursor, L + ext1, base);
     }
   }
 
@@ -856,6 +940,7 @@ function buildFloor(
     wallHeight: H,
     walls,
     wallColor: dark ? "#8a8580" : "#f4f1ec",
+    sidingColor: dark ? SIDING_DARK : SIDING,
     panes,
     slabs,
     items,
@@ -910,6 +995,7 @@ export function buildScene(input: SceneInput): Scene3d {
       intensity: 0.55 + 0.7 * day,
     },
     terrain: input.ground ? terrain(input, input.ground, northDeg) : null,
+    roof: input.roof ? buildRoof(input, northDeg) : null,
     background: dark
       ? day > 0
         ? "#1f2a33"
@@ -918,6 +1004,183 @@ export function buildScene(input: SceneInput): Scene3d {
         ? "#e9f1f7"
         : "#2b3140",
     dark,
+  };
+}
+
+/** A roof over the whole building, from its rooms alone. Every spot is
+ * roofed from the eave of the highest room under it (that room's floor
+ * level plus its storey), and each eave level's roof rises at ROOF_PITCH
+ * across the part of the building at least that high: a garage's roof runs
+ * up into the house's and an upper storey's stands out of both. Ridges run
+ * toward the street (across a hillside, else up the plan), so the ends
+ * facing front and back are gables; eaves overhang the sides. Spots inside
+ * the building that no room covers (a stairwell, a gap at a wall) take
+ * their neighbours' eave. */
+function buildRoof(input: SceneInput, northDeg: number): Roof3d | null {
+  const rooms = input.floors.flatMap((f) => {
+    const m = metersPerUnit(f.layout.scale);
+    return f.layout.rooms
+      .filter((r) => !r.outdoor && r.points.length >= 3)
+      .map((r) => {
+        const points = r.points.map(([x, y]): Vec2 => [x * m, y * m]);
+        const xs = points.map((p) => p[0]);
+        const zs = points.map((p) => p[1]);
+        return {
+          eave: f.baseY + (r.floor_offset_m ?? 0) + f.wallHeight,
+          points,
+          box: [
+            Math.min(...xs),
+            Math.min(...zs),
+            Math.max(...xs),
+            Math.max(...zs),
+          ] as const,
+        };
+      });
+  });
+  if (!rooms.length) return null;
+  const step = ROOF_STEP_M;
+  const pad = EAVE_M + 2 * step;
+  const minX = Math.min(...rooms.map((r) => r.box[0])) - pad;
+  const minZ = Math.min(...rooms.map((r) => r.box[1])) - pad;
+  const maxX = Math.max(...rooms.map((r) => r.box[2])) + pad;
+  const maxZ = Math.max(...rooms.map((r) => r.box[3])) + pad;
+  const nx = Math.ceil((maxX - minX) / step) + 1;
+  const nz = Math.ceil((maxZ - minZ) / step) + 1;
+  // A plan drawn at a silly scale: no roof rather than a frozen tab.
+  if (nx * nz > 600_000) return null;
+  const N = nx * nz;
+  // The eave over each grid point: the highest room's.
+  const eave = new Float32Array(N).fill(-Infinity);
+  for (const r of rooms) {
+    const i0 = Math.max(0, Math.floor((r.box[0] - minX) / step));
+    const i1 = Math.min(nx - 1, Math.ceil((r.box[2] - minX) / step));
+    const j0 = Math.max(0, Math.floor((r.box[1] - minZ) / step));
+    const j1 = Math.min(nz - 1, Math.ceil((r.box[3] - minZ) / step));
+    for (let j = j0; j <= j1; j++)
+      for (let i = i0; i <= i1; i++) {
+        const k = j * nx + i;
+        if (eave[k]! >= r.eave) continue;
+        if (pointInPolygon(minX + i * step, minZ + j * step, r.points))
+          eave[k] = r.eave;
+      }
+  }
+  // Holes the outside can't reach: filled from their neighbours.
+  const open = new Uint8Array(N);
+  const queue: number[] = [];
+  const reach = (k: number) => {
+    if (!open[k] && eave[k] === -Infinity) {
+      open[k] = 1;
+      queue.push(k);
+    }
+  };
+  for (let i = 0; i < nx; i++) {
+    reach(i);
+    reach((nz - 1) * nx + i);
+  }
+  for (let j = 0; j < nz; j++) {
+    reach(j * nx);
+    reach(j * nx + nx - 1);
+  }
+  while (queue.length) {
+    const k = queue.pop()!;
+    const i = k % nx;
+    if (i > 0) reach(k - 1);
+    if (i < nx - 1) reach(k + 1);
+    if (k >= nx) reach(k - nx);
+    if (k < N - nx) reach(k + nx);
+  }
+  for (let pass = 0, changed = true; changed && pass < 200; pass++) {
+    changed = false;
+    for (let k = 0; k < N; k++) {
+      if (open[k] || eave[k] !== -Infinity) continue;
+      const i = k % nx;
+      const best = Math.max(
+        i > 0 ? eave[k - 1]! : -Infinity,
+        i < nx - 1 ? eave[k + 1]! : -Infinity,
+        k >= nx ? eave[k - nx]! : -Infinity,
+        k < N - nx ? eave[k + nx]! : -Infinity,
+      );
+      if (best > -Infinity) {
+        eave[k] = best;
+        changed = true;
+      }
+    }
+  }
+
+  // Ridges toward the street: lines run across it, and each eave level's
+  // roof rises from both ends of each of its runs along a line.
+  let ridgeAlongX = false;
+  if (input.ground) {
+    const [dx, dz] = planVector(input.ground.downhill_deg, northDeg);
+    ridgeAlongX = Math.abs(dx) > Math.abs(dz);
+  }
+  const lines = ridgeAlongX ? nx : nz;
+  const len = ridgeAlongX ? nz : nx;
+  const at = (line: number, k: number) =>
+    ridgeAlongX ? k * nx + line : line * nx + k;
+  const heights = new Float32Array(N).fill(NaN);
+  const eaves = new Float32Array(N).fill(NaN);
+  const raise = (k: number, h: number, e: number) => {
+    if (!(heights[k]! >= h)) {
+      heights[k] = h;
+      eaves[k] = e;
+    }
+  };
+  const levels = new Set<number>();
+  for (const e of eave)
+    if (e > -Infinity) levels.add(Math.round(e * 100) / 100);
+  const over = Math.round(EAVE_M / step);
+  for (const level of levels) {
+    const inside = (line: number, k: number) =>
+      eave[at(line, k)]! >= level - 0.005;
+    for (let line = 0; line < lines; line++) {
+      let k = 0;
+      while (k < len) {
+        if (!inside(line, k)) {
+          k++;
+          continue;
+        }
+        const k0 = k;
+        while (k < len && inside(line, k)) k++;
+        const k1 = k - 1;
+        for (
+          let q = Math.max(0, k0 - over);
+          q <= Math.min(len - 1, k1 + over);
+          q++
+        ) {
+          const run = Math.min(q - (k0 - 0.5), k1 + 0.5 - q) * step;
+          raise(at(line, q), level + ROOF_PITCH * run, level);
+        }
+      }
+    }
+  }
+  // Gable ends reach a step further along the ridge, over the wall.
+  const grown = heights.slice();
+  const grownEaves = eaves.slice();
+  for (let line = 0; line < lines; line++)
+    for (let k = 0; k < len; k++) {
+      const here = at(line, k);
+      if (!Number.isNaN(heights[here]!)) continue;
+      for (const nb of [line - 1, line + 1]) {
+        if (nb < 0 || nb >= lines) continue;
+        const there = at(nb, k);
+        if (Number.isNaN(heights[there]!)) continue;
+        if (!(grown[here]! >= heights[there]!)) {
+          grown[here] = heights[there]!;
+          grownEaves[here] = eaves[there]!;
+        }
+      }
+    }
+  return {
+    x0: minX,
+    z0: minZ,
+    step,
+    nx,
+    nz,
+    heights: grown,
+    eaves: grownEaves,
+    color: input.dark ? SHINGLE_DARK : SHINGLE,
+    sidingColor: input.dark ? SIDING_DARK : SIDING,
   };
 }
 

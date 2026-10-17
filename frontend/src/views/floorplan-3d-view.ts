@@ -64,6 +64,18 @@ function readScanMode(): ScanMode {
   }
 }
 
+const ROOF_KEY = "spatial-context-3d-roof";
+
+/** Whether the building view wears its roof — a per-browser choice, on
+ * unless turned off. */
+function readRoof(): boolean {
+  try {
+    return localStorage.getItem(ROOF_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
 function emptyView3d(): View3dSettings {
   return { wall_height_m: null, floor_elevation_m: null, scans: [] };
 }
@@ -379,6 +391,7 @@ export class Floorplan3dView extends LitElement {
   /** Plan or scan model where a floor has a scan (see View3dHandle's
    * setScanMode) — a per-browser choice. */
   @state() private _scanMode: ScanMode = readScanMode();
+  @state() private _roof = readRoof();
   @state() private _uploading = false;
   @state() private _scanStatus = new Map<string, string>();
   @state() private _exporting = false;
@@ -652,6 +665,7 @@ export class Floorplan3dView extends LitElement {
       this.dark,
       this.sky?.clouds ?? "",
       JSON.stringify(ground),
+      this._roofShown,
     ].join("|");
     // Layout objects are replaced on every edit, so identity is enough.
     const layoutsChanged = floors.some(
@@ -669,6 +683,7 @@ export class Floorplan3dView extends LitElement {
           sky: this.sky,
           showLights: true,
           ground,
+          roof: this._roofShown,
         }),
       );
       this._scanSig = "";
@@ -711,6 +726,11 @@ export class Floorplan3dView extends LitElement {
     );
   };
   private _lastLayouts: FloorLayout[] = [];
+
+  /** The roof goes on the whole building, never a single floor. */
+  private get _roofShown(): boolean {
+    return this.dollhouse && this._roof && this._shownFloorIds.length > 1;
+  }
   private _spreadShown = -1;
 
   // --- scans ------------------------------------------------------------------
@@ -958,6 +978,25 @@ export class Floorplan3dView extends LitElement {
                 >
                   <ha-icon icon="mdi:home-floor-3"></ha-icon>
                   ${localize("view3d.dollhouse")}
+                </button>`
+              : nothing
+          }
+          ${
+            this.dollhouse && this._shownFloorIds.length > 1
+              ? html`<button
+                  class=${this._roof ? "active" : ""}
+                  title=${localize("view3d.roofHint")}
+                  @click=${() => {
+                    this._roof = !this._roof;
+                    try {
+                      localStorage.setItem(ROOF_KEY, this._roof ? "on" : "off");
+                    } catch {
+                      /* private window: just this session */
+                    }
+                  }}
+                >
+                  <ha-icon icon="mdi:home-roof"></ha-icon>
+                  ${localize("view3d.roof")}
                 </button>`
               : nothing
           }

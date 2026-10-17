@@ -565,6 +565,8 @@
     "topView": "Draufsicht",
     "dollhouse": "Puppenhaus",
     "dollhouseHint": "Alle Etagen dieses Gebäudes stapeln",
+    "roof": "Dach",
+    "roofHint": "Dach auf das Gebäude setzen (ausgeblendet, solange die Etagen auseinandergezogen sind)",
     "spread": "Etagen auseinanderziehen",
     "sunTime": "Tageszeit für die Sonne",
     "now": "Jetzt",

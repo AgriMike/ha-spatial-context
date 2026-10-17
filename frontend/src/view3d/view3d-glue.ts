@@ -7,6 +7,7 @@ import type {
   Box3d,
   Floor3d,
   Item3d,
+  Roof3d,
   Scene3d,
   ScanPlacement3d,
   ScanMode,
@@ -64,6 +65,101 @@ function boxGeometry(b: Box3d): THREE.BufferGeometry {
   g.rotateY(b.angle);
   g.translate(b.x, (b.y0 + b.y1) / 2, b.z);
   return g;
+}
+
+/** A wall box coloured per face: its outdoor face (Box3d.outside) sided,
+ * the rest painted. */
+function wallGeometry(
+  b: Box3d,
+  paint: THREE.Color,
+  siding: THREE.Color,
+): THREE.BufferGeometry {
+  const g = boxGeometry(b);
+  const count = g.getAttribute("position").count;
+  const colors = new Float32Array(count * 3);
+  // BoxGeometry's faces come +X, -X, +Y, -Y, +Z, -Z, four corners each.
+  const sided = b.outside === 1 ? 16 : b.outside === -1 ? 20 : -1;
+  for (let v = 0; v < count; v++) {
+    const c = sided >= 0 && v >= sided && v < sided + 4 ? siding : paint;
+    colors[v * 3] = c.r;
+    colors[v * 3 + 1] = c.g;
+    colors[v * 3 + 2] = c.b;
+  }
+  g.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  return g;
+}
+
+/** The roof's surface from its height grid, shingled where it's roof-like
+ * and sided where it stands steep (a gable's end above a lower roof), with
+ * the gable ends closed down to their eaves. */
+function roofGeometry(roof: Roof3d): THREE.BufferGeometry {
+  const { x0, z0, step, nx, nz, heights, eaves } = roof;
+  const shingle = new THREE.Color(roof.color);
+  const siding = new THREE.Color(roof.sidingColor);
+  const pos: number[] = [];
+  const col: number[] = [];
+  const h = (i: number, j: number) => heights[j * nx + i]!;
+  const cell = (i: number, j: number) =>
+    i >= 0 &&
+    j >= 0 &&
+    i < nx - 1 &&
+    j < nz - 1 &&
+    !Number.isNaN(h(i, j)) &&
+    !Number.isNaN(h(i + 1, j)) &&
+    !Number.isNaN(h(i, j + 1)) &&
+    !Number.isNaN(h(i + 1, j + 1));
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const tri = (p: THREE.Vector3, q: THREE.Vector3, r: THREE.Vector3) => {
+    const n = new THREE.Vector3()
+      .subVectors(q, p)
+      .cross(new THREE.Vector3().subVectors(r, p))
+      .normalize();
+    const look = Math.abs(n.y) < 0.4 ? siding : shingle;
+    for (const v of [p, q, r]) {
+      pos.push(v.x, v.y, v.z);
+      col.push(look.r, look.g, look.b);
+    }
+  };
+  const P = (i: number, j: number, y = h(i, j)) =>
+    new THREE.Vector3(x0 + i * step, y, z0 + j * step);
+  for (let j = 0; j < nz - 1; j++)
+    for (let i = 0; i < nx - 1; i++) {
+      if (!cell(i, j)) continue;
+      a.copy(P(i, j));
+      b.copy(P(i, j + 1));
+      c.copy(P(i + 1, j));
+      tri(a, b, c);
+      tri(c, b, P(i + 1, j + 1));
+    }
+  // Gable ends: where the roof stops above its eave, siding down to it.
+  const skirt = (i0: number, j0: number, i1: number, j1: number) => {
+    const e0 = eaves[j0 * nx + i0]!;
+    const e1 = eaves[j1 * nx + i1]!;
+    const h0 = h(i0, j0);
+    const h1 = h(i1, j1);
+    if (!(h0 > e0 + 0.02 || h1 > e1 + 0.02)) return;
+    const top0 = P(i0, j0);
+    const top1 = P(i1, j1);
+    const bot0 = P(i0, j0, Math.min(e0, h0));
+    const bot1 = P(i1, j1, Math.min(e1, h1));
+    for (const v of [top0, bot0, top1, top1, bot0, bot1]) {
+      pos.push(v.x, v.y, v.z);
+      col.push(siding.r, siding.g, siding.b);
+    }
+  };
+  for (let j = 0; j < nz; j++)
+    for (let i = 0; i < nx - 1; i++)
+      if (cell(i, j - 1) !== cell(i, j)) skirt(i, j, i + 1, j);
+  for (let j = 0; j < nz - 1; j++)
+    for (let i = 0; i < nx; i++)
+      if (cell(i - 1, j) !== cell(i, j)) skirt(i, j, i, j + 1);
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geom.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  geom.computeVertexNormals();
+  return geom;
 }
 
 /** A shape on the floor plane from (x, z) points — three's shapes live in
@@ -392,14 +488,16 @@ function fillWalls(
   }
   const kept = spec.walls.filter(keep);
   if (kept.length) {
-    const parts = kept.map(boxGeometry);
+    const paint = new THREE.Color(spec.wallColor);
+    const siding = new THREE.Color(spec.sidingColor);
+    const parts = kept.map((b) => wallGeometry(b, paint, siding));
     const merged = mergeGeometries(parts);
     for (const p of parts) p.dispose();
     if (merged) {
       const mesh = new THREE.Mesh(
         merged,
         new THREE.MeshStandardMaterial({
-          color: spec.wallColor,
+          vertexColors: true,
           roughness: 0.92,
         }),
       );
@@ -528,6 +626,8 @@ function createView3d(options: View3dOptions): View3dHandle {
   scene.add(ground);
   /** The sloping ground of a hillside site, in place of `ground`. */
   let terrain: THREE.Mesh | null = null;
+  /** The building's roof, shown while the floors stand together. */
+  let roof: THREE.Mesh | null = null;
 
   const hemi = new THREE.HemisphereLight("#dcecff", "#b9a88f", 1);
   scene.add(hemi);
@@ -791,6 +891,28 @@ function createView3d(options: View3dOptions): View3dHandle {
     placeFloors();
     for (const s of scans.values()) attachScan(s);
     applyWallHiding();
+
+    if (roof) {
+      roof.removeFromParent();
+      roof.geometry.dispose();
+      (roof.material as THREE.Material).dispose();
+      roof = null;
+    }
+    if (spec.roof) {
+      roof = new THREE.Mesh(
+        roofGeometry(spec.roof),
+        new THREE.MeshStandardMaterial({
+          vertexColors: true,
+          roughness: 0.85,
+          side: THREE.DoubleSide,
+        }),
+      );
+      roof.name = "Roof";
+      roof.castShadow = true;
+      roof.receiveShadow = true;
+      roof.visible = spread === 0;
+      root.add(roof);
+    }
 
     if (terrain) {
       terrain.removeFromParent();
@@ -1398,6 +1520,7 @@ function createView3d(options: View3dOptions): View3dHandle {
     autoAlignScan,
     setSpread(metres) {
       spread = metres;
+      if (roof) roof.visible = spread === 0;
       placeFloors();
       placeSun();
       invalidate();
