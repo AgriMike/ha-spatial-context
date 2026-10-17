@@ -863,6 +863,7 @@ const OFFICE: Row[] = [
   ],
   ["desk_u", "U-shaped desk", 200, 180, "uDesk"],
   ["desk_computer", "Computer desk", 120, 60, "desk", { monitor: true }],
+  ["desk_chair", "Desk chair", 48, 55, "deskChair"],
   ["office_chair", "Office chair", 65, 65, "officeChair"],
   ["executive_chair", "Executive chair", 72, 72, "officeChair"],
   ["gaming_chair", "Gaming chair", 70, 70, "officeChair"],

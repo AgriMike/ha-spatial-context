@@ -928,6 +928,12 @@ const T: Record<string, Template> = {
       );
     return out;
   },
+  // The chair the desks are drawn with, on its own: back rest at the back
+  // (y = 0), seat in front of it.
+  deskChair: (w, d) => {
+    const size = Math.max(4, Math.min(w, d - 7));
+    return chairAt(w / 2, d - size / 2, Math.PI / 2, size);
+  },
   lDesk: (w, d, o) => {
     const dd = num(o, "desk", 60);
     const out: Prim[] = [
