@@ -67,6 +67,9 @@ export interface Item3d {
   /** A linked light that's on: glows, and lights the room from height
    * `y` (metres above the floor's level). */
   light: { color: string; level: number; y: number } | null;
+  /** Drawn as an extruded block with its 2D drawing on top ("block"), or
+   * modelled: a potted plant, a tree, a lamp. */
+  shape: "block" | "plant" | "tree" | "lamp";
 }
 
 export interface Floor3d {

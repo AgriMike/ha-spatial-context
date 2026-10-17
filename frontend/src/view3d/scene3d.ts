@@ -65,6 +65,33 @@ import {
 } from "../canvas/sun";
 
 export const DEFAULT_WALL_HEIGHT_M = 2.4;
+/** Walls this thin (or thinner) are railings, drawn this high; walls
+ * shorter than STUB_M in all are left out. */
+const RAIL_THICKNESS_M = 0.06;
+const RAIL_HEIGHT_M = 0.95;
+const STUB_M = 0.3;
+
+/** Items modelled rather than extruded (see Item3d.shape). */
+function itemShape(
+  kind: string,
+  entry: CatalogItem | undefined,
+): Item3d["shape"] {
+  if (/stand|pedestal|basket/.test(kind)) return "block";
+  if (/tree|olive/.test(kind) && entry?.category === "outdoor") return "tree";
+  if (
+    /plant|monstera|fiddle|palm|cactus|bonsai|fern|succulent|orchid|pothos|calathea|_zz|rubber|dracaena|jade|pilea|aloe|herb|shrub|hedge|houseplant|bird_of_paradise|philodendron|spider|tree|olive/.test(
+      kind,
+    )
+  )
+    return "plant";
+  if (
+    /floor_lamp|torchiere|tripod_floor|corner_floor|piano_lamp|floor_uplight|table_lamp|desk_lamp|smart_bulb_lamp|mushroom_lamp|salt_lamp|lava_lamp/.test(
+      kind,
+    )
+  )
+    return "lamp";
+  return "block";
+}
 /** Door head, window sill and default window head heights, metres. */
 const DOOR_HEAD_M = 2.1;
 const WINDOW_SILL_M = 0.9;
@@ -507,6 +534,14 @@ function buildFloor(
     const pts = wall.points;
     if (pts.length < 2) continue;
     const t = wallThicknessCm(wall) / 100;
+    // A stub (a door jamb, a closet return) stands alone as an odd slab:
+    // left out.
+    let run = 0;
+    for (let i = 0; i < pts.length - 1; i++)
+      run += distance(pts[i]![0], pts[i]![1], pts[i + 1]![0], pts[i + 1]![1]);
+    if (run * m < STUB_M) continue;
+    // A thin one is a stair rail or balustrade: waist high.
+    const rail = t <= RAIL_THICKNESS_M;
     const closed =
       pts.length > 2 &&
       distance(
@@ -575,6 +610,10 @@ function buildFloor(
         b: [a1[0] - nx, a1[1] - nz],
         normal: [dz, -dx],
       });
+      if (rail) {
+        walls.push(box(-ext0, L + ext1, base, base + RAIL_HEIGHT_M));
+        continue;
+      }
 
       const holes = (bySeg.get(i) ?? [])
         .map((o) => ({
@@ -731,6 +770,7 @@ function buildFloor(
     );
     const isLight = item.entity_id?.startsWith("light.") === true;
     const on = !!live && live.active && isLight && showLights;
+    const shape = itemShape(item.kind, entry);
     items.push({
       id: item.id,
       name: item.label || entry?.name || item.kind,
@@ -749,9 +789,15 @@ function buildFloor(
         ? {
             color: live.color ?? "#ffd54f",
             level: Math.max(0.15, live.glow),
-            y: y0 > H * 0.5 ? y0 - 0.05 : y0 + height + 0.05,
+            y:
+              shape === "lamp"
+                ? y0 + height - 0.15
+                : y0 > H * 0.5
+                  ? y0 - 0.05
+                  : y0 + height + 0.05,
           }
         : null,
+      shape,
     });
   }
 

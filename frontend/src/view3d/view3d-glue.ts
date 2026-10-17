@@ -141,6 +141,102 @@ function dominantAngle(
   return (((best + 0.5 + (w > 0 ? sum / w : 0)) % 90) + 90) % 90;
 }
 
+const MODEL_MATERIALS = new Map<string, THREE.MeshStandardMaterial>();
+
+/** A shared material per colour (and glow) for the modelled items. */
+function modelMaterial(
+  color: string,
+  emissive?: string,
+  glow = 0,
+): THREE.MeshStandardMaterial {
+  const key = `${color}|${emissive ?? ""}|${glow.toFixed(2)}`;
+  let mat = MODEL_MATERIALS.get(key);
+  if (!mat) {
+    mat = new THREE.MeshStandardMaterial({
+      color,
+      roughness: 0.85,
+      flatShading: true,
+    });
+    if (emissive) {
+      mat.emissive = new THREE.Color(emissive);
+      mat.emissiveIntensity = glow;
+    }
+    MODEL_MATERIALS.set(key, mat);
+  }
+  return mat;
+}
+
+/** A low-poly model for a plant, tree or lamp, standing at the origin and
+ * filling the item's footprint and height. */
+function modelItem(item: Item3d): THREE.Group {
+  const g = new THREE.Group();
+  const r = Math.max(0.08, Math.min(item.width, item.depth) / 2);
+  const h = Math.max(0.2, item.height);
+  const add = (
+    geom: THREE.BufferGeometry,
+    mat: THREE.Material,
+    y: number,
+    shadow = true,
+  ) => {
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.position.y = y;
+    mesh.castShadow = shadow;
+    mesh.receiveShadow = true;
+    g.add(mesh);
+    return mesh;
+  };
+  if (item.shape === "plant") {
+    const potH = Math.min(0.35, h * 0.28);
+    add(
+      new THREE.CylinderGeometry(r * 0.55, r * 0.42, potH, 14),
+      modelMaterial("#b5653f"),
+      potH / 2,
+    );
+    const leaf = add(
+      new THREE.IcosahedronGeometry(1, 1),
+      modelMaterial("#5f8f4e"),
+      potH + (h - potH) * 0.55,
+    );
+    leaf.scale.set(r * 1.05, (h - potH) * 0.5, r * 1.05);
+  } else if (item.shape === "tree") {
+    add(
+      new THREE.CylinderGeometry(r * 0.1, r * 0.14, h * 0.45, 8),
+      modelMaterial("#6d4c3a"),
+      h * 0.225,
+    );
+    const crown = add(
+      new THREE.IcosahedronGeometry(1, 1),
+      modelMaterial("#4f7d43"),
+      h * 0.66,
+    );
+    crown.scale.set(r, h * 0.36, r);
+  } else {
+    // A lamp: base, pole, shade (glowing while its light is on).
+    const shadeH = Math.min(0.32, h * 0.35);
+    add(
+      new THREE.CylinderGeometry(r * 0.5, r * 0.55, 0.03, 16),
+      modelMaterial("#5b5b5b"),
+      0.015,
+    );
+    add(
+      new THREE.CylinderGeometry(0.012, 0.012, h - shadeH, 6),
+      modelMaterial("#5b5b5b"),
+      (h - shadeH) / 2,
+    );
+    const lit = item.light;
+    const shade = add(
+      new THREE.CylinderGeometry(r * 0.55, r * 0.85, shadeH, 20, 1, true),
+      lit
+        ? modelMaterial("#f3ead8", lit.color, 0.5 + 0.8 * lit.level)
+        : modelMaterial("#f3ead8"),
+      h - shadeH / 2,
+      !lit,
+    );
+    (shade.material as THREE.Material).side = THREE.DoubleSide;
+  }
+  return g;
+}
+
 function insidePolygon(poly: Vec2[], x: number, z: number): boolean {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -501,6 +597,14 @@ function createView3d(options: View3dOptions): View3dHandle {
   // --- the building ---------------------------------------------------------
 
   function buildItem(item: Item3d): THREE.Object3D {
+    if (item.shape !== "block") {
+      const model = modelItem(item);
+      model.name = item.name;
+      model.position.set(item.x, item.y0, item.z);
+      model.rotation.y = item.angle;
+      model.userData["xz"] = [item.x, item.z];
+      return model;
+    }
     const shape = floorShape(item.footprint);
     const geom = new THREE.ExtrudeGeometry(shape, {
       depth: Math.max(0.005, item.height),
