@@ -532,6 +532,7 @@ function createView3d(options: View3dOptions): View3dHandle {
     const mesh = new THREE.Mesh(geom, [top, side]);
     mesh.name = item.name;
     mesh.position.set(item.x, item.y0, item.z);
+    mesh.userData["xz"] = [item.x, item.z];
     mesh.rotation.y = item.angle;
     mesh.castShadow = item.height > 0.03 && !item.light;
     mesh.receiveShadow = true;
@@ -766,7 +767,15 @@ function createView3d(options: View3dOptions): View3dHandle {
       );
       const scanModel = scanMode === "scan" && shown.length > 0;
       f.walls.visible = !shown.some((s) => s.placement.hideWalls);
-      f.furniture.visible = !scanModel;
+      // Likewise furniture: hidden where the scan has a floor of its own
+      // (its objects stand in), kept elsewhere.
+      const floorsCovered = scanModel ? scanFloorBoxes(shown) : [];
+      for (const item of f.furniture.children) {
+        const [x, z] = (item.userData["xz"] as [number, number]) ?? [0, 0];
+        item.visible = !floorsCovered.some(
+          (c) => x >= c.min.x && x <= c.max.x && z >= c.min.z && z <= c.max.z,
+        );
+      }
       // The scan model replaces the plan's walls only where the scan has
       // walls of its own: parts it never covered (an unscanned garage)
       // keep the plan's.
@@ -802,6 +811,19 @@ function createView3d(options: View3dOptions): View3dHandle {
           (scanMode === "scan" || part === "stairs");
       });
     }
+  }
+
+  /** World-space boxes of the shown scans' room floors. */
+  function scanFloorBoxes(shown: ScanEntry[]): THREE.Box3[] {
+    root.updateMatrixWorld(true);
+    const out: THREE.Box3[] = [];
+    for (const s of shown)
+      s.content?.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (mesh.isMesh && mesh.userData["scanPart"] === "floor")
+          out.push(new THREE.Box3().setFromObject(mesh));
+      });
+    return out;
   }
 
   /** World-space boxes of the shown scans' walls, doors and windows. */
