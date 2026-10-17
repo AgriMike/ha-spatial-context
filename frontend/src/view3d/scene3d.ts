@@ -1471,7 +1471,9 @@ function buildRoof(
   for (const e of eave)
     if (e > -Infinity) levels.add(Math.round(e * 100) / 100);
   const over = Math.round(EAVE_M / step);
-  for (const level of levels) {
+  // Lowest first: a higher part's roof rises into a lower one that
+  // already stands above its eave instead of sloping down to it.
+  for (const level of [...levels].sort((a, b) => a - b)) {
     // This level's part, with slivers of a lower part between its rooms
     // (a recess a few centimetres wide) closed over, so they don't split
     // its roof.
@@ -1481,13 +1483,19 @@ function buildRoof(
     const grownPart = growMask(raw, nx, nz, gap);
     for (let k = 0; k < N; k++) grownPart[k] = grownPart[k] ? 0 : 1;
     const beyond = growMask(grownPart, nx, nz, gap);
-    const part = (k: number) => !!raw[k] || !beyond[k];
+    // ...and where a lower roof already stands above this eave, its roof
+    // carries on into that one (a storey's front face running up to the
+    // main ridge) rather than sloping down to it.
+    const part = (k: number) =>
+      !!raw[k] || !beyond[k] || heights[k]! >= level + 0.01;
     const inside = (l: number, k: number) => part(at(l, k));
     // A hip over all of this level's part, rising from its outside edges
     // only (so it never sinks where another part carries on), its eaves
     // overhanging all round.
     const dIn = chessboard(nx, nz, part);
-    const dOut = chessboard(nx, nz, (k) => !part(k));
+    // Eaves overhang this level's own rooms only, not the lower roof it
+    // runs on into.
+    const dOut = chessboard(nx, nz, (k) => !raw[k] && !!beyond[k]);
     for (let k = 0; k < N; k++) {
       if (dIn[k]! > 0)
         raise(k, level + ROOF_PITCH * (dIn[k]! - 0.5) * step, level);
