@@ -1415,6 +1415,8 @@ function buildRoof(
   // filled first so a stairwell doesn't let the roof sink to the floor
   // below.
   const eave = new Float32Array(N).fill(-Infinity);
+  /** Per eave level, where its rooms are (under a higher storey or not). */
+  const roomsAt = new Map<number, Uint8Array>();
   for (const f of input.floors) {
     const own = new Float32Array(N).fill(-Infinity);
     for (const r of rooms) {
@@ -1432,7 +1434,15 @@ function buildRoof(
         }
     }
     fillRoofGaps(own, nx, nz);
-    for (let k = 0; k < N; k++) if (own[k]! > eave[k]!) eave[k] = own[k]!;
+    for (let k = 0; k < N; k++) {
+      if (own[k]! > eave[k]!) eave[k] = own[k]!;
+      if (own[k]! > -Infinity) {
+        const key = Math.round(own[k]! * 100) / 100;
+        let mask = roomsAt.get(key);
+        if (!mask) roomsAt.set(key, (mask = new Uint8Array(N)));
+        mask[k] = 1;
+      }
+    }
   }
 
   // Ridges toward the street: lines run across it, and each eave level's
@@ -1478,17 +1488,22 @@ function buildRoof(
     // A narrow wing standing out toward the street (a garage, a bay, the
     // storey over a garage) ends in a gable instead: its ridge runs back
     // until it meets the hip.
-    const share = (cells: [number, number][]) =>
-      cells.filter(
-        ([l, k]) => l < 0 || l >= lines || k < 0 || k >= len || !inside(l, k),
-      ).length / Math.max(1, cells.length);
+    // Wings are found among this level's own rooms, whole (a garage under
+    // part of an upper storey still counts), apart from a higher storey
+    // beside them.
+    const mask = roomsAt.get(level);
+    const own = (l: number, k: number) => !!mask?.[at(l, k)];
+    const off = (l: number, k: number, ofLevel: boolean) =>
+      l < 0 ||
+      l >= lines ||
+      k < 0 ||
+      k >= len ||
+      !(ofLevel ? own(l, k) : inside(l, k));
+    const share = (cells: [number, number][], ofLevel = false) =>
+      cells.filter(([l, k]) => off(l, k, ofLevel)).length /
+      Math.max(1, cells.length);
     const near = Math.round(1 / step);
-    for (const r of roofRects(
-      inside,
-      lines,
-      len,
-      Math.round((0.4 / step) ** 2),
-    )) {
+    for (const r of roofRects(own, lines, len, Math.round((0.4 / step) ** 2))) {
       const width = (r.k1 - r.k0 + 1) * step;
       if (width > GABLE_MAX_M) continue;
       const front = ahead > 0 ? r.s1 : r.s0;
@@ -1501,11 +1516,19 @@ function buildRoof(
         (_, n) => front - ahead * n,
       );
       if (
-        share(ls.map((l): [number, number] => [l, r.k0 - 1])) < 0.75 ||
-        share(ls.map((l): [number, number] => [l, r.k1 + 1])) < 0.75
+        share(
+          ls.map((l): [number, number] => [l, r.k0 - 1]),
+          true,
+        ) < 0.75 ||
+        share(
+          ls.map((l): [number, number] => [l, r.k1 + 1]),
+          true,
+        ) < 0.75
       )
         continue;
-      const ridge = level + (ROOF_PITCH * width) / 2;
+      // A small gable stands steeper than the main roof, as a bay's does.
+      const pitch = Math.min(0.9, ROOF_PITCH * Math.max(1, 4 / width));
+      const ridge = level + (pitch * width) / 2;
       const mid = Math.round((r.k0 + r.k1) / 2);
       const back = ahead > 0 ? r.l0 : r.l1;
       for (let l = front; l !== back - ahead; l -= ahead) {
@@ -1521,7 +1544,7 @@ function buildRoof(
         ) {
           if ((q < r.k0 || q > r.k1) && inside(l, q)) continue;
           const across = Math.min(q - (r.k0 - 0.5), r.k1 + 0.5 - q) * step;
-          raise(at(l, q), level + ROOF_PITCH * across, level);
+          raise(at(l, q), level + pitch * across, level);
         }
       }
     }
