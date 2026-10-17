@@ -8,6 +8,8 @@ import type {
   Floor3d,
   Item3d,
   Roof3d,
+  RoofFace3d,
+  RoofGrid3d,
   Scene3d,
   ScanPlacement3d,
   ScanMode,
@@ -96,15 +98,112 @@ function wallGeometry(
   return g;
 }
 
-/** The roof's surface from its height grid, shingled where it's roof-like
- * and sided where it stands steep (a gable's end above a lower roof), with
- * the gable ends closed down to their eaves. */
+/** The roof's mesh: its planar faces coloured by kind, and any height grid
+ * shingled where it's roof-like and sided where it stands steep (a gable's
+ * end above a lower roof), with the gable ends closed down to their
+ * eaves. */
 function roofGeometry(roof: Roof3d): THREE.BufferGeometry {
-  const { x0, z0, step, nx, nz, heights, eaves } = roof;
-  const shingle = new THREE.Color(roof.color);
-  const siding = new THREE.Color(roof.sidingColor);
   const pos: number[] = [];
   const col: number[] = [];
+  const shingle = new THREE.Color(roof.color);
+  const siding = new THREE.Color(roof.sidingColor);
+  const looks: Record<RoofFace3d["kind"], THREE.Color> = {
+    shingle,
+    siding,
+    shake: new THREE.Color(roof.shakeColor),
+    trim: new THREE.Color(roof.trimColor),
+  };
+  const uv: number[] = [];
+  // Planar faces: each a convex polygon, fanned from its first corner.
+  // Shingled ones first (the textured group), their courses running
+  // level across the slope.
+  const ordered = [
+    ...roof.faces.filter((f) => f.kind === "shingle"),
+    ...roof.faces.filter((f) => f.kind !== "shingle"),
+  ];
+  let textured = 0;
+  for (const face of ordered) {
+    const c = looks[face.kind];
+    const [p0, ...rest] = face.points;
+    let across = new THREE.Vector3();
+    let down = new THREE.Vector3();
+    if (face.kind === "shingle" && rest.length >= 2) {
+      const a = new THREE.Vector3(...p0!);
+      const n = new THREE.Vector3(...rest[0]!)
+        .sub(a)
+        .cross(new THREE.Vector3(...rest[1]!).sub(a))
+        .normalize();
+      across = new THREE.Vector3(0, 1, 0).cross(n).normalize();
+      down = n.clone().cross(across).normalize();
+    }
+    for (let k = 0; k + 1 < rest.length; k++)
+      for (const v of [p0!, rest[k]!, rest[k + 1]!]) {
+        pos.push(v[0], v[1], v[2]);
+        col.push(c.r, c.g, c.b);
+        uv.push(
+          (v[0] * across.x + v[2] * across.z) / SHINGLE_TILE_M[0],
+          (v[0] * down.x + v[1] * down.y + v[2] * down.z) / SHINGLE_TILE_M[1],
+        );
+        if (face.kind === "shingle") textured++;
+      }
+  }
+  if (roof.grid) gridRoof(roof.grid, shingle, siding, pos, col);
+  while (uv.length < (pos.length / 3) * 2) uv.push(0, 0);
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geom.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  geom.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  geom.addGroup(0, textured, 0);
+  geom.addGroup(textured, pos.length / 3 - textured, 1);
+  geom.computeVertexNormals();
+  return geom;
+}
+
+/** One tile of the shingle texture (metres across, down the slope): three
+ * tabs wide, four courses deep. */
+const SHINGLE_TILE_M: [number, number] = [1.0, 0.56];
+
+/** Asphalt shingles, light on white so they tint the roof's colour: four
+ * courses of staggered tabs, each a shade off, a shadow under each
+ * course. */
+function shingleTexture(): THREE.Texture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const g = canvas.getContext("2d")!;
+  g.fillStyle = "#ffffff";
+  g.fillRect(0, 0, 256, 256);
+  let seed = 7;
+  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let row = 0; row < 4; row++) {
+    const y = row * 64;
+    const shift = row % 2 ? 42 : 0;
+    for (let k = -1; k < 3; k++) {
+      const x = k * 85 + shift;
+      const v = 218 + Math.round(rand() * 37);
+      g.fillStyle = `rgb(${v},${v},${v})`;
+      g.fillRect(x + 2, y, 83, 64);
+    }
+    // The course's butt edge casts a thin shadow on the one below.
+    g.fillStyle = "rgba(0,0,0,0.3)";
+    g.fillRect(0, y + 60, 256, 4);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** A roof's height grid as triangles (positions and colours appended). */
+function gridRoof(
+  grid: RoofGrid3d,
+  shingle: THREE.Color,
+  siding: THREE.Color,
+  pos: number[],
+  col: number[],
+): void {
+  const { x0, z0, step, nx, nz, heights, eaves } = grid;
   const h = (i: number, j: number) => heights[j * nx + i]!;
   const defined = (i: number, j: number) =>
     i >= 0 && j >= 0 && i < nx && j < nz && !Number.isNaN(h(i, j));
@@ -140,9 +239,25 @@ function roofGeometry(roof: Roof3d): THREE.BufferGeometry {
   };
   const P = (i: number, j: number, y = h(i, j)) =>
     new THREE.Vector3(x0 + i * step, y, z0 + j * step);
+  // A cell joining an eave's overhang to a lower roof below it would hang
+  // a curtain in front of the wall under that eave (and its windows):
+  // left open instead.
+  const curtain = (i: number, j: number) => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    let overhang = false;
+    for (let dj = 0; dj <= 2; dj++)
+      for (let di = 0; di <= 2; di++) {
+        const k = (j + dj) * nx + i + di;
+        lo = Math.min(lo, heights[k]!);
+        hi = Math.max(hi, heights[k]!);
+        if (heights[k]! < eaves[k]! - 0.005) overhang = true;
+      }
+    return overhang && hi - lo > 0.4;
+  };
   for (let j = 0; j + 2 < nz; j += 2)
     for (let i = 0; i + 2 < nx; i += 2) {
-      if (!cell(i, j)) continue;
+      if (!cell(i, j) || curtain(i, j)) continue;
       const mid = P(i + 1, j + 1);
       const around = ring.map(([di, dj]) => P(i + di, j + dj));
       around.forEach((p, k) => tri(p, around[(k + 1) % 8]!, mid));
@@ -175,11 +290,6 @@ function roofGeometry(roof: Roof3d): THREE.BufferGeometry {
         skirt(i, j, i, j + 1);
         skirt(i, j + 1, i, j + 2);
       }
-  const geom = new THREE.BufferGeometry();
-  geom.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  geom.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
-  geom.computeVertexNormals();
-  return geom;
 }
 
 /** A shape on the floor plane from (x, z) points — three's shapes live in
@@ -918,20 +1028,33 @@ function createView3d(options: View3dOptions): View3dHandle {
     if (roof && roofSpec !== spec.roof) {
       roof.removeFromParent();
       roof.geometry.dispose();
-      (roof.material as THREE.Material).dispose();
+      for (const m of roof.material as THREE.MeshStandardMaterial[]) {
+        m.map?.dispose();
+        m.dispose();
+      }
       roof = null;
     }
     roofSpec = spec.roof;
     if (roof) roof.visible = spread === 0;
     else if (spec.roof) {
-      roof = new THREE.Mesh(
-        roofGeometry(spec.roof),
+      const shingles = shingleTexture();
+      shingles.anisotropy = Math.min(
+        8,
+        renderer.capabilities.getMaxAnisotropy(),
+      );
+      roof = new THREE.Mesh(roofGeometry(spec.roof), [
+        new THREE.MeshStandardMaterial({
+          vertexColors: true,
+          map: shingles,
+          roughness: 0.9,
+          side: THREE.DoubleSide,
+        }),
         new THREE.MeshStandardMaterial({
           vertexColors: true,
           roughness: 0.85,
           side: THREE.DoubleSide,
         }),
-      );
+      ]);
       roof.name = "Roof";
       roof.castShadow = true;
       roof.receiveShadow = true;
@@ -1551,6 +1674,17 @@ function createView3d(options: View3dOptions): View3dHandle {
       invalidate();
     },
     view,
+    lookAt(eye, target) {
+      fitted = true;
+      controls.target.set(...target);
+      camera.position.set(...eye);
+      const dist = camera.position.distanceTo(controls.target);
+      camera.near = Math.max(0.02, dist / 500);
+      camera.far = dist * 20 + 500;
+      camera.updateProjectionMatrix();
+      controls.update();
+      invalidate();
+    },
     exportGlb,
     resize,
     destroy() {

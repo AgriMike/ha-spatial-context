@@ -599,6 +599,57 @@ async def ws_save_ground(
     connection.send_result(msg["id"], {"success": True})
 
 
+_ROOF_END = vol.In(["gable", "hip", "open"])
+_ROOF_HEIGHT = vol.All(vol.Coerce(float), vol.Range(min=-50, max=200))
+_ROOF_PART_SCHEMA = vol.Schema(
+    {
+        vol.Optional("name"): vol.All(str, vol.Length(max=100)),
+        vol.Required("x0"): vol.Coerce(float),
+        vol.Required("y0"): vol.Coerce(float),
+        vol.Required("x1"): vol.Coerce(float),
+        vol.Required("y1"): vol.Coerce(float),
+        vol.Required("ridge"): vol.In(["x", "y"]),
+        vol.Required("eave"): vol.Any(
+            _ROOF_HEIGHT, vol.All([_ROOF_HEIGHT], vol.Length(min=2, max=2))
+        ),
+        vol.Required("pitch"): vol.All(vol.Coerce(float), vol.Range(min=0.05, max=4)),
+        vol.Optional("ends"): vol.All([_ROOF_END], vol.Length(min=2, max=2)),
+        vol.Optional("overhang"): vol.All(
+            vol.Coerce(float), vol.Range(min=0, max=3)
+        ),
+        vol.Optional("base"): _ROOF_HEIGHT,
+        vol.Optional("gable"): vol.In(["siding", "shake"]),
+    },
+    extra=vol.REMOVE_EXTRA,
+)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "spatial_context/save_roof",
+        vol.Required("floor_ids"): vol.All([str], vol.Length(min=1, max=50)),
+        vol.Required("roof"): vol.Any(
+            None,
+            {
+                vol.Required("parts"): vol.All(
+                    [_ROOF_PART_SCHEMA], vol.Length(max=100)
+                ),
+            },
+        ),
+    }
+)
+@websocket_api.async_response
+async def ws_save_roof(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Set a building's roof (explicit parts, or None for the automatic
+    one) on each of its floors."""
+    await scans.async_save_roof(hass, msg["floor_ids"], msg["roof"])
+    connection.send_result(msg["id"], {"success": True})
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "spatial_context/delete_scan",
@@ -795,6 +846,7 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_view3d)
     websocket_api.async_register_command(hass, ws_save_view3d)
     websocket_api.async_register_command(hass, ws_save_ground)
+    websocket_api.async_register_command(hass, ws_save_roof)
     websocket_api.async_register_command(hass, ws_delete_scan)
     websocket_api.async_register_command(hass, ws_list_areas)
     websocket_api.async_register_command(hass, ws_list_placeable_entities)

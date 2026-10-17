@@ -19,6 +19,7 @@ import type {
   ZigbeeMesh,
   VersionInfo,
   GroundSetting,
+  RoofPlan,
   RoomScan,
   View3dSettings,
   BluetoothAdvertisementEvent,
@@ -279,6 +280,16 @@ export class HaClient {
       type: "spatial_context/save_ground",
       floor_ids: floorIds,
       ground,
+    });
+  }
+
+  /** Sets a building's roof on each of its floors (see scans.py's
+   * async_save_roof); null = worked out from the rooms. */
+  async saveRoof(floorIds: string[], roof: RoofPlan | null): Promise<void> {
+    await this.hass.connection.sendMessagePromise({
+      type: "spatial_context/save_roof",
+      floor_ids: floorIds,
+      roof,
     });
   }
 

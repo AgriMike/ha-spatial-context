@@ -12,8 +12,10 @@ import type {
   GroundSetting,
   HomeAssistant,
   Opening,
+  RoofPlan,
   Scale,
 } from "../types";
+import { partSection, porchSection, sectionFaces } from "./roof-planes";
 import type {
   Box3d,
   Floor3d,
@@ -73,6 +75,11 @@ const SIDING = "#9aa1a8";
 const SIDING_DARK = "#4d535a";
 const SHINGLE = "#565b63";
 const SHINGLE_DARK = "#2d3036";
+/** Fascia and soffits; shakes on a gable end. */
+const TRIM = "#433d38";
+const TRIM_DARK = "#1f1d1b";
+const SHAKE = "#6c7178";
+const SHAKE_DARK = "#3c4046";
 /** Roof: rise per metre of run, eave overhang, and the grid it's
  * sampled on. */
 const ROOF_PITCH = 0.55;
@@ -87,6 +94,10 @@ const PORCH_EAVE_M = 2.45;
 const PORCH_PITCH = 0.45;
 const PORCH_OVERHANG_M = 0.2;
 const POST_M = 0.15;
+/** Window casing: its width, and colour. */
+const WINDOW_TRIM_M = 0.08;
+const TRIM_WHITE = "#f3f1ec";
+const TRIM_WHITE_DARK = "#9a968f";
 const CEDAR = "#a8693a";
 const CONCRETE = "#cbc8c1";
 /** The front's stone wainscot: its top above the high side's grade. */
@@ -496,6 +507,9 @@ export interface SceneInput {
   ground: GroundSetting | null;
   /** Put a roof on the building. */
   roof?: boolean;
+  /** The roof's explicit parts; without them it's worked out from the
+   * rooms. */
+  roofPlan?: RoofPlan | null;
 }
 
 function buildFloor(
@@ -900,13 +914,28 @@ function buildFloor(
                 : Math.min(WINDOW_SILL_M, head - off - 0.1)) + off;
         if (sill > base) solid(hole.s0, hole.s1, base, sill);
         if (head < top - 0.005) walls.push(box(hole.s0, hole.s1, head, top));
-        if (!isDoor)
+        if (!isDoor) {
           panes.push({
             box: box(hole.s0, hole.s1, sill, head, 0.02),
             kind: "glass",
-            color: "#a7d3ef",
-            opacity: 0.22,
+            color: "#86a6bd",
+            opacity: 0.38,
           });
+          // White casing round a window in an outside wall, standing a
+          // little proud of the siding so it reads from the street.
+          if (outside) {
+            const w = WINDOW_TRIM_M;
+            const d = t + 0.04;
+            const trim = dark ? TRIM_WHITE_DARK : TRIM_WHITE;
+            for (const [s0, s1, y0, y1] of [
+              [hole.s0 - w, hole.s0, sill - w, head + w],
+              [hole.s1, hole.s1 + w, sill - w, head + w],
+              [hole.s0, hole.s1, head, head + w],
+              [hole.s0, hole.s1, sill - w, sill],
+            ] as const)
+              walls.push({ ...box(s0, s1, y0, y1, d), color: trim });
+          }
+        }
         // Covers: blinds over a window, an overhead garage door. Each
         // drops from the head by how closed it is; two covers split the
         // opening in halves.
@@ -1345,6 +1374,7 @@ function cachedRoof(
     input.dark,
     northDeg,
     built.map((f) => f.porches),
+    input.roofPlan ?? null,
   ]);
   if (
     lastRoof &&
@@ -1353,7 +1383,9 @@ function cachedRoof(
     lastRoof.layouts.every((l, i) => l === layouts[i])
   )
     return lastRoof.roof;
-  const roof = buildRoof(input, northDeg, built);
+  const roof = input.roofPlan?.parts.length
+    ? plannedRoof(input, input.roofPlan, built)
+    : buildRoof(input, northDeg, built);
   lastRoof = { layouts, key, roof };
   return roof;
 }
@@ -1626,16 +1658,55 @@ function buildRoof(
     grownEaves = nextE;
   }
   return {
-    x0: minX,
-    z0: minZ,
-    step,
-    nx,
-    nz,
-    heights: grown,
-    eaves: grownEaves,
-    color: input.dark ? SHINGLE_DARK : SHINGLE,
-    sidingColor: input.dark ? SIDING_DARK : SIDING,
+    ...roofColors(input.dark),
+    grid: {
+      x0: minX,
+      z0: minZ,
+      step,
+      nx,
+      nz,
+      heights: grown,
+      eaves: grownEaves,
+    },
+    faces: [],
   };
+}
+
+function roofColors(
+  dark: boolean,
+): Pick<Roof3d, "color" | "sidingColor" | "trimColor" | "shakeColor"> {
+  return {
+    color: dark ? SHINGLE_DARK : SHINGLE,
+    sidingColor: dark ? SIDING_DARK : SIDING,
+    trimColor: dark ? TRIM_DARK : TRIM,
+    shakeColor: dark ? SHAKE_DARK : SHAKE,
+  };
+}
+
+/** The roof from the building's explicit parts (RoofPlan), each meshed as
+ * real planes; the porches' hipped roofs go on with it. Heights are world
+ * Y; plan units are the lowest floor's. */
+function plannedRoof(
+  input: SceneInput,
+  plan: RoofPlan,
+  built: Floor3d[],
+): Roof3d {
+  const lowest = [...input.floors].sort((a, b) => a.baseY - b.baseY)[0];
+  const m = metersPerUnit(lowest?.layout.scale ?? null);
+  const faces = plan.parts.flatMap((part) =>
+    sectionFaces(partSection(part, m)),
+  );
+  for (const f of built)
+    for (const p of f.porches) {
+      const s = porchSection(
+        p.corners,
+        f.baseY + p.eave,
+        PORCH_PITCH,
+        PORCH_OVERHANG_M,
+      );
+      if (s) faces.push(...sectionFaces(s));
+    }
+  return { ...roofColors(input.dark), grid: null, faces };
 }
 
 /** For one floor: the walls of floors above it, as segments on the floor

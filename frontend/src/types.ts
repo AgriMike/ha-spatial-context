@@ -280,7 +280,47 @@ export interface View3dSettings {
   /** The lot's grade around the building, shared by all its floors;
    * null (or absent from an older backend) = flat at the lowest floor. */
   ground?: GroundSetting | null;
+  /** The building's roof, drawn from explicit parts (shared by all its
+   * floors); null (or absent) = worked out from the rooms. */
+  roof?: RoofPlan | null;
   scans: RoomScan[];
+}
+
+/** How a roof part ends along its ridge: a gable (sided wall up to the
+ * ridge), a hip (sloping down like the sides), or open — running on into
+ * another part that covers it. */
+export type RoofEnd = "gable" | "hip" | "open";
+
+/** One part of a roof over a rectangle of the plan: a ridge along the
+ * plan's x or y, sloping down to eaves on both long sides. Parts overlap
+ * freely; where they meet, ridges, hips and valleys fall out. */
+export interface RoofPart {
+  /** A label for editing ("Main", "Garage gable"). */
+  name?: string;
+  /** The walls it covers, in the building's plan units. */
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  ridge: "x" | "y";
+  /** World height of the eaves at the walls (metres above the building's
+   * ground level, as floor elevations) — one for both sides, or the low-
+   * then the high-coordinate side's. */
+  eave: number | [number, number];
+  /** Rise per metre of run (0.5 is a 6/12 roof). */
+  pitch: number;
+  /** At the low- then the high-coordinate end; gables by default. */
+  ends?: [RoofEnd, RoofEnd];
+  /** Metres the roof reaches past the walls; 0.35 by default. */
+  overhang?: number;
+  /** Gable ends' siding reaches down to this height (default the eave). */
+  base?: number;
+  /** Shakes on the gable ends instead of lap siding. */
+  gable?: "siding" | "shake";
+}
+
+export interface RoofPlan {
+  parts: RoofPart[];
 }
 
 /** Ground that slopes across a building's site (a walk-out on a hill):

@@ -129,11 +129,30 @@ export interface Scene3d {
   roof: Roof3d | null;
 }
 
+/** A roof: planar faces (from explicit parts), else a height grid worked
+ * out from the rooms. */
+export interface Roof3d {
+  grid: RoofGrid3d | null;
+  faces: RoofFace3d[];
+  color: string;
+  sidingColor: string;
+  /** Fascia and soffits. */
+  trimColor: string;
+  /** Shake-sided gable ends. */
+  shakeColor: string;
+}
+
+/** One flat, convex piece of roof in world space, its corners in order. */
+export interface RoofFace3d {
+  points: [number, number, number][];
+  kind: "shingle" | "siding" | "shake" | "trim";
+}
+
 /** A roof as heights over a square grid on the floor plane: point (i, j)
  * is at (x0 + i * step, z0 + j * step), row-major (j * nx + i). NaN where
  * there's no roof. Drawn in cells two steps square, each fanned from its
  * centre point. */
-export interface Roof3d {
+export interface RoofGrid3d {
   x0: number;
   z0: number;
   step: number;
@@ -144,8 +163,6 @@ export interface Roof3d {
   /** World Y of the eave the surface rises from at each point: a gable
    * end is closed with siding from the surface down to it. */
   eaves: Float32Array;
-  color: string;
-  sidingColor: string;
 }
 
 /** A hillside: the ground stands at `uphill` (world Y) on the building's
@@ -223,6 +240,8 @@ export interface View3dHandle {
   /** Spreads stacked floors apart vertically (metres added per storey). */
   setSpread(metres: number): void;
   view(kind: "orbit" | "top" | "fit"): void;
+  /** Puts the camera at `eye` looking at `target` (world metres). */
+  lookAt(eye: [number, number, number], target: [number, number, number]): void;
   /** The scene (without helpers) as a binary glTF. */
   exportGlb(): Promise<Blob>;
   resize(): void;

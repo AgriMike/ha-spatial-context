@@ -323,6 +323,43 @@ class ScansTest(unittest.TestCase):
 
         self._run(run())
 
+    def test_roof_set_on_each_floor_leaving_the_rest(self) -> None:
+        async def run() -> None:
+            view = await self.scans.async_get_view3d(self.hass, "main")
+            self.assertIsNone(view["roof"])
+            await self.scans.async_save_view3d(
+                self.hass, "main", 2.5, [], floor_elevation_m=2.59
+            )
+            roof = {
+                "parts": [
+                    {
+                        "x0": 0.0,
+                        "y0": 0.0,
+                        "x1": 400.0,
+                        "y1": 300.0,
+                        "ridge": "x",
+                        "eave": [5.0, 6.3],
+                        "pitch": 0.5,
+                        "ends": ["gable", "hip"],
+                    }
+                ]
+            }
+            await self.scans.async_save_roof(self.hass, ["basement", "main"], roof)
+            main = await self.scans.async_get_view3d(self.hass, "main")
+            self.assertEqual(main["roof"], roof)
+            self.assertEqual(main["floor_elevation_m"], 2.59)
+            basement = await self.scans.async_get_view3d(self.hass, "basement")
+            self.assertEqual(basement["roof"], roof)
+            # A view3d save keeps it; None goes back to automatic.
+            result = await self.scans.async_save_view3d(self.hass, "main", 2.4, [])
+            self.assertEqual(result["roof"], roof)
+            await self.scans.async_save_roof(self.hass, ["main"], None)
+            self.assertIsNone(
+                (await self.scans.async_get_view3d(self.hass, "main"))["roof"]
+            )
+
+        self._run(run())
+
     def test_delete_removes_file_and_metadata(self) -> None:
         async def run() -> None:
             scan = await self.scans.async_add_scan(

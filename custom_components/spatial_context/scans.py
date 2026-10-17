@@ -69,10 +69,14 @@ def _empty_floor() -> dict[str, Any]:
     # low sides, metres on the floors' scale, and the compass bearing the
     # ground falls toward); None = flat at the lowest floor. Set on every
     # floor of a building together (async_save_ground).
+    # roof: the building's roof as explicit parts ({parts: [...]}, see the
+    # panel's RoofPlan); None = worked out from the rooms. Set on every
+    # floor of a building together (async_save_roof).
     return {
         "wall_height_m": None,
         "floor_elevation_m": None,
         "ground": None,
+        "roof": None,
         "scans": [],
     }
 
@@ -92,6 +96,7 @@ async def async_get_view3d(hass: HomeAssistant, floor_id: str) -> dict[str, Any]
         "wall_height_m": floor.get("wall_height_m"),
         "floor_elevation_m": floor.get("floor_elevation_m"),
         "ground": floor.get("ground"),
+        "roof": floor.get("roof"),
         "scans": floor.get("scans", []),
     }
 
@@ -191,6 +196,7 @@ async def async_save_view3d(
             "wall_height_m": floor["wall_height_m"],
             "floor_elevation_m": floor.get("floor_elevation_m"),
             "ground": floor.get("ground"),
+            "roof": floor.get("roof"),
             "scans": floor["scans"],
         }
 
@@ -204,6 +210,18 @@ async def async_save_ground(
         data = await _async_load(hass)
         for floor_id in floor_ids:
             data["floors"].setdefault(floor_id, _empty_floor())["ground"] = ground
+        await _store(hass).async_save(data)
+
+
+async def async_save_roof(
+    hass: HomeAssistant, floor_ids: list[str], roof: dict[str, Any] | None
+) -> None:
+    """Set a building's roof on each of its floors, leaving everything else
+    about them as it is."""
+    async with _lock(hass):
+        data = await _async_load(hass)
+        for floor_id in floor_ids:
+            data["floors"].setdefault(floor_id, _empty_floor())["roof"] = roof
         await _store(hass).async_save(data)
 
 

@@ -9,6 +9,8 @@ import type {
   FloorMeta,
   GroundSetting,
   HomeAssistant,
+  RoofPart,
+  RoofPlan,
   RoomScan,
   View3dSettings,
 } from "../types";
@@ -267,6 +269,15 @@ export class Floorplan3dView extends LitElement {
         color: var(--sc-fg-secondary);
         line-height: 1.4;
       }
+      .sheet textarea.roof-parts {
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 120px;
+        resize: vertical;
+        font-family: var(--code-font-family, monospace);
+        font-size: var(--sc-fs-small);
+        white-space: pre;
+      }
       .row {
         display: flex;
         align-items: center;
@@ -379,6 +390,8 @@ export class Floorplan3dView extends LitElement {
 
   @state() private _status: "idle" | "starting" | "ready" | "error" = "idle";
   @state() private _error: string | null = null;
+  /** The roof parts being edited, as text (null = showing the saved). */
+  @state() private _roofDraft: string | null = null;
   @state() private _view3d = new Map<string, View3dSettings>();
   @state() private _otherLayouts = new Map<string, FloorLayout>();
   @state() private _spread = 0;
@@ -556,6 +569,35 @@ export class Floorplan3dView extends LitElement {
     });
   }
 
+  /** The building's roof parts: this floor's, else any shown floor's
+   * (they're saved together); null = worked out from the rooms. */
+  private get _roofPlan(): RoofPlan | null {
+    const own = this.floorId ? this._view3d.get(this.floorId)?.roof : null;
+    if (own) return own;
+    for (const id of this._shownFloorIds) {
+      const r = this._view3d.get(id)?.roof;
+      if (r) return r;
+    }
+    return null;
+  }
+
+  /** Sets (or clears) the roof on every floor of the building. */
+  private _setRoof(plan: RoofPlan | null): void {
+    const ids = this._buildingFloorIds;
+    const map = new Map(this._view3d);
+    for (const id of ids) {
+      const v = map.get(id);
+      if (v) map.set(id, { ...v, roof: plan });
+    }
+    this._view3d = map;
+    if (!this.editable) return;
+    void this._client?.saveRoof(ids, plan).catch((err: unknown) => {
+      this._error = localize("view3d.saveFailed", {
+        error: (err as { message?: string })?.message ?? String(err),
+      });
+    });
+  }
+
   private get _canDollhouse(): boolean {
     const own = this.floors.find((f) => f.floor_id === this.floorId);
     return (
@@ -666,6 +708,7 @@ export class Floorplan3dView extends LitElement {
       this.sky?.clouds ?? "",
       JSON.stringify(ground),
       this._roofShown,
+      JSON.stringify(this._roofPlan),
     ].join("|");
     // Layout objects are replaced on every edit, so identity is enough.
     const layoutsChanged = floors.some(
@@ -684,6 +727,7 @@ export class Floorplan3dView extends LitElement {
           showLights: true,
           ground,
           roof: this._roofShown,
+          roofPlan: this._roofPlan,
         }),
       );
       this._scanSig = "";
@@ -1126,7 +1170,7 @@ export class Floorplan3dView extends LitElement {
         />
         <span>m</span>
       </div>
-      ${this._renderGround()}
+      ${this._renderGround()} ${this._renderRoof()}
       <div class="divider"></div>
       <span class="hint">${localize("view3d.scansIntro")}</span>
       <div class="buttons">
@@ -1239,6 +1283,73 @@ export class Floorplan3dView extends LitElement {
         </select>
       </div>
       <span class="hint">${localize("view3d.groundHint")}</span>
+    `;
+  }
+
+  /** The roof's explicit parts, edited as text: one JSON object per line,
+   * each a rectangle of the plan with its ridge direction, eave height,
+   * pitch and ends. Shared by the building's floors; none = worked out
+   * from the rooms. */
+  private _renderRoof() {
+    const plan = this._roofPlan;
+    const text =
+      this._roofDraft ??
+      (plan ? plan.parts.map((p) => JSON.stringify(p)).join(",\n") : "");
+    const apply = () => {
+      const raw = text.trim();
+      if (!raw) {
+        this._roofDraft = null;
+        this._setRoof(null);
+        return;
+      }
+      const parts = parseRoofParts(raw);
+      if (!parts) {
+        this._error = localize("view3d.roofInvalid");
+        return;
+      }
+      this._roofDraft = null;
+      this._setRoof({ parts });
+    };
+    return html`
+      <div class="divider"></div>
+      <div class="row" title=${localize("view3d.roofPartsHint")}>
+        <span>${localize("view3d.roofParts")}</span>
+        ${
+          plan
+            ? html`<button
+                ?disabled=${!this.editable}
+                @click=${() => {
+                  this._roofDraft = null;
+                  this._setRoof(null);
+                }}
+              >
+                ${localize("view3d.roofAuto")}
+              </button>`
+            : html`<span class="hint">${localize("view3d.roofAutoNow")}</span>`
+        }
+      </div>
+      <textarea
+        class="roof-parts"
+        rows="6"
+        spellcheck="false"
+        ?readonly=${!this.editable}
+        .value=${text}
+        @input=${(e: Event) =>
+          (this._roofDraft = (e.target as HTMLTextAreaElement).value)}
+      ></textarea>
+      ${
+        this.editable && this._roofDraft !== null
+          ? html`<div class="buttons">
+              <button class="primary" @click=${apply}>
+                ${localize("view3d.roofApply")}
+              </button>
+              <button @click=${() => (this._roofDraft = null)}>
+                ${localize("view3d.roofRevert")}
+              </button>
+            </div>`
+          : nothing
+      }
+      <span class="hint">${localize("view3d.roofPartsHint")}</span>
     `;
   }
 
@@ -1369,4 +1480,36 @@ declare global {
   interface HTMLElementTagNameMap {
     "floorplan-3d-view": Floorplan3dView;
   }
+}
+
+/** Roof parts from the editor's text (a JSON list, or objects separated
+ * by commas), or null when any part isn't one. */
+function parseRoofParts(raw: string): RoofPart[] | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw.startsWith("[") ? raw : `[${raw}]`);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(value)) return null;
+  const num = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+  const end = (v: unknown) => v === "gable" || v === "hip" || v === "open";
+  const pair = (v: unknown, each: (x: unknown) => boolean) =>
+    Array.isArray(v) && v.length === 2 && v.every(each);
+  const ok = value.every((p: unknown) => {
+    if (!p || typeof p !== "object") return false;
+    const r = p as Record<string, unknown>;
+    return (
+      ["x0", "y0", "x1", "y1", "pitch"].every((k) => num(r[k])) &&
+      (r["ridge"] === "x" || r["ridge"] === "y") &&
+      (num(r["eave"]) || pair(r["eave"], num)) &&
+      (r["ends"] === undefined || pair(r["ends"], end)) &&
+      (r["overhang"] === undefined || num(r["overhang"])) &&
+      (r["base"] === undefined || num(r["base"])) &&
+      (r["gable"] === undefined ||
+        r["gable"] === "siding" ||
+        r["gable"] === "shake")
+    );
+  });
+  return ok ? (value as RoofPart[]) : null;
 }
