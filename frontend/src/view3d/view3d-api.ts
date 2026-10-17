@@ -131,7 +131,8 @@ export interface Scene3d {
 
 /** A roof as heights over a square grid on the floor plane: point (i, j)
  * is at (x0 + i * step, z0 + j * step), row-major (j * nx + i). NaN where
- * there's no roof. */
+ * there's no roof. Drawn in cells two steps square, each fanned from its
+ * centre point. */
 export interface Roof3d {
   x0: number;
   z0: number;

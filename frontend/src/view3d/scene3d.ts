@@ -77,7 +77,7 @@ const SHINGLE_DARK = "#2d3036";
  * sampled on. */
 const ROOF_PITCH = 0.55;
 const EAVE_M = 0.35;
-const ROOF_STEP_M = 0.1;
+const ROOF_STEP_M = 0.05;
 /** Gaps between a floor's rooms narrower than this are roofed over. */
 const ROOF_GAP_M = 0.4;
 /** A front door's porch: how far out it reaches, its roof's eave above
@@ -1420,23 +1420,29 @@ function buildRoof(
         raise(j * nx + i, p.eave + PORCH_PITCH * free, p.eave);
       }
   }
-  // Gable ends reach a step further along the ridge, over the wall.
-  const grown = heights.slice();
-  const grownEaves = eaves.slice();
-  for (let line = 0; line < lines; line++)
-    for (let k = 0; k < len; k++) {
-      const here = at(line, k);
-      if (!Number.isNaN(heights[here]!)) continue;
-      for (const nb of [line - 1, line + 1]) {
-        if (nb < 0 || nb >= lines) continue;
-        const there = at(nb, k);
-        if (Number.isNaN(heights[there]!)) continue;
-        if (!(grown[here]! >= heights[there]!)) {
-          grown[here] = heights[there]!;
-          grownEaves[here] = eaves[there]!;
+  // Gable ends reach 10 cm further along the ridge, over the wall.
+  let grown = heights;
+  let grownEaves = eaves;
+  for (let pass = 0; pass < Math.round(0.1 / step); pass++) {
+    const nextH = grown.slice();
+    const nextE = grownEaves.slice();
+    for (let line = 0; line < lines; line++)
+      for (let k = 0; k < len; k++) {
+        const here = at(line, k);
+        if (!Number.isNaN(grown[here]!)) continue;
+        for (const nb of [line - 1, line + 1]) {
+          if (nb < 0 || nb >= lines) continue;
+          const there = at(nb, k);
+          if (Number.isNaN(grown[there]!)) continue;
+          if (!(nextH[here]! >= grown[there]!)) {
+            nextH[here] = grown[there]!;
+            nextE[here] = grownEaves[there]!;
+          }
         }
       }
-    }
+    grown = nextH;
+    grownEaves = nextE;
+  }
   return {
     x0: minX,
     z0: minZ,

@@ -106,18 +106,27 @@ function roofGeometry(roof: Roof3d): THREE.BufferGeometry {
   const pos: number[] = [];
   const col: number[] = [];
   const h = (i: number, j: number) => heights[j * nx + i]!;
+  const defined = (i: number, j: number) =>
+    i >= 0 && j >= 0 && i < nx && j < nz && !Number.isNaN(h(i, j));
+  // Cells two grid steps square, fanned from the eight points round them
+  // to the one at their centre: the samples between the corners carry a
+  // hip or a valley crossing the cell, so folds run true instead of
+  // stepping from cell to cell.
+  const ring: [number, number][] = [
+    [0, 0],
+    [0, 1],
+    [0, 2],
+    [1, 2],
+    [2, 2],
+    [2, 1],
+    [2, 0],
+    [1, 0],
+  ];
   const cell = (i: number, j: number) =>
     i >= 0 &&
     j >= 0 &&
-    i < nx - 1 &&
-    j < nz - 1 &&
-    !Number.isNaN(h(i, j)) &&
-    !Number.isNaN(h(i + 1, j)) &&
-    !Number.isNaN(h(i, j + 1)) &&
-    !Number.isNaN(h(i + 1, j + 1));
-  const a = new THREE.Vector3();
-  const b = new THREE.Vector3();
-  const c = new THREE.Vector3();
+    defined(i + 1, j + 1) &&
+    ring.every(([di, dj]) => defined(i + di, j + dj));
   const tri = (p: THREE.Vector3, q: THREE.Vector3, r: THREE.Vector3) => {
     const n = new THREE.Vector3()
       .subVectors(q, p)
@@ -131,23 +140,12 @@ function roofGeometry(roof: Roof3d): THREE.BufferGeometry {
   };
   const P = (i: number, j: number, y = h(i, j)) =>
     new THREE.Vector3(x0 + i * step, y, z0 + j * step);
-  for (let j = 0; j < nz - 1; j++)
-    for (let i = 0; i < nx - 1; i++) {
+  for (let j = 0; j + 2 < nz; j += 2)
+    for (let i = 0; i + 2 < nx; i += 2) {
       if (!cell(i, j)) continue;
-      a.copy(P(i, j));
-      b.copy(P(i, j + 1));
-      c.copy(P(i + 1, j));
-      const d = P(i + 1, j + 1);
-      // Split along the diagonal the surface folds on (a hip, or where a
-      // gable meets a roof crossing the grid), so its edges run straight
-      // instead of stepping cell by cell.
-      if (Math.abs(a.y - d.y) < Math.abs(b.y - c.y)) {
-        tri(a, b, d);
-        tri(a, d, c);
-      } else {
-        tri(a, b, c);
-        tri(c, b, d);
-      }
+      const mid = P(i + 1, j + 1);
+      const around = ring.map(([di, dj]) => P(i + di, j + dj));
+      around.forEach((p, k) => tri(p, around[(k + 1) % 8]!, mid));
     }
   // Gable ends: where the roof stops above its eave, siding down to it.
   const skirt = (i0: number, j0: number, i1: number, j1: number) => {
@@ -165,12 +163,18 @@ function roofGeometry(roof: Roof3d): THREE.BufferGeometry {
       col.push(siding.r, siding.g, siding.b);
     }
   };
-  for (let j = 0; j < nz; j++)
-    for (let i = 0; i < nx - 1; i++)
-      if (cell(i, j - 1) !== cell(i, j)) skirt(i, j, i + 1, j);
-  for (let j = 0; j < nz - 1; j++)
-    for (let i = 0; i < nx; i++)
-      if (cell(i - 1, j) !== cell(i, j)) skirt(i, j, i, j + 1);
+  for (let j = 0; j < nz; j += 2)
+    for (let i = 0; i + 2 < nx; i += 2)
+      if (cell(i, j - 2) !== cell(i, j)) {
+        skirt(i, j, i + 1, j);
+        skirt(i + 1, j, i + 2, j);
+      }
+  for (let j = 0; j + 2 < nz; j += 2)
+    for (let i = 0; i < nx; i += 2)
+      if (cell(i - 2, j) !== cell(i, j)) {
+        skirt(i, j, i, j + 1);
+        skirt(i, j + 1, i, j + 2);
+      }
   const geom = new THREE.BufferGeometry();
   geom.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
   geom.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
