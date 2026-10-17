@@ -602,6 +602,8 @@
     "groundFlatNow": "Flat",
     "groundUphill": "High side",
     "groundDownhill": "Low side",
-    "groundToward": "Slopes down toward"
+    "groundToward": "Slopes down toward",
+    "scanMode": "Scan",
+    "scanModeHint": "Show the room scans' walls and objects in place of the plan's walls and furniture (the scans' stairs always show)"
   }
 }

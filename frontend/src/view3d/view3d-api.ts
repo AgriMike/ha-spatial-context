@@ -133,6 +133,8 @@ export interface ScanPlacement3d {
   hideWalls: boolean;
 }
 
+export type ScanMode = "plan" | "scan";
+
 export interface ScanPose {
   x: number;
   z: number;
@@ -163,6 +165,12 @@ export interface View3dHandle {
   setScans(scans: ScanPlacement3d[]): void;
   /** The scan to drag on the floor (null for none — the camera only). */
   setEditScan(id: string | null, snap: boolean): void;
+  /** Which model shows where a floor has a visible scan: "plan" draws the
+   * plan, adding only the scan's stairs (the plan has none); "scan" draws
+   * the scan's walls, doors, windows and objects in place of the plan's
+   * walls and furniture (the plan's floors and lights stay). Scans'
+   * ceilings and floors never show. */
+  setScanMode(mode: ScanMode): void;
   /** Turns a scan to line its walls up with the plan's, pushes it onto
    * the nearest wall faces and sets its floor on the floor's level;
    * reports the pose through onScanMove. */

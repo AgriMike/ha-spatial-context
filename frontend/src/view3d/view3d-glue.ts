@@ -9,6 +9,7 @@ import type {
   Item3d,
   Scene3d,
   ScanPlacement3d,
+  ScanMode,
   ScanPose,
   Terrain3d,
   Vec2,
@@ -258,12 +259,100 @@ interface WallLine {
   facing: number;
 }
 
+/** The plan's walls, glass, blinds and garage doors for a floor, merged per
+ * look, leaving out boxes `keep` rejects (where a scan stands in). */
+function fillWalls(
+  walls: THREE.Group,
+  spec: Floor3d,
+  keep: (b: Box3d) => boolean,
+): void {
+  for (const child of [...walls.children]) {
+    walls.remove(child);
+    const mesh = child as THREE.Mesh;
+    mesh.geometry?.dispose();
+    (mesh.material as THREE.Material)?.dispose();
+  }
+  const kept = spec.walls.filter(keep);
+  if (kept.length) {
+    const parts = kept.map(boxGeometry);
+    const merged = mergeGeometries(parts);
+    for (const p of parts) p.dispose();
+    if (merged) {
+      const mesh = new THREE.Mesh(
+        merged,
+        new THREE.MeshStandardMaterial({
+          color: spec.wallColor,
+          roughness: 0.92,
+        }),
+      );
+      mesh.name = "Walls";
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      walls.add(mesh);
+    }
+  }
+  const byLook = new Map<string, THREE.BufferGeometry[]>();
+  for (const pane of spec.panes) {
+    if (!keep(pane.box)) continue;
+    const key = `${pane.kind}|${pane.color}|${pane.opacity}`;
+    const list = byLook.get(key) ?? [];
+    list.push(boxGeometry(pane.box));
+    byLook.set(key, list);
+  }
+  for (const [key, parts] of byLook) {
+    const [kind, color, opacity] = key.split("|") as [string, string, string];
+    const merged = mergeGeometries(parts);
+    for (const p of parts) p.dispose();
+    if (!merged) continue;
+    const op = Number(opacity);
+    const mesh = new THREE.Mesh(
+      merged,
+      new THREE.MeshStandardMaterial({
+        color,
+        roughness: kind === "glass" ? 0.05 : 0.7,
+        metalness: kind === "glass" ? 0.1 : 0,
+        transparent: op < 1,
+        opacity: op,
+        depthWrite: op >= 1,
+      }),
+    );
+    mesh.name =
+      kind === "glass"
+        ? "Windows"
+        : kind === "door"
+          ? "Garage doors"
+          : "Blinds";
+    mesh.castShadow = kind !== "glass";
+    mesh.receiveShadow = kind !== "glass";
+    walls.add(mesh);
+  }
+}
+
 interface FloorEntry {
   spec: Floor3d;
   group: THREE.Group;
   walls: THREE.Group;
+  /** What fillWalls last drew: "plan", or the scan placements covering. */
+  wallsKey?: string;
+  furniture: THREE.Group;
   scans: THREE.Group;
   order: number;
+}
+
+/** What a scan mesh is, from its own or an enclosing node's name — Polycam
+ * (and RoomPlan-style) exports name them Ceiling_…, Floor_F1_…, stairs…. */
+function scanPart(o: THREE.Object3D): "ceiling" | "floor" | "stairs" | "other" {
+  for (let n: THREE.Object3D | null = o; n; n = n.parent) {
+    const name = n.name ?? "";
+    if (/^ceiling/i.test(name)) return "ceiling";
+    if (
+      /^floor_(?!transition)[a-z]*\d*_/i.test(name) ||
+      /^floor_f\d/i.test(name)
+    )
+      return "floor";
+    if (/stair/i.test(name)) return "stairs";
+  }
+  return "other";
 }
 
 interface ScanEntry {
@@ -337,6 +426,7 @@ function createView3d(options: View3dOptions): View3dHandle {
   const scans = new Map<string, ScanEntry>();
   let spread = 0;
   let editScanId: string | null = null;
+  let scanMode: ScanMode = "plan";
   let editSnap = true;
   let fitted = false;
   let destroyed = false;
@@ -454,59 +544,8 @@ function createView3d(options: View3dOptions): View3dHandle {
     const walls = new THREE.Group();
     walls.name = "Walls";
     group.add(walls);
-    if (spec.walls.length) {
-      const parts = spec.walls.map(boxGeometry);
-      const merged = mergeGeometries(parts);
-      for (const p of parts) p.dispose();
-      if (merged) {
-        const mesh = new THREE.Mesh(
-          merged,
-          new THREE.MeshStandardMaterial({
-            color: spec.wallColor,
-            roughness: 0.92,
-          }),
-        );
-        mesh.name = "Walls";
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        walls.add(mesh);
-      }
-    }
-    // Glass, blinds and garage doors, merged per look.
-    const byLook = new Map<string, THREE.BufferGeometry[]>();
-    for (const pane of spec.panes) {
-      const key = `${pane.kind}|${pane.color}|${pane.opacity}`;
-      const list = byLook.get(key) ?? [];
-      list.push(boxGeometry(pane.box));
-      byLook.set(key, list);
-    }
-    for (const [key, parts] of byLook) {
-      const [kind, color, opacity] = key.split("|") as [string, string, string];
-      const merged = mergeGeometries(parts);
-      for (const p of parts) p.dispose();
-      if (!merged) continue;
-      const op = Number(opacity);
-      const mesh = new THREE.Mesh(
-        merged,
-        new THREE.MeshStandardMaterial({
-          color,
-          roughness: kind === "glass" ? 0.05 : 0.7,
-          metalness: kind === "glass" ? 0.1 : 0,
-          transparent: op < 1,
-          opacity: op,
-          depthWrite: op >= 1,
-        }),
-      );
-      mesh.name =
-        kind === "glass"
-          ? "Windows"
-          : kind === "door"
-            ? "Garage doors"
-            : "Blinds";
-      mesh.castShadow = kind !== "glass";
-      mesh.receiveShadow = kind !== "glass";
-      walls.add(mesh);
-    }
+    fillWalls(walls, spec, () => true);
+    const wallsKey = "plan";
     // Room floors.
     for (const slab of spec.slabs) {
       const geom = new THREE.ExtrudeGeometry(floorShape(slab.points), {
@@ -531,6 +570,10 @@ function createView3d(options: View3dOptions): View3dHandle {
     const furniture = new THREE.Group();
     furniture.name = "Furniture";
     group.add(furniture);
+    // Apart from the furniture, so they keep lighting the scan model.
+    const lights = new THREE.Group();
+    lights.name = "Lights";
+    group.add(lights);
     for (const item of spec.items) {
       furniture.add(buildItem(item));
       if (item.light && pointLights.has(item.id)) {
@@ -542,13 +585,21 @@ function createView3d(options: View3dOptions): View3dHandle {
         );
         light.name = `${item.name} light`;
         light.position.set(item.x, item.light.y, item.z);
-        furniture.add(light);
+        lights.add(light);
       }
     }
     const scanGroup = new THREE.Group();
     scanGroup.name = "Scans";
     group.add(scanGroup);
-    return { spec, group, walls, scans: scanGroup, order: 0 };
+    return {
+      spec,
+      group,
+      walls,
+      wallsKey,
+      furniture,
+      scans: scanGroup,
+      order: 0,
+    };
   }
 
   function placeFloors(): void {
@@ -704,17 +755,71 @@ function createView3d(options: View3dOptions): View3dHandle {
     else s.group.removeFromParent();
   }
 
+  /** The plan's walls and furniture give way to a floor's shown scan in
+   * "scan" mode (or for a scan set to replace the walls); in "plan" mode
+   * the scan shows only its stairs. */
   function applyWallHiding(): void {
     for (const [floorId, f] of floors) {
-      const hide = [...scans.values()].some(
+      const shown = [...scans.values()].filter(
         (s) =>
-          s.placement.floorId === floorId &&
-          s.placement.visible &&
-          s.placement.hideWalls &&
-          s.content,
+          s.placement.floorId === floorId && s.placement.visible && s.content,
       );
-      f.walls.visible = !hide;
+      const scanModel = scanMode === "scan" && shown.length > 0;
+      f.walls.visible = !shown.some((s) => s.placement.hideWalls);
+      f.furniture.visible = !scanModel;
+      // The scan model replaces the plan's walls only where the scan has
+      // walls of its own: parts it never covered (an unscanned garage)
+      // keep the plan's.
+      const key = scanModel
+        ? JSON.stringify(shown.map((s) => s.placement))
+        : "plan";
+      if (f.wallsKey !== key) {
+        f.wallsKey = key;
+        const cover = scanModel ? scanWallBoxes(shown) : [];
+        const reach = 0.35;
+        fillWalls(
+          f.walls,
+          f.spec,
+          (b) =>
+            !cover.some(
+              (c) =>
+                b.x >= c.min.x - reach &&
+                b.x <= c.max.x + reach &&
+                b.z >= c.min.z - reach &&
+                b.z <= c.max.z + reach,
+            ),
+        );
+      }
     }
+    for (const s of scans.values()) {
+      s.content?.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const part = mesh.userData["scanPart"] as string;
+        mesh.visible =
+          part !== "ceiling" &&
+          part !== "floor" &&
+          (scanMode === "scan" || part === "stairs");
+      });
+    }
+  }
+
+  /** World-space boxes of the shown scans' walls, doors and windows. */
+  function scanWallBoxes(shown: ScanEntry[]): THREE.Box3[] {
+    root.updateMatrixWorld(true);
+    const out: THREE.Box3[] = [];
+    for (const s of shown) {
+      s.content?.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh || mesh.userData["scanPart"] !== "other") return;
+        let named: THREE.Object3D | null = mesh;
+        while (named && !named.name) named = named.parent;
+        if (!/wall|transition|joint|door|window/i.test(named?.name ?? ""))
+          return;
+        out.push(new THREE.Box3().setFromObject(mesh));
+      });
+    }
+    return out;
   }
 
   /** Vertices to align with (≤ 40k) and the scan's wall grid angle. */
@@ -789,6 +894,7 @@ function createView3d(options: View3dOptions): View3dHandle {
           const mesh = o as THREE.Mesh;
           if (!mesh.isMesh) return;
           mesh.userData["scanId"] = id;
+          mesh.userData["scanPart"] = scanPart(mesh);
           const mats = Array.isArray(mesh.material)
             ? mesh.material
             : [mesh.material];
@@ -1130,6 +1236,12 @@ function createView3d(options: View3dOptions): View3dHandle {
   return {
     setScene,
     setScans,
+    setScanMode(mode) {
+      if (mode === scanMode) return;
+      scanMode = mode;
+      applyWallHiding();
+      invalidate();
+    },
     setEditScan(id, snap) {
       editScanId = id;
       editSnap = snap;

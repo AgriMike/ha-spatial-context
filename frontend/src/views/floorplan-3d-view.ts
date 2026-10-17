@@ -27,6 +27,7 @@ import {
   type FloorInput,
 } from "../view3d/scene3d";
 import type {
+  ScanMode,
   ScanPlacement3d,
   ScanPose,
   View3dHandle,
@@ -51,6 +52,16 @@ function loadModule(url: string): Promise<View3dModule> {
       });
   }
   return modulePromise;
+}
+
+const SCAN_MODE_KEY = "spatial-context-3d-scan-mode";
+
+function readScanMode(): ScanMode {
+  try {
+    return localStorage.getItem(SCAN_MODE_KEY) === "scan" ? "scan" : "plan";
+  } catch {
+    return "plan";
+  }
 }
 
 function emptyView3d(): View3dSettings {
@@ -365,6 +376,9 @@ export class Floorplan3dView extends LitElement {
   @state() private _selectedScanId: string | null = null;
   @state() private _moveMode = false;
   @state() private _snap = true;
+  /** Plan or scan model where a floor has a scan (see View3dHandle's
+   * setScanMode) — a per-browser choice. */
+  @state() private _scanMode: ScanMode = readScanMode();
   @state() private _uploading = false;
   @state() private _scanStatus = new Map<string, string>();
   @state() private _exporting = false;
@@ -472,6 +486,13 @@ export class Floorplan3dView extends LitElement {
           (f.building_id === building && f.has_layout),
       )
       .map((f) => f.floor_id);
+  }
+
+  /** Some shown floor has a visible scan. */
+  private get _hasScans(): boolean {
+    return this._shownFloorIds.some((id) =>
+      this._view3d.get(id)?.scans.some((s) => s.visible),
+    );
   }
 
   /** The floors of this floor's building (just this one when it isn't
@@ -681,6 +702,7 @@ export class Floorplan3dView extends LitElement {
       this._spreadShown = spread;
       handle.setSpread(spread);
     }
+    handle.setScanMode(this._scanMode);
     handle.setEditScan(
       this.editable && this._sheetOpen && this._moveMode
         ? this._selectedScanId
@@ -904,6 +926,26 @@ export class Floorplan3dView extends LitElement {
           >
             <ha-icon icon="mdi:arrow-collapse-down"></ha-icon>
           </button>
+          ${
+            this._hasScans
+              ? html`<button
+                  class=${this._scanMode === "scan" ? "active" : ""}
+                  title=${localize("view3d.scanModeHint")}
+                  @click=${() => {
+                    this._scanMode =
+                      this._scanMode === "scan" ? "plan" : "scan";
+                    try {
+                      localStorage.setItem(SCAN_MODE_KEY, this._scanMode);
+                    } catch {
+                      /* private window: just this session */
+                    }
+                  }}
+                >
+                  <ha-icon icon="mdi:cube-scan"></ha-icon>
+                  ${localize("view3d.scanMode")}
+                </button>`
+              : nothing
+          }
           ${
             this._canDollhouse
               ? html`<button

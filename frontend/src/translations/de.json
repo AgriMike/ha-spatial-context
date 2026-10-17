@@ -602,6 +602,8 @@
     "groundFlatNow": "Eben",
     "groundUphill": "Hohe Seite",
     "groundDownhill": "Niedrige Seite",
-    "groundToward": "Fällt ab nach"
+    "groundToward": "Fällt ab nach",
+    "scanMode": "Scan",
+    "scanModeHint": "Wände und Objekte der Raumscans statt der Wände und Möbel des Plans zeigen (Treppen der Scans sind immer zu sehen)"
   }
 }

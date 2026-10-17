@@ -33,7 +33,6 @@ import {
   distance,
   nearestPointOnPolyline,
   pointInPolygon,
-  pointToSegmentDistance,
 } from "../canvas/geometry";
 import { wallThicknessCm } from "../canvas/materials";
 import {
@@ -444,6 +443,7 @@ function buildFloor(
   dark: boolean,
   showLights: boolean,
   nightGlow: number,
+  floorAbove: (x: number, z: number) => number | null,
 ): Floor3d {
   const { layout, wallHeight: H } = input;
   const m = metersPerUnit(layout.scale);
@@ -454,36 +454,50 @@ function buildFloor(
   const offsetRooms = layout.rooms.filter(
     (r) => (r.floor_offset_m ?? 0) !== 0 && r.points.length >= 3,
   );
-  /** A room set above or below the floor (Room.floor_offset_m) takes the
-   * walls along its edges with it: they reach down to it (or their doors
-   * and windows rise with it). A wall counts as the room's when most of
-   * it runs along the room's edge or through it. */
-  const segmentOffset = (a: Vec2, b: Vec2, t: number): number => {
-    let off = 0;
-    const reach = (t / 2 + 0.15) / m;
-    for (const room of offsetRooms) {
-      let hits = 0;
-      for (const f of [0.25, 0.5, 0.75]) {
-        const x = a[0] + (b[0] - a[0]) * f;
-        const y = a[1] + (b[1] - a[1]) * f;
-        const pts = room.points;
-        const onEdge = pts.some(
-          ([x1, y1], k) =>
-            pointToSegmentDistance(
-              x,
-              y,
-              x1,
-              y1,
-              pts[(k + 1) % pts.length]![0],
-              pts[(k + 1) % pts.length]![1],
-            ) <= reach,
+  /** The rooms either side of a wall, a little way out from it along its
+   * length: their floor offsets (Room.floor_offset_m, 0 when level with
+   * the floor) and the height of whatever floor above covers each spot
+   * (null where nothing does). */
+  const wallSides = (a: Vec2, b: Vec2, t: number) => {
+    const len = distance(a[0], a[1], b[0], b[1]);
+    const nx = -(b[1] - a[1]) / len;
+    const ny = (b[0] - a[0]) / len;
+    const reach = (t / 2 + 0.2) / m;
+    const offsets = new Set<number>();
+    const above: (number | null)[] = [];
+    for (const f of [0.2, 0.5, 0.8]) {
+      for (const side of [1, -1]) {
+        const x = a[0] + (b[0] - a[0]) * f + nx * reach * side;
+        const y = a[1] + (b[1] - a[1]) * f + ny * reach * side;
+        const room = layout.rooms.find(
+          (r) => r.points.length >= 3 && pointInPolygon(x, y, r.points),
         );
-        if (onEdge || pointInPolygon(x, y, pts)) hits++;
+        if (room) offsets.add(room.floor_offset_m ?? 0);
+        above.push(floorAbove(x * m, y * m));
       }
-      const o = room.floor_offset_m ?? 0;
-      if (hits >= 2 && Math.abs(o) > Math.abs(off)) off = o;
     }
-    return off;
+    return { offsets: [...offsets], above };
+  };
+  /** A wall's vertical span (metres from the floor's level) and the level
+   * its doors and windows sit at. It reaches from the lowest room beside
+   * it to a storey above the highest; a split level's garage walls run
+   * from the landing. It stops at a floor above that covers it, and
+   * reaches up to meet one just above it rather than leave a gap. */
+  const wallSpan = (a: Vec2, b: Vec2, t: number) => {
+    const { offsets, above } = wallSides(a, b, t);
+    const base = offsets.length ? Math.min(...offsets) : 0;
+    let top = (offsets.length ? Math.max(...offsets) : 0) + H;
+    // Doors and windows: at the room's level when it's the only one, else
+    // at the higher (steps go down into the lower room).
+    const level = offsets.length ? Math.max(...offsets) : 0;
+    const covered = above.filter((u): u is number => u !== null);
+    if (covered.length === above.length && covered.length) {
+      top = Math.min(top, Math.max(...covered));
+    } else if (covered.length) {
+      const near = Math.min(...covered);
+      if (near > top && near <= top + 0.8) top = near;
+    }
+    return { base, top: Math.max(top, base + 0.3), level };
   };
   const offsetAt = (x: number, y: number): number =>
     offsetRooms.find((r) => pointInPolygon(x, y, r.points))?.floor_offset_m ??
@@ -533,10 +547,7 @@ function buildFloor(
       const dz = ((by - ay) * m) / L;
       const angle = Math.atan2(-dz, dx);
       const at = (s: number): Vec2 => [ax * m + dx * s, ay * m + dz * s];
-      // Walls of a room set lower reach down to it; doors and windows in
-      // them sit at its level.
-      const off = segmentOffset([ax, ay], [bx, by], t);
-      const base = Math.min(0, off);
+      const { base, top, level: off } = wallSpan([ax, ay], [bx, by], t);
       // Overlap the next/previous segment at joints so corners close.
       const ext0 = i > 0 || closed ? t / 2 : 0;
       const ext1 = i < pts.length - 2 || closed ? t / 2 : 0;
@@ -576,7 +587,7 @@ function buildFloor(
       let cursor = -ext0;
       for (const hole of holes) {
         const { opening } = hole;
-        if (hole.s0 > cursor) walls.push(box(cursor, hole.s0, base, H));
+        if (hole.s0 > cursor) walls.push(box(cursor, hole.s0, base, top));
         const isDoor = opening.type === "door";
         // A window's kind sets its glass: a transom is a ~45 cm strip just
         // under the ceiling, floor-to-ceiling runs the full wall height.
@@ -585,7 +596,7 @@ function buildFloor(
           style === "transom" ? H - 0.15 : style === "full" ? H : WINDOW_HEAD_M;
         const head =
           Math.min(
-            H - off,
+            top - off,
             isDoor ? DOOR_HEAD_M : (opening.daylight?.head_m ?? defaultHead),
           ) + off;
         const sill =
@@ -597,7 +608,7 @@ function buildFloor(
                 ? 0
                 : Math.min(WINDOW_SILL_M, head - off - 0.1)) + off;
         if (sill > base) walls.push(box(hole.s0, hole.s1, base, sill));
-        if (head < H - 0.005) walls.push(box(hole.s0, hole.s1, head, H));
+        if (head < top - 0.005) walls.push(box(hole.s0, hole.s1, head, top));
         if (!isDoor)
           panes.push({
             box: box(hole.s0, hole.s1, sill, head, 0.02),
@@ -653,7 +664,7 @@ function buildFloor(
         }
         cursor = hole.s1;
       }
-      if (L + ext1 > cursor) walls.push(box(cursor, L + ext1, base, H));
+      if (L + ext1 > cursor) walls.push(box(cursor, L + ext1, base, top));
     }
   }
 
@@ -775,7 +786,14 @@ export function buildScene(input: SceneInput): Scene3d {
   const clouds = input.sky?.clouds ?? 0;
   const day = daylight(pos.elevation);
   const floors = input.floors.map((f) =>
-    buildFloor(f, hass, dark, input.showLights, 1 - 0.75 * day),
+    buildFloor(
+      f,
+      hass,
+      dark,
+      input.showLights,
+      1 - 0.75 * day,
+      floorAboveOf(f, input.floors),
+    ),
   );
   let sun: Scene3d["sun"] = null;
   if (pos.elevation > 0) {
@@ -805,6 +823,32 @@ export function buildScene(input: SceneInput): Scene3d {
         ? "#e9f1f7"
         : "#2b3140",
     dark,
+  };
+}
+
+/** For one floor: the height (metres above its level) of the lowest floor
+ * above that has a room over a point on the floor plane, else null. */
+function floorAboveOf(
+  floor: FloorInput,
+  floors: FloorInput[],
+): (x: number, z: number) => number | null {
+  const rooms = floors
+    .filter((f) => f.baseY > floor.baseY + 0.5)
+    .flatMap((f) => {
+      const m = metersPerUnit(f.layout.scale);
+      return f.layout.rooms
+        .filter((r) => !r.outdoor && r.points.length >= 3)
+        .map((r) => ({
+          y: f.baseY + (r.floor_offset_m ?? 0) - floor.baseY,
+          points: r.points.map(([x, y]): [number, number] => [x * m, y * m]),
+        }));
+    });
+  return (x, z) => {
+    let best: number | null = null;
+    for (const r of rooms)
+      if ((best === null || r.y < best) && pointInPolygon(x, z, r.points))
+        best = r.y;
+    return best;
   };
 }
 
