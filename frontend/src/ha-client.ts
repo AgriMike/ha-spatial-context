@@ -120,16 +120,18 @@ export class HaClient {
     });
   }
 
+  /** Saves every setting. The backend replace-saves, filling anything
+   * left out with its default — so each one has to be sent, every time
+   * (sending only the original six silently reset all the rest). */
   async saveSettings(settings: Settings): Promise<{ success: boolean }> {
-    return this.hass.connection.sendMessagePromise({
+    const payload: Record<string, unknown> = {
       type: "spatial_context/save_settings",
-      unit_system: settings.unit_system,
-      zigbee_timeout_seconds: settings.zigbee_timeout_seconds,
-      floor_order: settings.floor_order,
-      zigbee_coordinator_device_id: settings.zigbee_coordinator_device_id,
-      auto_save: settings.auto_save,
-      debug_logging: settings.debug_logging,
-    });
+    };
+    for (const key of Object.keys(emptySettings()) as (keyof Settings)[]) {
+      const value = settings[key];
+      if (value !== undefined) payload[key] = value;
+    }
+    return this.hass.connection.sendMessagePromise(payload);
   }
 
   async getVersionInfo(): Promise<VersionInfo> {

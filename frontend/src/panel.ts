@@ -2234,8 +2234,30 @@ export class SpatialContextPanel extends LitElement {
     this._editingWallId = null;
   };
 
+  /** Saves the settings, reporting a failure in the save-error banner
+   * (whose Retry sends them again) instead of dropping it silently. */
+  private _saveSettingsNow(): Promise<unknown> {
+    const saved = this._client.saveSettings(this._settings);
+    saved.then(
+      () => {
+        if (this._settingsUnsaved) {
+          this._settingsUnsaved = false;
+          this._saveError = null;
+        }
+      },
+      (err: unknown) => {
+        this._settingsUnsaved = true;
+        this._saveError = this._describeSaveError(err);
+      },
+    );
+    return saved;
+  }
+
+  private _settingsUnsaved = false;
+
   private _onSaveClick = () => {
     this._autoSaveHeld = false;
+    if (this._settingsUnsaved) void this._saveSettingsNow().catch(() => {});
     // A failure is reported by the save-error banner, not left unhandled.
     const save =
       this._view === "property" ? this._saveProperty() : this._save();
@@ -2531,7 +2553,7 @@ export class SpatialContextPanel extends LitElement {
   private _onSettingsChange = (e: CustomEvent<Partial<Settings>>) => {
     const patch = e.detail;
     this._settings = { ...this._settings, ...patch };
-    const saved = this._client.saveSettings(this._settings);
+    const saved = this._saveSettingsNow();
     if ("auto_save" in patch) this._scheduleAutoSave();
     if ("zigbee_coordinator_device_id" in patch) {
       this._selectedMeshLink = null;
