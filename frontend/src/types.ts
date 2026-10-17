@@ -43,6 +43,10 @@ export interface Room {
    * outside, so daylight through a door or window onto it only falls on
    * the indoor side. */
   outdoor?: boolean;
+  /** Metres this room's floor sits above (+) or below (-) the rest of its
+   * floor in the 3D view — a split level's garage and entry landing drawn
+   * on the main floor's plan. Null/absent = level with the floor. */
+  floor_offset_m?: number | null;
 }
 
 export interface Pin {

@@ -35,6 +35,8 @@ export interface Pane3d {
 export interface Slab3d {
   id: string;
   name: string;
+  /** Metres above (or below) the floor's level — a split level's landing. */
+  y: number;
   /** Outline on the floor plane (x, z). */
   points: Vec2[];
   color: string;

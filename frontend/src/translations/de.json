@@ -81,7 +81,9 @@
       "outdoorHint": "Terrasse, Veranda oder Balkon: Tageslicht durch eine Tür oder ein Fenster dorthin fällt nur nach innen.",
       "outdoorSpace": "Außenbereich (Terrasse…)",
       "thisFloor": "Diese Etage",
-      "unknownArea": "Unbekannter Bereich ({id})"
+      "unknownArea": "Unbekannter Bereich ({id})",
+      "floorOffset": "Bodenhöhe in 3D ({unit})",
+      "floorOffsetHint": "Wie weit der Boden dieses Raums in der 3D-Ansicht über (+) oder unter (−) dem Rest der Etage liegt, z. B. Garage oder Eingangspodest eines Split-Levels. Wände und Türen wandern mit."
     },
     "pin": {
       "setLabel": "Beschriftung festlegen",

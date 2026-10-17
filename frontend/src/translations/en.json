@@ -81,7 +81,9 @@
       "outdoorHint": "A deck, patio or porch: daylight through a door or window onto it only falls indoors.",
       "outdoorSpace": "Outdoor space",
       "thisFloor": "This floor",
-      "unknownArea": "Unknown area ({id})"
+      "unknownArea": "Unknown area ({id})",
+      "floorOffset": "Floor height in 3D ({unit})",
+      "floorOffsetHint": "How far this room's floor sits above (+) or below (−) the rest of the floor in the 3D view, e.g. a split level's garage or entry landing. Its walls and doors move with it."
     },
     "pin": {
       "setLabel": "Set label",

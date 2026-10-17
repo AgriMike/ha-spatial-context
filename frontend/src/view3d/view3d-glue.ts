@@ -514,7 +514,7 @@ function createView3d(options: View3dOptions): View3dHandle {
         bevelEnabled: false,
       });
       geom.rotateX(-Math.PI / 2);
-      geom.translate(0, slab.outdoor ? -SLAB_M - 0.02 : -SLAB_M, 0);
+      geom.translate(0, slab.y + (slab.outdoor ? -SLAB_M - 0.02 : -SLAB_M), 0);
       const mat = new THREE.MeshStandardMaterial({
         color: slab.color,
         roughness: 0.9,

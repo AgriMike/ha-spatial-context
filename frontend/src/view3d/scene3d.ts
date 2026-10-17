@@ -29,7 +29,12 @@ import {
   DEFAULT_ROOM_FILL_COLOR,
   DEFAULT_ROOM_FILL_OPACITY,
 } from "../canvas/floorplan-canvas";
-import { distance, nearestPointOnPolyline } from "../canvas/geometry";
+import {
+  distance,
+  nearestPointOnPolyline,
+  pointInPolygon,
+  pointToSegmentDistance,
+} from "../canvas/geometry";
 import { wallThicknessCm } from "../canvas/materials";
 import {
   computeCoverOpenness,
@@ -446,6 +451,43 @@ function buildFloor(
   const walls: Box3d[] = [];
   const panes: Pane3d[] = [];
   const wallFaces: Floor3d["wallFaces"] = [];
+  const offsetRooms = layout.rooms.filter(
+    (r) => (r.floor_offset_m ?? 0) !== 0 && r.points.length >= 3,
+  );
+  /** A room set above or below the floor (Room.floor_offset_m) takes the
+   * walls along its edges with it: they reach down to it (or their doors
+   * and windows rise with it). A wall counts as the room's when most of
+   * it runs along the room's edge or through it. */
+  const segmentOffset = (a: Vec2, b: Vec2, t: number): number => {
+    let off = 0;
+    const reach = (t / 2 + 0.15) / m;
+    for (const room of offsetRooms) {
+      let hits = 0;
+      for (const f of [0.25, 0.5, 0.75]) {
+        const x = a[0] + (b[0] - a[0]) * f;
+        const y = a[1] + (b[1] - a[1]) * f;
+        const pts = room.points;
+        const onEdge = pts.some(
+          ([x1, y1], k) =>
+            pointToSegmentDistance(
+              x,
+              y,
+              x1,
+              y1,
+              pts[(k + 1) % pts.length]![0],
+              pts[(k + 1) % pts.length]![1],
+            ) <= reach,
+        );
+        if (onEdge || pointInPolygon(x, y, pts)) hits++;
+      }
+      const o = room.floor_offset_m ?? 0;
+      if (hits >= 2 && Math.abs(o) > Math.abs(off)) off = o;
+    }
+    return off;
+  };
+  const offsetAt = (x: number, y: number): number =>
+    offsetRooms.find((r) => pointInPolygon(x, y, r.points))?.floor_offset_m ??
+    0;
 
   for (const wall of layout.walls) {
     const pts = wall.points;
@@ -491,6 +533,10 @@ function buildFloor(
       const dz = ((by - ay) * m) / L;
       const angle = Math.atan2(-dz, dx);
       const at = (s: number): Vec2 => [ax * m + dx * s, ay * m + dz * s];
+      // Walls of a room set lower reach down to it; doors and windows in
+      // them sit at its level.
+      const off = segmentOffset([ax, ay], [bx, by], t);
+      const base = Math.min(0, off);
       // Overlap the next/previous segment at joints so corners close.
       const ext0 = i > 0 || closed ? t / 2 : 0;
       const ext1 = i < pts.length - 2 || closed ? t / 2 : 0;
@@ -530,25 +576,27 @@ function buildFloor(
       let cursor = -ext0;
       for (const hole of holes) {
         const { opening } = hole;
-        if (hole.s0 > cursor) walls.push(box(cursor, hole.s0, 0, H));
+        if (hole.s0 > cursor) walls.push(box(cursor, hole.s0, base, H));
         const isDoor = opening.type === "door";
         // A window's kind sets its glass: a transom is a ~45 cm strip just
         // under the ceiling, floor-to-ceiling runs the full wall height.
         const style = isDoor ? undefined : opening.window_style;
         const defaultHead =
           style === "transom" ? H - 0.15 : style === "full" ? H : WINDOW_HEAD_M;
-        const head = Math.min(
-          H,
-          isDoor ? DOOR_HEAD_M : (opening.daylight?.head_m ?? defaultHead),
-        );
-        const sill = isDoor
-          ? 0
-          : style === "transom"
-            ? Math.max(0, head - 0.45)
-            : style === "full"
-              ? 0
-              : Math.min(WINDOW_SILL_M, head - 0.1);
-        if (sill > 0) walls.push(box(hole.s0, hole.s1, 0, sill));
+        const head =
+          Math.min(
+            H - off,
+            isDoor ? DOOR_HEAD_M : (opening.daylight?.head_m ?? defaultHead),
+          ) + off;
+        const sill =
+          (isDoor
+            ? 0
+            : style === "transom"
+              ? Math.max(0, head - off - 0.45)
+              : style === "full"
+                ? 0
+                : Math.min(WINDOW_SILL_M, head - off - 0.1)) + off;
+        if (sill > base) walls.push(box(hole.s0, hole.s1, base, sill));
         if (head < H - 0.005) walls.push(box(hole.s0, hole.s1, head, H));
         if (!isDoor)
           panes.push({
@@ -605,7 +653,7 @@ function buildFloor(
         }
         cursor = hole.s1;
       }
-      if (L + ext1 > cursor) walls.push(box(cursor, L + ext1, 0, H));
+      if (L + ext1 > cursor) walls.push(box(cursor, L + ext1, base, H));
     }
   }
 
@@ -627,6 +675,7 @@ function buildFloor(
     slabs.push({
       id: room.id,
       name: room.name,
+      y: room.floor_offset_m ?? 0,
       points: room.points.map(([x, y]): Vec2 => [x * m, y * m]),
       color: mixHex(
         room.outdoor ? deckBase : floorBase,
@@ -649,10 +698,13 @@ function buildFloor(
     const entry = catalogItem(item.kind);
     const flip = !!item.mirrored !== !!entry?.flip;
     const prims = itemPrims(item, entry);
-    const { y0, height } =
+    const placed =
       item.points && item.points.length >= 2 && item.closed === false
         ? { y0: 0, height: 0.01 }
         : itemHeight(item.kind, entry, H);
+    // In a room set higher or lower, with it.
+    const height = placed.height;
+    const y0 = placed.y0 + offsetAt(item.x, item.y);
     const live = states.get(item.id);
     const own = item.color ?? null;
     const line = live?.color ?? own ?? (dark ? "#e0e0e0" : "#4a4a4a");
@@ -757,9 +809,9 @@ export function buildScene(input: SceneInput): Scene3d {
 }
 
 /** The hillside the building stands on: grade on its high and low sides,
- * falling toward a compass bearing. Floors whose floor sits below the high
- * side's grade have their rooms cut out of the ground, so a walk-out
- * basement still shows inside. */
+ * falling toward a compass bearing. Rooms whose floor sits below the high
+ * side's grade are cut out of the ground, so a walk-out basement still
+ * shows inside. */
 function terrain(
   input: SceneInput,
   ground: GroundSetting,
@@ -767,14 +819,17 @@ function terrain(
 ): Terrain3d {
   const [dx, dz] = planVector(ground.downhill_deg, northDeg);
   const top = Math.max(ground.uphill_m, ground.downhill_m);
-  const holes = input.floors
-    .filter((f) => f.baseY < top - 0.01)
-    .flatMap((f) => {
-      const m = metersPerUnit(f.layout.scale);
-      return f.layout.rooms
-        .filter((r) => !r.outdoor && r.points.length >= 3)
-        .map((r) => r.points.map(([x, y]): Vec2 => [x * m, y * m]));
-    });
+  const holes = input.floors.flatMap((f) => {
+    const m = metersPerUnit(f.layout.scale);
+    return f.layout.rooms
+      .filter(
+        (r) =>
+          !r.outdoor &&
+          r.points.length >= 3 &&
+          f.baseY + (r.floor_offset_m ?? 0) < top - 0.01,
+      )
+      .map((r) => r.points.map(([x, y]): Vec2 => [x * m, y * m]));
+  });
   return {
     uphill: ground.uphill_m,
     downhill: ground.downhill_m,

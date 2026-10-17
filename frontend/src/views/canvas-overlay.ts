@@ -1936,6 +1936,38 @@ export class CanvasOverlay extends LitElement {
                   })}
               />`,
             )}
+            ${(() => {
+              const imperial = this.unitSystem === "imperial";
+              const unit = imperial ? 0.3048 : 1;
+              const offset = room.floor_offset_m ?? null;
+              return this._fieldRow(
+                "mdi:stairs",
+                localize("canvas.room.floorOffset", {
+                  unit: imperial ? "ft" : "m",
+                }),
+                html`<input
+                  type="number"
+                  class="furniture-size"
+                  title=${localize("canvas.room.floorOffsetHint")}
+                  step=${imperial ? 0.25 : 0.05}
+                  placeholder="0"
+                  .value=${
+                    offset === null
+                      ? ""
+                      : String(Math.round((offset / unit) * 100) / 100)
+                  }
+                  @change=${(e: Event) => {
+                    const raw = (e.target as HTMLInputElement).value.trim();
+                    const v = raw === "" ? 0 : Number(raw);
+                    if (!Number.isFinite(v)) return;
+                    this._fire("room-floor-offset-change", {
+                      offset:
+                        v === 0 ? null : Math.round(v * unit * 1000) / 1000,
+                    });
+                  }}
+                />`,
+              );
+            })()}
             ${this._fieldRow(
               "mdi:eye",
               localize("canvas.card.visible"),

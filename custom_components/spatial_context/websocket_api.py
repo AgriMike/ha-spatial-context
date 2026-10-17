@@ -86,6 +86,12 @@ _ROOM_SCHEMA = {
     vol.Optional("excluded_light_ids"): [str],
     # An outdoor space (deck, patio): counts as outside for daylight.
     vol.Optional("outdoor"): bool,
+    # Metres the room's floor sits above (+) or below (-) the rest of its
+    # floor, for the 3D view: a split level's garage and entry landing
+    # drawn on the main floor's plan.
+    vol.Optional("floor_offset_m"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=-20, max=20))
+    ),
     # The name label's look (see types.ts's Room).
     vol.Optional("show_label"): bool,
     vol.Optional("label_size"): vol.All(vol.Coerce(float), vol.Range(min=0.2, max=5)),

@@ -3731,6 +3731,18 @@ export class SpatialContextPanel extends LitElement {
     });
   };
 
+  private _onRoomFloorOffsetChange = (
+    e: CustomEvent<{ offset: number | null }>,
+  ) => {
+    const room = this._selectedRoom;
+    if (!room) return;
+    this._updateLayout({
+      rooms: this._layout.rooms.map((r) =>
+        r.id === room.id ? { ...r, floor_offset_m: e.detail.offset } : r,
+      ),
+    });
+  };
+
   private _onRoomOutdoorChange = (e: CustomEvent<{ outdoor: boolean }>) => {
     const room = this._selectedRoom;
     if (!room) return;
@@ -5049,6 +5061,7 @@ export class SpatialContextPanel extends LitElement {
                     @opening-garage-change=${this._onOpeningGarageChange}
                     @opening-style-change=${this._onOpeningStyleChange}
                     @room-outdoor-change=${this._onRoomOutdoorChange}
+                    @room-floor-offset-change=${this._onRoomFloorOffsetChange}
                     @room-label-change=${this._onRoomLabelChange}
                     .selectedCoverOpennessRight=${
                       this._selectedOpening
