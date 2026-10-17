@@ -1226,21 +1226,66 @@ function fillRoofGaps(eave: Float32Array, nx: number, nz: number): void {
   }
 }
 
-/** A level's part of the building as a few big rectangles, in grid steps
- * along the ridge (l) and across it (k), inclusive: each the largest part
- * still uncovered, then stretched along the ridge as far as the part
- * goes, so a wing's roof runs back into the main one rather than ending in
- * a gable inside it. Each gets one clean roof and the building's roof is
- * where they meet, as framed roofs are; a part that jogs no longer steps
- * its ridge. Slivers under `minCells` are left out. */
+/** A rectangle of grid steps along the ridge (l) and across it (k),
+ * inclusive; s0..s1 is the stretch along the ridge it was found with. */
+interface RoofRect {
+  l0: number;
+  l1: number;
+  k0: number;
+  k1: number;
+  s0: number;
+  s1: number;
+}
+
+/** Steps (chessboard) from each grid point where `from` holds to the
+ * nearest where it doesn't; 0 where it doesn't. */
+function chessboard(
+  nx: number,
+  nz: number,
+  from: (k: number) => boolean,
+): Float32Array {
+  const d = new Float32Array(nx * nz);
+  for (let k = 0; k < d.length; k++) d[k] = from(k) ? 1e9 : 0;
+  for (let j = 0; j < nz; j++)
+    for (let i = 0; i < nx; i++) {
+      const k = j * nx + i;
+      if (!d[k]) continue;
+      let v = d[k]!;
+      if (i > 0) v = Math.min(v, d[k - 1]! + 1);
+      if (j > 0) {
+        v = Math.min(v, d[k - nx]! + 1);
+        if (i > 0) v = Math.min(v, d[k - nx - 1]! + 1);
+        if (i < nx - 1) v = Math.min(v, d[k - nx + 1]! + 1);
+      }
+      d[k] = v;
+    }
+  for (let j = nz - 1; j >= 0; j--)
+    for (let i = nx - 1; i >= 0; i--) {
+      const k = j * nx + i;
+      if (!d[k]) continue;
+      let v = d[k]!;
+      if (i < nx - 1) v = Math.min(v, d[k + 1]! + 1);
+      if (j < nz - 1) {
+        v = Math.min(v, d[k + nx]! + 1);
+        if (i < nx - 1) v = Math.min(v, d[k + nx + 1]! + 1);
+        if (i > 0) v = Math.min(v, d[k + nx - 1]! + 1);
+      }
+      d[k] = v;
+    }
+  return d;
+}
+
+/** A level's part of the building as a few big rectangles: each the
+ * largest part still uncovered, then stretched along the ridge as far as
+ * the part goes. Slivers under `minCells` are left out. */
 function roofRects(
   inside: (l: number, k: number) => boolean,
   lines: number,
   len: number,
   minCells: number,
-): { l0: number; l1: number; k0: number; k1: number }[] {
+): RoofRect[] {
   const covered = new Uint8Array(lines * len);
-  const rects: { l0: number; l1: number; k0: number; k1: number }[] = [];
+  const rects: RoofRect[] = [];
   const hist = new Int32Array(len + 1);
   const stack: number[] = [];
   for (let n = 0; n < 200; n++) {
@@ -1274,7 +1319,7 @@ function roofRects(
     while (l1 < lines - 1 && whole(l1 + 1)) l1++;
     for (let l = l0; l <= l1; l++)
       for (let k = k0; k <= k1; k++) covered[l * len + k] = 1;
-    rects.push({ l0, l1, k0, k1 });
+    rects.push({ l0, l1, k0, k1, s0: best.l0, s1: best.l1 });
   }
   return rects;
 }
@@ -1315,14 +1360,14 @@ function cachedRoof(
 
 /** A roof over the whole building, from its rooms alone. Every spot is
  * roofed from the eave of the highest room under it (that room's floor
- * level plus its storey), and each eave level's roof rises at ROOF_PITCH
- * across the part of the building at least that high: a garage's roof runs
- * up into the house's and an upper storey's stands out of both. Ridges run
- * toward the street (across a hillside, else up the plan): a narrow
- * wing's ends facing front and back are gables, a wide block is hipped,
- * and eaves overhang the sides. Spots inside
- * the building that no room covers (a stairwell, a gap at a wall) take
- * their neighbours' eave. */
+ * level plus its storey). Each eave level's roof is a hip over the part of
+ * the building at least that high, rising at ROOF_PITCH from that part's
+ * outside edges, so a garage's roof runs up into the house's and an upper
+ * storey's stands out of both; eaves overhang all round. A narrow wing
+ * standing out toward the street (across a hillside, else up the plan)
+ * ends in a gable instead, its ridge running back until it meets the hip.
+ * Spots inside the building that no room covers (a stairwell, a gap at a
+ * wall) take their neighbours' eave. */
 function buildRoof(
   input: SceneInput,
   northDeg: number,
@@ -1393,9 +1438,12 @@ function buildRoof(
   // Ridges toward the street: lines run across it, and each eave level's
   // roof rises from both ends of each of its runs along a line.
   let ridgeAlongX = false;
+  // Which way along a ridge the street is: +1 toward higher l.
+  let ahead = 1;
   if (input.ground) {
     const [dx, dz] = planVector(input.ground.downhill_deg, northDeg);
     ridgeAlongX = Math.abs(dx) > Math.abs(dz);
+    ahead = (ridgeAlongX ? dx : dz) > 0 ? -1 : 1;
   }
   const lines = ridgeAlongX ? nx : nz;
   const len = ridgeAlongX ? nz : nx;
@@ -1414,50 +1462,65 @@ function buildRoof(
     if (e > -Infinity) levels.add(Math.round(e * 100) / 100);
   const over = Math.round(EAVE_M / step);
   for (const level of levels) {
-    const inside = (line: number, k: number) =>
-      eave[at(line, k)]! >= level - 0.005;
-    const roofed = new Uint8Array(N);
+    const part = (k: number) => eave[k]! >= level - 0.005;
+    const inside = (l: number, k: number) => part(at(l, k));
+    // A hip over all of this level's part, rising from its outside edges
+    // only (so it never sinks where another part carries on), its eaves
+    // overhanging all round.
+    const dIn = chessboard(nx, nz, part);
+    const dOut = chessboard(nx, nz, (k) => !part(k));
+    for (let k = 0; k < N; k++) {
+      if (dIn[k]! > 0)
+        raise(k, level + ROOF_PITCH * (dIn[k]! - 0.5) * step, level);
+      else if (dOut[k]! <= over)
+        raise(k, level - ROOF_PITCH * (dOut[k]! - 0.5) * step, level);
+    }
+    // A narrow wing standing out toward the street (a garage, a bay, the
+    // storey over a garage) ends in a gable instead: its ridge runs back
+    // until it meets the hip.
+    const share = (cells: [number, number][]) =>
+      cells.filter(
+        ([l, k]) => l < 0 || l >= lines || k < 0 || k >= len || !inside(l, k),
+      ).length / Math.max(1, cells.length);
+    const near = Math.round(1 / step);
     for (const r of roofRects(
       inside,
       lines,
       len,
       Math.round((0.4 / step) ** 2),
     )) {
-      // A narrow wing is gabled toward the street, a wide block hipped.
-      const hipped = (r.k1 - r.k0 + 1) * step > GABLE_MAX_M;
-      const reach = hipped ? over : 0;
-      for (
-        let l = Math.max(0, r.l0 - reach);
-        l <= Math.min(lines - 1, r.l1 + reach);
-        l++
+      const width = (r.k1 - r.k0 + 1) * step;
+      if (width > GABLE_MAX_M) continue;
+      const front = ahead > 0 ? r.s1 : r.s0;
+      const ks = Array.from({ length: r.k1 - r.k0 + 1 }, (_, n) => r.k0 + n);
+      if (share(ks.map((k): [number, number] => [front + ahead, k])) < 0.75)
+        continue;
+      const ls = Array.from({ length: near }, (_, n) => front - ahead * n);
+      if (
+        share(ls.map((l): [number, number] => [l, r.k0 - 1])) < 0.75 ||
+        share(ls.map((l): [number, number] => [l, r.k1 + 1])) < 0.75
       )
+        continue;
+      const ridge = level + (ROOF_PITCH * width) / 2;
+      const mid = Math.round((r.k0 + r.k1) / 2);
+      const back = ahead > 0 ? r.l0 : r.l1;
+      for (let l = front; l !== back - ahead; l -= ahead) {
+        if (
+          l !== front &&
+          level + ROOF_PITCH * (dIn[at(l, mid)]! - 0.5) * step >= ridge
+        )
+          break;
         for (
           let q = Math.max(0, r.k0 - over);
           q <= Math.min(len - 1, r.k1 + over);
           q++
         ) {
-          const inRect = l >= r.l0 && l <= r.l1 && q >= r.k0 && q <= r.k1;
-          // Eaves reach out only over what's beyond this level.
-          if (!inRect && inside(l, q)) continue;
+          if ((q < r.k0 || q > r.k1) && inside(l, q)) continue;
           const across = Math.min(q - (r.k0 - 0.5), r.k1 + 0.5 - q) * step;
-          const along = Math.min(l - (r.l0 - 0.5), r.l1 + 0.5 - l) * step;
-          const k = at(l, q);
-          raise(
-            k,
-            level + ROOF_PITCH * (hipped ? Math.min(across, along) : across),
-            level,
-          );
-          if (inRect) roofed[k] = 1;
+          raise(at(l, q), level + ROOF_PITCH * across, level);
         }
-    }
-    // Slivers no rectangle took (a jog's corner): just above the eave,
-    // under the roofs round them.
-    for (let l = 0; l < lines; l++)
-      for (let q = 0; q < len; q++) {
-        const k = at(l, q);
-        if (!roofed[k] && inside(l, q))
-          raise(k, level + ROOF_PITCH * step, level);
       }
+    }
   }
   // Porch roofs: hipped down from the wall to the eave on the open sides.
   for (const p of porches) {
