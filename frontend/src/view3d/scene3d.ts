@@ -1495,7 +1495,11 @@ function buildRoof(
       const ks = Array.from({ length: r.k1 - r.k0 + 1 }, (_, n) => r.k0 + n);
       if (share(ks.map((k): [number, number] => [front + ahead, k])) < 0.75)
         continue;
-      const ls = Array.from({ length: near }, (_, n) => front - ahead * n);
+      // Its sides open over the first metre (or all of a shallow bay).
+      const ls = Array.from(
+        { length: Math.min(near, r.s1 - r.s0 + 1) },
+        (_, n) => front - ahead * n,
+      );
       if (
         share(ls.map((l): [number, number] => [l, r.k0 - 1])) < 0.75 ||
         share(ls.map((l): [number, number] => [l, r.k1 + 1])) < 0.75
