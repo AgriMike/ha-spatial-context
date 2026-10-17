@@ -3063,21 +3063,41 @@ export function renderPrims(
       `${p.dash ? "fx dash" : "fx"}${fillFirst && i === 0 ? " body" : ""}`,
     ),
   );
-  // Solid: an opaque copy of the main body underneath, so whatever is
-  // drawn below the item (chairs tucked under a table) is hidden.
+  // Solid: opaque copies of the item's closed shapes underneath — the body
+  // and every other closed part (a chair's back, a sofa's arms) — so
+  // whatever is drawn below the item (chairs tucked under a table) is
+  // hidden.
   const body = prims[0];
   if (solid && body) {
-    out.unshift(
-      body.t === "image"
-        ? solidImage(body)
-        : body.t === "art"
-          ? renderPrim(body, "fx-solid")
-          : body.t === "icon"
-            ? svg`<rect class="fx-solid" x="0" y="0" width=${max(0.01, body.w)} height=${max(0.01, body.d)} rx=${softRadius(body.w, body.d)}></rect>`
-            : renderPrim(body, "fx-solid"),
-    );
+    if (body.t === "image") {
+      out.unshift(solidImage(body));
+    } else if (body.t === "icon") {
+      out.unshift(
+        svg`<rect class="fx-solid" x="0" y="0" width=${max(0.01, body.w)} height=${max(0.01, body.d)} rx=${softRadius(body.w, body.d)}></rect>`,
+      );
+    } else {
+      out.unshift(
+        ...prims.filter(isClosedPrim).map((p) => renderPrim(p, "fx-solid")),
+      );
+    }
   }
   return out;
+}
+
+/** A primitive that encloses an area, so it can be filled. */
+function isClosedPrim(p: Prim): boolean {
+  switch (p.t) {
+    case "rect":
+    case "ellipse":
+    case "art":
+      return true;
+    case "poly":
+      return p.closed;
+    case "path":
+      return /z/i.test(p.d);
+    default:
+      return false;
+  }
 }
 
 function renderPrim(p: Prim, cls: string): SVGTemplateResult {
