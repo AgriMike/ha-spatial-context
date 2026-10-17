@@ -293,10 +293,12 @@ export class CanvasOverlay extends LitElement {
       .icon-choice ha-icon {
         --mdc-icon-size: 20px;
       }
+      /* The same width as the row's other dropdowns, so the label keeps
+       * its room. */
       search-select.link-search {
-        flex: 1 1 auto;
-        width: 100%;
-        min-width: 0;
+        flex: 0 1 180px;
+        width: 180px;
+        min-width: 120px;
       }
       .link-chips {
         display: flex;
