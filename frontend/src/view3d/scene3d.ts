@@ -77,6 +77,11 @@ const SHINGLE_DARK = "#2d3036";
 const ROOF_PITCH = 0.55;
 const EAVE_M = 0.35;
 const ROOF_STEP_M = 0.1;
+/** How much steeper than the roof a gable end rises from its wall, and
+ * the widths up to which a wing ends in gables and from which in hips. */
+const GABLE_STEEPNESS = 6;
+const GABLE_MAX_M = 9.5;
+const HIP_MIN_M = 11;
 /** Walls this thin (or thinner) are railings, drawn this high; walls
  * shorter than STUB_M in all are left out. */
 const RAIL_THICKNESS_M = 0.06;
@@ -539,8 +544,10 @@ function buildFloor(
     // at the higher (steps go down into the lower room).
     const level = offsets.length ? Math.max(...offsets) : 0;
     // Where a floor above has a wall on the same line, that wall carries
-    // on from its level: stop there rather than stand beside it.
-    top = Math.min(top, upperWallTop(a, b, top));
+    // on from its level: stop there rather than stand beside it, or reach
+    // up to it rather than leave a gap below it.
+    const upper = upperWallLevel(a, b);
+    if (upper !== null && upper <= top + 0.8) top = upper;
     return { base, top, level, outside };
   };
   /** A wall's top along its length (s in metres from `a`), in runs: it
@@ -585,17 +592,17 @@ function buildFloor(
     return runs;
   };
   /** The level of the lowest wall of a floor above that runs along this
-   * one (parallel, within 35 cm, over most of its length), else `top`. */
-  const upperWallTop = (a: Vec2, b: Vec2, top: number): number => {
+   * one (parallel, within 35 cm, over most of its length), else null. */
+  const upperWallLevel = (a: Vec2, b: Vec2): number | null => {
     const ax = a[0] * m;
     const az = a[1] * m;
     const L = distance(a[0], a[1], b[0], b[1]) * m;
-    if (L < 0.05) return top;
+    if (L < 0.05) return null;
     const ux = (b[0] * m - ax) / L;
     const uz = (b[1] * m - az) / L;
-    let best = top;
+    let best: number | null = null;
     for (const w of upperWalls) {
-      if (w.y >= best) continue;
+      if (best !== null && w.y >= best) continue;
       const wl = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
       if (wl < 0.05) continue;
       const vx = (w.b[0] - w.a[0]) / wl;
@@ -1012,8 +1019,9 @@ export function buildScene(input: SceneInput): Scene3d {
  * level plus its storey), and each eave level's roof rises at ROOF_PITCH
  * across the part of the building at least that high: a garage's roof runs
  * up into the house's and an upper storey's stands out of both. Ridges run
- * toward the street (across a hillside, else up the plan), so the ends
- * facing front and back are gables; eaves overhang the sides. Spots inside
+ * toward the street (across a hillside, else up the plan): a narrow
+ * wing's ends facing front and back are gables, a wide block's are hipped,
+ * and eaves overhang the sides. Spots inside
  * the building that no room covers (a stairwell, a gap at a wall) take
  * their neighbours' eave. */
 function buildRoof(input: SceneInput, northDeg: number): Roof3d | null {
@@ -1133,6 +1141,38 @@ function buildRoof(input: SceneInput, northDeg: number): Roof3d | null {
   for (const level of levels) {
     const inside = (line: number, k: number) =>
       eave[at(line, k)]! >= level - 0.005;
+    // Steps (chessboard) to the nearest point outside this level's part:
+    // near the ends of a ridge the roof rises steeply from there, so a
+    // gable stands over its wall and a jog in the outline doesn't step
+    // the ridge.
+    const cheb = new Float32Array(N);
+    for (let k = 0; k < N; k++) cheb[k] = eave[k]! >= level - 0.005 ? 1e9 : 0;
+    for (let j = 0; j < nz; j++)
+      for (let i = 0; i < nx; i++) {
+        const k = j * nx + i;
+        if (!cheb[k]) continue;
+        let d = cheb[k]!;
+        if (i > 0) d = Math.min(d, cheb[k - 1]! + 1);
+        if (j > 0) {
+          d = Math.min(d, cheb[k - nx]! + 1);
+          if (i > 0) d = Math.min(d, cheb[k - nx - 1]! + 1);
+          if (i < nx - 1) d = Math.min(d, cheb[k - nx + 1]! + 1);
+        }
+        cheb[k] = d;
+      }
+    for (let j = nz - 1; j >= 0; j--)
+      for (let i = nx - 1; i >= 0; i--) {
+        const k = j * nx + i;
+        if (!cheb[k]) continue;
+        let d = cheb[k]!;
+        if (i < nx - 1) d = Math.min(d, cheb[k + 1]! + 1);
+        if (j < nz - 1) {
+          d = Math.min(d, cheb[k + nx]! + 1);
+          if (i < nx - 1) d = Math.min(d, cheb[k + nx + 1]! + 1);
+          if (i > 0) d = Math.min(d, cheb[k + nx - 1]! + 1);
+        }
+        cheb[k] = d;
+      }
     for (let line = 0; line < lines; line++) {
       let k = 0;
       while (k < len) {
@@ -1143,13 +1183,27 @@ function buildRoof(input: SceneInput, northDeg: number): Roof3d | null {
         const k0 = k;
         while (k < len && inside(line, k)) k++;
         const k1 = k - 1;
+        // A narrow wing ends in gables, a wide block in hips (a gable that
+        // wide would tower), blending between.
+        const width = (k1 - k0 + 1) * step;
+        const steep =
+          width <= GABLE_MAX_M
+            ? GABLE_STEEPNESS
+            : width >= HIP_MIN_M
+              ? 1
+              : GABLE_STEEPNESS -
+                ((GABLE_STEEPNESS - 1) * (width - GABLE_MAX_M)) /
+                  (HIP_MIN_M - GABLE_MAX_M);
         for (
           let q = Math.max(0, k0 - over);
           q <= Math.min(len - 1, k1 + over);
           q++
         ) {
-          const run = Math.min(q - (k0 - 0.5), k1 + 0.5 - q) * step;
-          raise(at(line, q), level + ROOF_PITCH * run, level);
+          const k = at(line, q);
+          let run = Math.min(q - (k0 - 0.5), k1 + 0.5 - q) * step;
+          if (q >= k0 && q <= k1)
+            run = Math.min(run, steep * (cheb[k]! - 0.5) * step);
+          raise(k, level + ROOF_PITCH * run, level);
         }
       }
     }
