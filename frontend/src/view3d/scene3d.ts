@@ -19,6 +19,7 @@ import type {
   Floor3d,
   Item3d,
   Pane3d,
+  Porch3d,
   Roof3d,
   Scene3d,
   Slab3d,
@@ -79,6 +80,19 @@ const EAVE_M = 0.35;
 const ROOF_STEP_M = 0.1;
 /** Gaps between a floor's rooms narrower than this are roofed over. */
 const ROOF_GAP_M = 0.4;
+/** A front door's porch: how far out it reaches, its roof's eave above
+ * the threshold, pitch and overhang, and its post. */
+const PORCH_DEPTH_M = 1.4;
+const PORCH_EAVE_M = 2.45;
+const PORCH_PITCH = 0.45;
+const PORCH_OVERHANG_M = 0.2;
+const POST_M = 0.15;
+const CEDAR = "#a8693a";
+const CONCRETE = "#cbc8c1";
+/** The front's stone wainscot: its top above the high side's grade. */
+const STONE_M = 1.1;
+const STONE = "#aaa49a";
+const STONE_DARK = "#5a5650";
 /** Wings up to this wide end in gables; wider blocks are hipped (a gable
  * that wide would tower). */
 const GABLE_MAX_M = 10;
@@ -492,12 +506,16 @@ function buildFloor(
   nightGlow: number,
   floorAbove: (x: number, z: number) => number | null,
   upperWalls: { a: Vec2; b: Vec2; y: number }[],
+  /** Which way the street is (unit, floor plane), and the stone
+   * wainscot's top above this floor's level. */
+  exterior: { front: Vec2; stoneTop: number },
 ): Floor3d {
   const { layout, wallHeight: H } = input;
   const m = metersPerUnit(layout.scale);
   const covers = computeCoverOpenness(layout.openings, hass);
   const walls: Box3d[] = [];
   const panes: Pane3d[] = [];
+  const porches: Porch3d[] = [];
   const wallFaces: Floor3d["wallFaces"] = [];
   const offsetRooms = layout.rooms.filter(
     (r) => (r.floor_offset_m ?? 0) !== 0 && r.points.length >= 3,
@@ -723,15 +741,110 @@ function buildFloor(
           ...(outside && depth === t ? { outside } : {}),
         };
       };
+      // The front: a door gets a porch, the rest a stone wainscot.
+      const outward: Vec2 | null = outside
+        ? [-dz * outside, dx * outside]
+        : null;
+      const facesFront =
+        !!outward &&
+        outward[0] * exterior.front[0] + outward[1] * exterior.front[1] > 0.7;
+      let porched = false;
+      const door = facesFront
+        ? (bySeg.get(i) ?? []).find(
+            (o) => o.opening.type === "door" && !o.opening.garage,
+          )
+        : undefined;
+      if (door && outward && !rail) {
+        const out = (p: Vec2, d: number): Vec2 => [
+          p[0] + outward[0] * d,
+          p[1] + outward[1] * d,
+        ];
+        const stepOut = out(at(door.s), t / 2 + 0.6);
+        const ontoDeck = layout.rooms.some(
+          (r) =>
+            r.outdoor &&
+            r.points.length >= 3 &&
+            pointInPolygon(stepOut[0] / m, stepOut[1] / m, r.points),
+        );
+        if (!ontoDeck) {
+          porched = true;
+          // A short wall's porch spans it; a long one's, the door and a
+          // little either side.
+          const s0 = L <= 3.5 ? 0 : Math.max(0, door.s - door.half - 0.9);
+          const s1 = L <= 3.5 ? L : Math.min(L, door.s + door.half + 0.9);
+          const wa = out(at(s0), t / 2);
+          const wb = out(at(s1), t / 2);
+          const ob = out(wb, PORCH_DEPTH_M);
+          const oa = out(wa, PORCH_DEPTH_M);
+          porches.push({ corners: [wa, wb, ob, oa], eave: off + PORCH_EAVE_M });
+          const mid = out(at((s0 + s1) / 2), t / 2 + PORCH_DEPTH_M / 2);
+          walls.push({
+            x: mid[0],
+            z: mid[1],
+            y0: off - 0.5,
+            y1: off - 0.12,
+            length: s1 - s0,
+            depth: PORCH_DEPTH_M,
+            angle,
+            color: CONCRETE,
+          });
+          // A post at each open corner; none where a wall meets the
+          // porch's side (a garage standing forward of the door).
+          for (const [corner, wallEnd, along] of [
+            [oa, wa, 1],
+            [ob, wb, -1],
+          ] as const) {
+            const side: Vec2 = [
+              (corner[0] + wallEnd[0]) / 2,
+              (corner[1] + wallEnd[1]) / 2,
+            ];
+            const abutted = layout.walls.some((w) =>
+              w.points.some((p, k) => {
+                const q = w.points[k + 1];
+                return (
+                  !!q &&
+                  pointToSegmentDistance(
+                    side[0] / m,
+                    side[1] / m,
+                    p[0],
+                    p[1],
+                    q[0],
+                    q[1],
+                  ) *
+                    m <
+                    0.25
+                );
+              }),
+            );
+            if (abutted) continue;
+            const inset = POST_M / 2 + 0.05;
+            walls.push({
+              x: corner[0] + dx * along * inset - outward[0] * inset,
+              z: corner[1] + dz * along * inset - outward[1] * inset,
+              y0: off - 0.12,
+              y1: off + PORCH_EAVE_M,
+              length: POST_M,
+              depth: POST_M,
+              angle,
+              color: CEDAR,
+            });
+          }
+        }
+      }
+      const stoneTop = facesFront && !porched ? exterior.stoneTop : -Infinity;
       /** Solid wall over [s0, s1] from y0 up to `y1` (else the wall's
-       * top), cut where the top changes along it. */
+       * top), cut where the top changes along it; stone below the front's
+       * wainscot line. */
       const solid = (s0: number, s1: number, y0: number, y1?: number) => {
         for (const r of runs) {
           const p0 = Math.max(s0, r.s0);
           const p1 = Math.min(s1, r.s1);
           const hi = Math.min(y1 ?? r.top, r.top);
-          if (p1 - p0 > 0.001 && hi - y0 > 0.005)
-            walls.push(box(p0, p1, y0, hi));
+          if (p1 - p0 <= 0.001 || hi - y0 <= 0.005) continue;
+          const cut = Math.max(y0, Math.min(hi, stoneTop));
+          if (cut - y0 > 0.005)
+            walls.push({ ...box(p0, p1, y0, cut), stone: true });
+          if (hi - cut > 0.005) walls.push(box(p0, p1, cut, hi));
         }
       };
       const nx = -dz * (t / 2);
@@ -948,6 +1061,8 @@ function buildFloor(
     walls,
     wallColor: dark ? "#8a8580" : "#f4f1ec",
     sidingColor: dark ? SIDING_DARK : SIDING,
+    stoneColor: dark ? STONE_DARK : STONE,
+    porches,
     panes,
     slabs,
     items,
@@ -971,6 +1086,14 @@ export function buildScene(input: SceneInput): Scene3d {
       : { azimuth: 200, elevation: 40 };
   const clouds = input.sky?.clouds ?? 0;
   const day = daylight(pos.elevation);
+  // The street: the hillside's high side, else the plan's bottom.
+  const front: Vec2 = input.ground
+    ? (() => {
+        const [dx, dz] = planVector(input.ground.downhill_deg, northDeg);
+        return [-dx, -dz] as Vec2;
+      })()
+    : [0, 1];
+  const grade = input.ground?.uphill_m ?? 0;
   const floors = input.floors.map((f) =>
     buildFloor(
       f,
@@ -980,6 +1103,7 @@ export function buildScene(input: SceneInput): Scene3d {
       1 - 0.75 * day,
       floorAboveOf(f, input.floors),
       upperWallsOf(f, input.floors),
+      { front, stoneTop: grade + STONE_M - f.baseY },
     ),
   );
   let sun: Scene3d["sun"] = null;
@@ -1002,7 +1126,7 @@ export function buildScene(input: SceneInput): Scene3d {
       intensity: 0.55 + 0.7 * day,
     },
     terrain: input.ground ? terrain(input, input.ground, northDeg) : null,
-    roof: input.roof ? buildRoof(input, northDeg) : null,
+    roof: input.roof ? buildRoof(input, northDeg, floors) : null,
     background: dark
       ? day > 0
         ? "#1f2a33"
@@ -1112,7 +1236,14 @@ function fillRoofGaps(eave: Float32Array, nx: number, nz: number): void {
  * and eaves overhang the sides. Spots inside
  * the building that no room covers (a stairwell, a gap at a wall) take
  * their neighbours' eave. */
-function buildRoof(input: SceneInput, northDeg: number): Roof3d | null {
+function buildRoof(
+  input: SceneInput,
+  northDeg: number,
+  built: Floor3d[],
+): Roof3d | null {
+  const porches = built.flatMap((f) =>
+    f.porches.map((p) => ({ corners: p.corners, eave: f.baseY + p.eave })),
+  );
   const rooms = input.floors.flatMap((f) => {
     const m = metersPerUnit(f.layout.scale);
     return f.layout.rooms
@@ -1137,10 +1268,12 @@ function buildRoof(input: SceneInput, northDeg: number): Roof3d | null {
   if (!rooms.length) return null;
   const step = ROOF_STEP_M;
   const pad = EAVE_M + 2 * step;
-  const minX = Math.min(...rooms.map((r) => r.box[0])) - pad;
-  const minZ = Math.min(...rooms.map((r) => r.box[1])) - pad;
-  const maxX = Math.max(...rooms.map((r) => r.box[2])) + pad;
-  const maxZ = Math.max(...rooms.map((r) => r.box[3])) + pad;
+  const porchXs = porches.flatMap((p) => p.corners.map((c) => c[0]));
+  const porchZs = porches.flatMap((p) => p.corners.map((c) => c[1]));
+  const minX = Math.min(...rooms.map((r) => r.box[0]), ...porchXs) - pad;
+  const minZ = Math.min(...rooms.map((r) => r.box[1]), ...porchZs) - pad;
+  const maxX = Math.max(...rooms.map((r) => r.box[2]), ...porchXs) + pad;
+  const maxZ = Math.max(...rooms.map((r) => r.box[3]), ...porchZs) + pad;
   const nx = Math.ceil((maxX - minX) / step) + 1;
   const nz = Math.ceil((maxZ - minZ) / step) + 1;
   // A plan drawn at a silly scale: no roof rather than a frozen tab.
@@ -1250,6 +1383,42 @@ function buildRoof(input: SceneInput, northDeg: number): Roof3d | null {
         }
       }
     }
+  }
+  // Porch roofs: hipped down from the wall to the eave on the open sides.
+  for (const p of porches) {
+    const [wa, wb, , oa] = p.corners;
+    const width = Math.hypot(wb[0] - wa[0], wb[1] - wa[1]);
+    const depth = Math.hypot(oa[0] - wa[0], oa[1] - wa[1]);
+    if (width < 0.1 || depth < 0.1) continue;
+    const ux = (wb[0] - wa[0]) / width;
+    const uz = (wb[1] - wa[1]) / width;
+    const ox = (oa[0] - wa[0]) / depth;
+    const oz = (oa[1] - wa[1]) / depth;
+    const xs = p.corners.map((c) => c[0]);
+    const zs = p.corners.map((c) => c[1]);
+    const reach = PORCH_OVERHANG_M + step;
+    const i0 = Math.max(0, Math.floor((Math.min(...xs) - reach - minX) / step));
+    const i1 = Math.min(
+      nx - 1,
+      Math.ceil((Math.max(...xs) + reach - minX) / step),
+    );
+    const j0 = Math.max(0, Math.floor((Math.min(...zs) - reach - minZ) / step));
+    const j1 = Math.min(
+      nz - 1,
+      Math.ceil((Math.max(...zs) + reach - minZ) / step),
+    );
+    for (let j = j0; j <= j1; j++)
+      for (let i = i0; i <= i1; i++) {
+        const rx = minX + i * step - wa[0];
+        const rz = minZ + j * step - wa[1];
+        const along = rx * ux + rz * uz;
+        const out = rx * ox + rz * oz;
+        // Behind the wall's face is the house.
+        if (out < 0) continue;
+        const free = Math.min(along, width - along, depth - out);
+        if (free < -PORCH_OVERHANG_M) continue;
+        raise(j * nx + i, p.eave + PORCH_PITCH * free, p.eave);
+      }
   }
   // Gable ends reach a step further along the ridge, over the wall.
   const grown = heights.slice();

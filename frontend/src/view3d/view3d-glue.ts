@@ -73,7 +73,10 @@ function wallGeometry(
   b: Box3d,
   paint: THREE.Color,
   siding: THREE.Color,
+  stone: THREE.Color,
 ): THREE.BufferGeometry {
+  const own = b.color ? new THREE.Color(b.color) : null;
+  const outdoor = b.stone ? stone : siding;
   const g = boxGeometry(b);
   const count = g.getAttribute("position").count;
   const colors = new Float32Array(count * 3);
@@ -82,9 +85,10 @@ function wallGeometry(
   const sided = b.outside === 1 ? 16 : b.outside === -1 ? 20 : -1;
   for (let v = 0; v < count; v++) {
     const c =
-      sided >= 0 && ((v >= sided && v < sided + 4) || (v >= 8 && v < 12))
-        ? siding
-        : paint;
+      own ??
+      (sided >= 0 && ((v >= sided && v < sided + 4) || (v >= 8 && v < 12))
+        ? outdoor
+        : paint);
     colors[v * 3] = c.r;
     colors[v * 3 + 1] = c.g;
     colors[v * 3 + 2] = c.b;
@@ -494,7 +498,8 @@ function fillWalls(
   if (kept.length) {
     const paint = new THREE.Color(spec.wallColor);
     const siding = new THREE.Color(spec.sidingColor);
-    const parts = kept.map((b) => wallGeometry(b, paint, siding));
+    const stone = new THREE.Color(spec.stoneColor);
+    const parts = kept.map((b) => wallGeometry(b, paint, siding, stone));
     const merged = mergeGeometries(parts);
     for (const p of parts) p.dispose();
     if (merged) {

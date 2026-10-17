@@ -26,6 +26,19 @@ export interface Box3d {
   /** Which long face looks outdoors (and is sided): 1 the box's local +Z
    * face, -1 its local -Z face; absent where rooms lie on both sides. */
   outside?: 1 | -1;
+  /** The outdoor face is stone rather than siding (a wainscot). */
+  stone?: boolean;
+  /** One colour all over instead: a porch post, a stoop. */
+  color?: string;
+}
+
+/** A porch roof against an outside wall: `corners` along the wall's
+ * outdoor face (a, b), then out from b and from a; hipped down from the
+ * wall to its eave on the three open sides. */
+export interface Porch3d {
+  corners: [Vec2, Vec2, Vec2, Vec2];
+  /** Metres above the floor's level. */
+  eave: number;
 }
 
 export interface Pane3d {
@@ -83,8 +96,11 @@ export interface Floor3d {
   wallHeight: number;
   walls: Box3d[];
   wallColor: string;
-  /** Outdoor faces of the outside walls. */
+  /** Outdoor faces of the outside walls, and their stone wainscot. */
   sidingColor: string;
+  stoneColor: string;
+  /** Porch roofs over the front doors (drawn with the building's roof). */
+  porches: Porch3d[];
   panes: Pane3d[];
   slabs: Slab3d[];
   items: Item3d[];
