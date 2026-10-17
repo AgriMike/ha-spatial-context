@@ -471,6 +471,7 @@ function buildFloor(
   showLights: boolean,
   nightGlow: number,
   floorAbove: (x: number, z: number) => number | null,
+  upperWalls: { a: Vec2; b: Vec2; y: number }[],
 ): Floor3d {
   const { layout, wallHeight: H } = input;
   const m = metersPerUnit(layout.scale);
@@ -524,7 +525,38 @@ function buildFloor(
       const near = Math.min(...covered);
       if (near > top && near <= top + 0.8) top = near;
     }
+    // Where a floor above has a wall on the same line, that wall carries
+    // on from its level: stop there rather than stand beside it.
+    top = Math.min(top, upperWallTop(a, b, top));
     return { base, top: Math.max(top, base + 0.3), level };
+  };
+  /** The level of the lowest wall of a floor above that runs along this
+   * one (parallel, within 35 cm, over most of its length), else `top`. */
+  const upperWallTop = (a: Vec2, b: Vec2, top: number): number => {
+    const ax = a[0] * m;
+    const az = a[1] * m;
+    const L = distance(a[0], a[1], b[0], b[1]) * m;
+    if (L < 0.05) return top;
+    const ux = (b[0] * m - ax) / L;
+    const uz = (b[1] * m - az) / L;
+    let best = top;
+    for (const w of upperWalls) {
+      if (w.y >= best) continue;
+      const wl = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
+      if (wl < 0.05) continue;
+      const vx = (w.b[0] - w.a[0]) / wl;
+      const vz = (w.b[1] - w.a[1]) / wl;
+      if (Math.abs(ux * vz - uz * vx) > 0.09) continue;
+      const mx = (w.a[0] + w.b[0]) / 2 - ax;
+      const mz = (w.a[1] + w.b[1]) / 2 - az;
+      if (Math.abs(mx * uz - mz * ux) > 0.35) continue;
+      const s1 = (w.a[0] - ax) * ux + (w.a[1] - az) * uz;
+      const s2 = (w.b[0] - ax) * ux + (w.b[1] - az) * uz;
+      const overlap =
+        Math.min(L, Math.max(s1, s2)) - Math.max(0, Math.min(s1, s2));
+      if (overlap > 0.5 * L) best = w.y;
+    }
+    return best;
   };
   const offsetAt = (x: number, y: number): number =>
     offsetRooms.find((r) => pointInPolygon(x, y, r.points))?.floor_offset_m ??
@@ -839,6 +871,7 @@ export function buildScene(input: SceneInput): Scene3d {
       input.showLights,
       1 - 0.75 * day,
       floorAboveOf(f, input.floors),
+      upperWallsOf(f, input.floors),
     ),
   );
   let sun: Scene3d["sun"] = null;
@@ -870,6 +903,26 @@ export function buildScene(input: SceneInput): Scene3d {
         : "#2b3140",
     dark,
   };
+}
+
+/** For one floor: the walls of floors above it, as segments on the floor
+ * plane (metres) with their level relative to it. */
+function upperWallsOf(
+  floor: FloorInput,
+  floors: FloorInput[],
+): { a: Vec2; b: Vec2; y: number }[] {
+  return floors
+    .filter((f) => f.baseY > floor.baseY + 0.5)
+    .flatMap((f) => {
+      const m = metersPerUnit(f.layout.scale);
+      return f.layout.walls.flatMap((w) =>
+        w.points.slice(1).map((p, i) => ({
+          a: [w.points[i]![0] * m, w.points[i]![1] * m] as Vec2,
+          b: [p[0] * m, p[1] * m] as Vec2,
+          y: f.baseY - floor.baseY,
+        })),
+      );
+    });
 }
 
 /** For one floor: the height (metres above its level) of the lowest floor
