@@ -77,10 +77,14 @@ function wallGeometry(
   const g = boxGeometry(b);
   const count = g.getAttribute("position").count;
   const colors = new Float32Array(count * 3);
-  // BoxGeometry's faces come +X, -X, +Y, -Y, +Z, -Z, four corners each.
+  // BoxGeometry's faces come +X, -X, +Y, -Y, +Z, -Z, four corners each;
+  // an outside wall's top is sided too, under a roof's gable.
   const sided = b.outside === 1 ? 16 : b.outside === -1 ? 20 : -1;
   for (let v = 0; v < count; v++) {
-    const c = sided >= 0 && v >= sided && v < sided + 4 ? siding : paint;
+    const c =
+      sided >= 0 && ((v >= sided && v < sided + 4) || (v >= 8 && v < 12))
+        ? siding
+        : paint;
     colors[v * 3] = c.r;
     colors[v * 3 + 1] = c.g;
     colors[v * 3 + 2] = c.b;

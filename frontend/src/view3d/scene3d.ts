@@ -77,11 +77,9 @@ const SHINGLE_DARK = "#2d3036";
 const ROOF_PITCH = 0.55;
 const EAVE_M = 0.35;
 const ROOF_STEP_M = 0.1;
-/** How much steeper than the roof a gable end rises from its wall, and
- * the widths up to which a wing ends in gables and from which in hips. */
-const GABLE_STEEPNESS = 6;
-const GABLE_MAX_M = 9.5;
-const HIP_MIN_M = 11;
+/** Wings up to this wide end in gables; wider blocks are hipped (a gable
+ * that wide would tower). */
+const GABLE_MAX_M = 10;
 /** Walls this thin (or thinner) are railings, drawn this high; walls
  * shorter than STUB_M in all are left out. */
 const RAIL_THICKNESS_M = 0.06;
@@ -1020,7 +1018,7 @@ export function buildScene(input: SceneInput): Scene3d {
  * across the part of the building at least that high: a garage's roof runs
  * up into the house's and an upper storey's stands out of both. Ridges run
  * toward the street (across a hillside, else up the plan): a narrow
- * wing's ends facing front and back are gables, a wide block's are hipped,
+ * wing's ends facing front and back are gables, a wide block is hipped,
  * and eaves overhang the sides. Spots inside
  * the building that no room covers (a stairwell, a gap at a wall) take
  * their neighbours' eave. */
@@ -1142,9 +1140,7 @@ function buildRoof(input: SceneInput, northDeg: number): Roof3d | null {
     const inside = (line: number, k: number) =>
       eave[at(line, k)]! >= level - 0.005;
     // Steps (chessboard) to the nearest point outside this level's part:
-    // near the ends of a ridge the roof rises steeply from there, so a
-    // gable stands over its wall and a jog in the outline doesn't step
-    // the ridge.
+    // a hip rises from there.
     const cheb = new Float32Array(N);
     for (let k = 0; k < N; k++) cheb[k] = eave[k]! >= level - 0.005 ? 1e9 : 0;
     for (let j = 0; j < nz; j++)
@@ -1183,17 +1179,7 @@ function buildRoof(input: SceneInput, northDeg: number): Roof3d | null {
         const k0 = k;
         while (k < len && inside(line, k)) k++;
         const k1 = k - 1;
-        // A narrow wing ends in gables, a wide block in hips (a gable that
-        // wide would tower), blending between.
-        const width = (k1 - k0 + 1) * step;
-        const steep =
-          width <= GABLE_MAX_M
-            ? GABLE_STEEPNESS
-            : width >= HIP_MIN_M
-              ? 1
-              : GABLE_STEEPNESS -
-                ((GABLE_STEEPNESS - 1) * (width - GABLE_MAX_M)) /
-                  (HIP_MIN_M - GABLE_MAX_M);
+        const hipped = (k1 - k0 + 1) * step > GABLE_MAX_M;
         for (
           let q = Math.max(0, k0 - over);
           q <= Math.min(len - 1, k1 + over);
@@ -1201,8 +1187,8 @@ function buildRoof(input: SceneInput, northDeg: number): Roof3d | null {
         ) {
           const k = at(line, q);
           let run = Math.min(q - (k0 - 0.5), k1 + 0.5 - q) * step;
-          if (q >= k0 && q <= k1)
-            run = Math.min(run, steep * (cheb[k]! - 0.5) * step);
+          if (hipped && q >= k0 && q <= k1)
+            run = Math.min(run, (cheb[k]! - 0.5) * step);
           raise(k, level + ROOF_PITCH * run, level);
         }
       }
