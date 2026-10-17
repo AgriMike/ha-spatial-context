@@ -2510,157 +2510,39 @@ const T: Record<string, Template> = {
   // Basic shapes: the same soft corners and line weight as the items.
   shapeRect: (w, d, o) => [
     o["corners"]
-      ? shapePoly(
-          w,
-          d,
-          [
-            [0, 0],
-            [1, 0],
-            [1, 1],
-            [0, 1],
-          ],
-          o,
-        )
+      ? shapePoly(w, d, shapeCornerFractions("shapeRect", o), o)
       : rect(0, 0, w, d),
   ],
   shapeEllipse: (w, d) => [ell(w / 2, d / 2, w / 2, d / 2)],
   shapeTriangle: (w, d, o) => [
-    shapePoly(
-      w,
-      d,
-      [
-        [0.5, 0],
-        [1, 1],
-        [0, 1],
-      ],
-      o,
-    ),
+    shapePoly(w, d, shapeCornerFractions("shapeTriangle", o), o),
   ],
   shapeRightTriangle: (w, d, o) => [
-    shapePoly(
-      w,
-      d,
-      [
-        [0, 0],
-        [1, 1],
-        [0, 1],
-      ],
-      o,
-    ),
+    shapePoly(w, d, shapeCornerFractions("shapeRightTriangle", o), o),
   ],
   shapeDiamond: (w, d, o) => [
-    shapePoly(
-      w,
-      d,
-      [
-        [0.5, 0],
-        [1, 0.5],
-        [0.5, 1],
-        [0, 0.5],
-      ],
-      o,
-    ),
+    shapePoly(w, d, shapeCornerFractions("shapeDiamond", o), o),
   ],
-  shapePolygon: (w, d, o) => [shapePoly(w, d, ring(num(o, "sides", 6)), o)],
-  shapeStar: (w, d, o) => {
-    const n = num(o, "points", 5);
-    const outer = ring(n);
-    const inner = ring(n, 0.45, Math.PI / n);
-    return [
-      shapePoly(
-        w,
-        d,
-        outer.flatMap((p, i): Pt[] => [p, inner[i]!]),
-        o,
-      ),
-    ];
-  },
-  shapeL: (w, d, o) => [
-    shapePoly(
-      w,
-      d,
-      [
-        [0, 0],
-        [0.45, 0],
-        [0.45, 0.55],
-        [1, 0.55],
-        [1, 1],
-        [0, 1],
-      ],
-      o,
-    ),
+  shapePolygon: (w, d, o) => [
+    shapePoly(w, d, shapeCornerFractions("shapePolygon", o), o),
   ],
-  shapeU: (w, d, o) => [
-    shapePoly(
-      w,
-      d,
-      [
-        [0, 0],
-        [0.3, 0],
-        [0.3, 0.6],
-        [0.7, 0.6],
-        [0.7, 0],
-        [1, 0],
-        [1, 1],
-        [0, 1],
-      ],
-      o,
-    ),
+  shapeStar: (w, d, o) => [
+    shapePoly(w, d, shapeCornerFractions("shapeStar", o), o),
   ],
+  shapeL: (w, d, o) => [shapePoly(w, d, shapeCornerFractions("shapeL", o), o)],
+  shapeU: (w, d, o) => [shapePoly(w, d, shapeCornerFractions("shapeU", o), o)],
   shapePlus: (w, d, o) => [
-    shapePoly(
-      w,
-      d,
-      [
-        [0.35, 0],
-        [0.65, 0],
-        [0.65, 0.35],
-        [1, 0.35],
-        [1, 0.65],
-        [0.65, 0.65],
-        [0.65, 1],
-        [0.35, 1],
-        [0.35, 0.65],
-        [0, 0.65],
-        [0, 0.35],
-        [0.35, 0.35],
-      ],
-      o,
-    ),
+    shapePoly(w, d, shapeCornerFractions("shapePlus", o), o),
   ],
   shapeArrow: (w, d, o) => [
-    shapePoly(
-      w,
-      d,
-      [
-        [0, 0.32],
-        [0.68, 0.32],
-        [0.68, 0],
-        [1, 0.5],
-        [0.68, 1],
-        [0.68, 0.68],
-        [0, 0.68],
-      ],
-      o,
-    ),
+    shapePoly(w, d, shapeCornerFractions("shapeArrow", o), o),
   ],
   shapeSemicircle: (w, d) => [path(`M0,${d} A${w / 2},${d} 0 0 1 ${w},${d} Z`)],
   shapeQuarter: (w, d) => [path(`M0,0 A${w},${d} 0 0 1 ${w},${d} L0,${d} Z`)],
   shapeLine: (w, d) => [line(0, d / 2, w, d / 2)],
   shapeDashedLine: (w, d) => [line(0, d / 2, w, d / 2, true)],
   shapeFreeform: (w, d, o) => [
-    shapePoly(
-      w,
-      d,
-      [
-        [0.1, 0.2],
-        [0.55, 0],
-        [1, 0.35],
-        [0.8, 1],
-        [0.2, 0.85],
-      ],
-      o,
-    ),
+    shapePoly(w, d, shapeCornerFractions("shapeFreeform", o), o),
   ],
   custom: (w, d, o) => [
     {
@@ -2922,30 +2804,7 @@ export function shapeCornerCount(
   points?: [number, number][] | null,
 ): number {
   if (points && points.length >= 2) return points.length;
-  switch (template) {
-    case "shapeRect":
-    case "shapeDiamond":
-      return 4;
-    case "shapeTriangle":
-    case "shapeRightTriangle":
-      return 3;
-    case "shapePolygon":
-      return num(opts, "sides", 6);
-    case "shapeStar":
-      return num(opts, "points", 5) * 2;
-    case "shapeL":
-      return 6;
-    case "shapeU":
-      return 8;
-    case "shapePlus":
-      return 12;
-    case "shapeArrow":
-      return 7;
-    case "shapeFreeform":
-      return 5;
-    default:
-      return 0;
-  }
+  return shapeCornerFractions(template, opts).length;
 }
 
 /** The usual soft rounding as a percentage, for a corner left unset. */
@@ -2960,6 +2819,94 @@ const ring = (n: number, k = 1, turn = 0): Pt[] =>
     const a = -Math.PI / 2 + turn + (i / n) * Math.PI * 2;
     return [0.5 + Math.cos(a) * 0.5 * k, 0.5 + Math.sin(a) * 0.5 * k];
   });
+
+/** The corners of the fixed-outline shapes, as 0–1 fractions of their
+ * width and depth, in drawing order — corner 1 is the first. */
+const SHAPE_FRACS: Record<string, Pt[]> = {
+  shapeRect: [
+    [0, 0],
+    [1, 0],
+    [1, 1],
+    [0, 1],
+  ],
+  shapeTriangle: [
+    [0.5, 0],
+    [1, 1],
+    [0, 1],
+  ],
+  shapeRightTriangle: [
+    [0, 0],
+    [1, 1],
+    [0, 1],
+  ],
+  shapeDiamond: [
+    [0.5, 0],
+    [1, 0.5],
+    [0.5, 1],
+    [0, 0.5],
+  ],
+  shapeL: [
+    [0, 0],
+    [0.45, 0],
+    [0.45, 0.55],
+    [1, 0.55],
+    [1, 1],
+    [0, 1],
+  ],
+  shapeU: [
+    [0, 0],
+    [0.3, 0],
+    [0.3, 0.6],
+    [0.7, 0.6],
+    [0.7, 0],
+    [1, 0],
+    [1, 1],
+    [0, 1],
+  ],
+  shapePlus: [
+    [0.35, 0],
+    [0.65, 0],
+    [0.65, 0.35],
+    [1, 0.35],
+    [1, 0.65],
+    [0.65, 0.65],
+    [0.65, 1],
+    [0.35, 1],
+    [0.35, 0.65],
+    [0, 0.65],
+    [0, 0.35],
+    [0.35, 0.35],
+  ],
+  shapeArrow: [
+    [0, 0.32],
+    [0.68, 0.32],
+    [0.68, 0],
+    [1, 0.5],
+    [0.68, 1],
+    [0.68, 0.68],
+    [0, 0.68],
+  ],
+  shapeFreeform: [
+    [0.1, 0.2],
+    [0.55, 0],
+    [1, 0.35],
+    [0.8, 1],
+    [0.2, 0.85],
+  ],
+};
+
+/** A shape's corners as 0–1 fractions (empty for one without corners) —
+ * what it's drawn from, and where its corner numbers go. */
+export function shapeCornerFractions(template: string, opts: Opts): Pt[] {
+  if (template === "shapePolygon") return ring(num(opts, "sides", 6));
+  if (template === "shapeStar") {
+    const n = num(opts, "points", 5);
+    const outer = ring(n);
+    const inner = ring(n, 0.45, Math.PI / n);
+    return outer.flatMap((p, i): Pt[] => [p, inner[i]!]);
+  }
+  return SHAPE_FRACS[template] ?? [];
+}
 
 /** A free-form outline drawn point by point (FurnitureItem.points, 0–1
  * fractions of its size), with the usual soft corners. */

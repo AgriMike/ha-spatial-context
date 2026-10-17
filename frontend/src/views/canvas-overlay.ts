@@ -1395,7 +1395,7 @@ export class CanvasOverlay extends LitElement {
               this._fieldRow(
                 "mdi:vector-square",
                 names
-                  ? localize(`furniture.corner.${names[i]}`, { pct: v })
+                  ? `${i + 1} · ${localize(`furniture.corner.${names[i]}`, { pct: v })}`
                   : localize("furniture.cornerN", { n: i + 1, pct: v }),
                 slider(v, (next) =>
                   change(values.map((old, j) => (j === i ? next : old))),

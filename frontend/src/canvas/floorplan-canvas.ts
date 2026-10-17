@@ -68,6 +68,7 @@ import {
   freeformPrims,
   FURNITURE_STYLES,
   renderPrims,
+  shapeCornerFractions,
 } from "./furniture-draw";
 import type { ItemState, RoomLight } from "./live-state";
 import {
@@ -575,6 +576,18 @@ export class FloorplanCanvas extends LitElement {
       }
       .furniture-handle.corner {
         cursor: nwse-resize;
+      }
+      .corner-badge {
+        pointer-events: none;
+      }
+      .corner-badge circle {
+        fill: var(--sc-accent);
+        opacity: 0.9;
+      }
+      .corner-badge text {
+        fill: white;
+        font-weight: 700;
+        text-anchor: middle;
       }
       .furniture-handle.corner-nesw {
         cursor: nesw-resize;
@@ -3660,6 +3673,44 @@ export class FloorplanCanvas extends LitElement {
     `;
   }
 
+  /** The selected drawn shape's corners, numbered as in its Corners
+   * sliders, tucked just inside each corner. */
+  private _renderCornerBadges() {
+    if (this.readOnly || !this.showFurniture) return nothing;
+    const raw = this.furniture.find((f) => f.id === this.selectedFurnitureId);
+    if (!raw || !isShapeKind(raw.kind)) return nothing;
+    const item = this._effectiveFurniture(raw);
+    const entry = catalogItem(item.kind);
+    const fracs =
+      item.points && item.points.length >= 2
+        ? item.points
+        : entry
+          ? shapeCornerFractions(entry.draw, entry.opts)
+          : [];
+    if (fracs.length === 0 || fracs.length > 8) return nothing;
+    const flip = !!item.mirrored !== !!entry?.flip;
+    const k = this.unitsPerCm;
+    const inset = this._pxToUnits(15) / k;
+    const r = this._pxToUnits(8);
+    return svg`${fracs.map(([fx, fy], i) => {
+      let lx = fx * item.width_cm - item.width_cm / 2;
+      const ly = fy * item.depth_cm - item.depth_cm / 2;
+      if (flip) lx = -lx;
+      // Toward the centre, so the badge sits clear of the handles.
+      const len = Math.hypot(lx, ly) || 1;
+      const step = Math.min(inset, len * 0.6);
+      const [x, y] = this._furnitureToImage(
+        item,
+        lx - (lx / len) * step,
+        ly - (ly / len) * step,
+      );
+      return svg`<g class="corner-badge" transform="translate(${x} ${y})">
+        <circle r=${r}></circle>
+        <text dy="0.35em" style="font-size:${this._pxToUnits(10)}px">${i + 1}</text>
+      </g>`;
+    })}`;
+  }
+
   /** PowerPoint-style alignment guides while an item is dragged. */
   private _renderFurnitureGuides() {
     const { x, y } = this._furnitureGuides;
@@ -4289,6 +4340,7 @@ export class FloorplanCanvas extends LitElement {
           ${this.openings.map((opening) => this._renderOpening(opening))}
           ${this._renderGarageDoors()}
           ${this._renderFurnitureGuides()} ${this._renderFurnitureHandles()}
+          ${this._renderCornerBadges()}
           ${this.meshLinks.map((link) => this._renderMeshLink(link))}
           ${this.meshStubs.map((stub) => this._renderMeshStubLine(stub))}
           ${this._renderMeshStubMarkers()}
