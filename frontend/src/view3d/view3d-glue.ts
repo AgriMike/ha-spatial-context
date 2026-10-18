@@ -84,14 +84,16 @@ function wallGeometry(
   const count = g.getAttribute("position").count;
   const colors = new Float32Array(count * 3);
   // BoxGeometry's faces come +X, -X, +Y, -Y, +Z, -Z, four corners each.
-  // An outside wall's outdoor face is sided; its other long face, ends,
-  // top and bottom are painted.
+  // An outside wall's outdoor face and ends are sided; its other long
+  // face, top and bottom are painted.
   const indoor = b.outside === 1 ? 20 : b.outside === -1 ? 16 : -1;
   for (let v = 0; v < count; v++) {
     // Its top (and bottom) is the same painted cap on every wall, so
-    // tops read as one clean cut where walls meet; its ends are painted
-    // too (a jamb, or a wall stopping above a half wall indoors).
-    const cap = v < 16;
+    // tops read as one clean cut where walls meet. An inside wall's ends
+    // are painted (a jamb, a wall stopping above a half wall); an outside
+    // wall's are sided: where one shows past a corner it's the outside of
+    // the house (its door jambs are cased over).
+    const cap = v >= 8 && v < 16;
     const c =
       own ??
       (!cap && indoor >= 0 && !(v >= indoor && v < indoor + 4)
@@ -689,8 +691,22 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
     return t.uphill + (t.downhill - t.uphill) * fall - 0.06;
   };
   const margin = 6;
-  const xs = gridLines(box.min.x - margin, box.max.x + margin, 0.2, 250);
-  const zs = gridLines(box.min.z - margin, box.max.z + margin, 0.2, 250);
+  // Grid lines along the cut-out rooms' outlines too, so the ground runs
+  // right up to them (a cell is cut only when it's inside one).
+  const withHoles = (lines: number[], axis: 0 | 1) => {
+    const all = [...lines];
+    for (const poly of t.holes) for (const p of poly) all.push(p[axis]);
+    all.sort((a, b) => a - b);
+    return all.filter((v, i) => i === 0 || v - all[i - 1]! > 0.005);
+  };
+  const xs = withHoles(
+    gridLines(box.min.x - margin, box.max.x + margin, 0.2, 250),
+    0,
+  );
+  const zs = withHoles(
+    gridLines(box.min.z - margin, box.max.z + margin, 0.2, 250),
+    1,
+  );
   const nx = xs.length;
   const positions = new Float32Array(nx * zs.length * 3);
   zs.forEach((z, j) =>
@@ -714,14 +730,7 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
       const x1 = xs[i + 1]!;
       const z0 = zs[j]!;
       const z1 = zs[j + 1]!;
-      if (
-        inHole((x0 + x1) / 2, (z0 + z1) / 2) ||
-        inHole(x0, z0) ||
-        inHole(x1, z0) ||
-        inHole(x0, z1) ||
-        inHole(x1, z1)
-      )
-        continue;
+      if (inHole((x0 + x1) / 2, (z0 + z1) / 2)) continue;
       const a = j * nx + i;
       const b = a + 1;
       const c = a + nx;

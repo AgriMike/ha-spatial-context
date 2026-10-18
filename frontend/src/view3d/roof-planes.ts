@@ -120,6 +120,99 @@ export function sectionHeightAt(
   return surface(planes(s), a, c);
 }
 
+/** Where an eave or a gable end of one section runs along another's
+ * gable or hipped end (the same wall): there it has no overhang, so it
+ * doesn't stand out past that wall (or into the rooms beyond). Each as the strip to cut away (world x, z, a convex
+ * quad) and the trim caps closing the eave's fascia where it stops. */
+export function eaveCuts(
+  sections: RoofSection[],
+): { section: number; strip: Vec2[]; caps: RoofFace3d[] }[] {
+  const out: { section: number; strip: Vec2[]; caps: RoofFace3d[] }[] = [];
+  const toWorld = (s: RoofSection, a: number, c: number): Vec2 => [
+    s.origin[0] + s.along[0] * a + s.across[0] * c,
+    s.origin[1] + s.along[1] * a + s.across[1] * c,
+  ];
+  const toLocal = (s: RoofSection, [x, z]: Vec2): Vec2 => {
+    const rx = x - s.origin[0];
+    const rz = z - s.origin[1];
+    return [
+      rx * s.along[0] + rz * s.along[1],
+      rx * s.across[0] + rz * s.across[1],
+    ];
+  };
+  sections.forEach((s, i) => {
+    const o = s.overhang;
+    if (o < 0.01) return;
+    const ps = planes(s);
+    // Its wall lines that carry an overhang: the eaves (c fixed) and any
+    // trimmed end (a fixed), each with the way out.
+    const lines: { axis: 0 | 1; v: number; dir: 1 | -1 }[] = [
+      ...(s.shed ? [] : [{ axis: 1 as const, v: s.c0, dir: -1 as const }]),
+      { axis: 1, v: s.c1, dir: 1 },
+      ...(s.ends[0] !== "open"
+        ? [{ axis: 0 as const, v: s.a0, dir: -1 as const }]
+        : []),
+      ...(s.ends[1] !== "open"
+        ? [{ axis: 0 as const, v: s.a1, dir: 1 as const }]
+        : []),
+    ];
+    // A local point from (along the line, across it).
+    const pt = (axis: 0 | 1, along: number, across: number): Vec2 =>
+      axis === 1 ? [along, across] : [across, along];
+    for (const { axis, v, dir } of lines)
+      sections.forEach((b, j) => {
+        if (i === j) return;
+        ([0, 1] as const).forEach((end) => {
+          if (b.ends[end] === "open") return;
+          const ab = end === 0 ? b.a0 : b.a1;
+          const p = toLocal(s, toWorld(b, ab, b.c0));
+          const q = toLocal(s, toWorld(b, ab, b.c1));
+          const k = axis === 1 ? 1 : 0;
+          const u = 1 - k;
+          // That gable stands on this wall line.
+          if (Math.abs(p[k]! - v) > 0.03 || Math.abs(q[k]! - v) > 0.03) return;
+          const [min, max] =
+            axis === 1 ? [s.a0 - o, s.a1 + o] : [s.c0 - o, s.c1 + o];
+          const lo = Math.max(Math.min(p[u]!, q[u]!), min);
+          const hi = Math.min(Math.max(p[u]!, q[u]!), max);
+          if (hi - lo < 0.05) return;
+          const far = v + dir * (o + 0.05);
+          const strip = [
+            pt(axis, lo, v),
+            pt(axis, hi, v),
+            pt(axis, hi, far),
+            pt(axis, lo, far),
+          ].map(([a, c]) => toWorld(s, a, c));
+          // The trim closed off where it carries on past the strip.
+          const caps: RoofFace3d[] = [];
+          const edge = v + dir * o;
+          for (const at of [lo, hi]) {
+            if (at <= min + 0.01 || at >= max - 0.01) continue;
+            const w = (across: number, y: number): [number, number, number] => {
+              const [a, c] = pt(axis, at, across);
+              const [x, z] = toWorld(s, a, c);
+              return [x, y, z];
+            };
+            const [ea, ec] = pt(axis, at, edge);
+            const [wa, wc] = pt(axis, at, v);
+            const h = surface(ps, ea, ec);
+            caps.push({
+              points: [
+                w(edge, h),
+                w(edge, h - FASCIA_M),
+                w(v, h - FASCIA_M),
+                w(v, Math.max(h - FASCIA_M, surface(ps, wa, wc))),
+              ],
+              kind: "trim",
+            });
+          }
+          out.push({ section: i, strip, caps });
+        });
+      });
+  });
+  return out;
+}
+
 /** The faces of one section, in world space. */
 export function sectionFaces(s: RoofSection): RoofFace3d[] {
   const ps = planes(s);
@@ -201,6 +294,25 @@ export function sectionFaces(s: RoofSection): RoofFace3d[] {
         ],
         kind: "trim",
       });
+      // Its ends capped: the fascia and soffit closed off up to the roof,
+      // so a rake's foot (or an eave's end) never shows hollow.
+      for (const [e, ei, h] of [
+        [p, pi, hp],
+        [q, qi, hq],
+      ] as const)
+        faces.push({
+          points: [
+            world(e[0], e[1], h),
+            world(e[0], e[1], h - FASCIA_M),
+            world(ei[0], ei[1], h - FASCIA_M),
+            world(
+              ei[0],
+              ei[1],
+              Math.max(h - FASCIA_M, heightOf(plane, ei[0], ei[1])),
+            ),
+          ],
+          kind: "trim",
+        });
     }
   });
   // Gable ends: sided from the roof down to the base, on the wall line.
@@ -229,6 +341,30 @@ export function sectionFaces(s: RoofSection): RoofFace3d[] {
       ],
       kind: s.gable,
     });
+    // A lean-to's open side: a beam under its siding, from the wall out
+    // to the post, trimmed like the fascia.
+    if (s.shed) {
+      const out = end === 0 ? -1 : 1;
+      const beam = (aa: number): Vec3[] => [
+        world(aa, s.c0, s.base),
+        world(aa, s.c1, s.base),
+        world(aa, s.c1, s.base - FASCIA_M),
+        world(aa, s.c0, s.base - FASCIA_M),
+      ];
+      const outer = a + out * 0.005;
+      const inner = a - out * (GABLE_OUT_M + 0.1);
+      faces.push({ points: beam(outer), kind: "trim" });
+      faces.push({ points: beam(inner), kind: "trim" });
+      faces.push({
+        points: [
+          world(outer, s.c0, s.base - FASCIA_M),
+          world(outer, s.c1, s.base - FASCIA_M),
+          world(inner, s.c1, s.base - FASCIA_M),
+          world(inner, s.c0, s.base - FASCIA_M),
+        ],
+        kind: "trim",
+      });
+    }
   });
   return faces;
 }

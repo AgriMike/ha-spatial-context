@@ -16,6 +16,7 @@ import type {
   Scale,
 } from "../types";
 import {
+  eaveCuts,
   partSection,
   ROOF_HEEL_M,
   porchSection,
@@ -30,6 +31,7 @@ import type {
   Pane3d,
   Porch3d,
   Roof3d,
+  RoofFace3d,
   Scene3d,
   Slab3d,
   Terrain3d,
@@ -751,29 +753,40 @@ function buildFloor(
     t: number,
     base: number,
     top: number,
-  ): { s0: number; s1: number; top: number }[] => {
+  ): { s0: number; s1: number; top: number; out?: 1 | -1 }[] => {
     const L = distance(a[0], a[1], b[0], b[1]) * m;
     const ux = ((b[0] - a[0]) * m) / L;
     const uz = ((b[1] - a[1]) * m) / L;
     const reach = t / 2 + 0.2;
     const n = Math.max(1, Math.round(L / 0.1));
-    const runs: { s0: number; s1: number; top: number }[] = [];
+    const runs: { s0: number; s1: number; top: number; out?: 1 | -1 }[] = [];
+    // Which side is out of doors here (a wall indoors along most of its
+    // length can run on out past the house's roof).
+    const indoorAt = (x: number, z: number) =>
+      layout.rooms.some(
+        (r) =>
+          !r.outdoor &&
+          r.points.length >= 3 &&
+          pointInPolygon(x / m, z / m, r.points),
+      ) || sheltered(x, z);
     for (let k = 0; k < n; k++) {
       const s = ((k + 0.5) * L) / n;
       const x = a[0] * m + ux * s;
       const z = a[1] * m + uz * s;
+      const left = indoorAt(x - uz * reach, z + ux * reach);
+      const right = indoorAt(x + uz * reach, z - ux * reach);
+      const out: 1 | -1 | undefined =
+        left && !right ? -1 : right && !left ? 1 : undefined;
       const covered = [
         floorAbove(x - uz * reach, z + ux * reach),
         floorAbove(x + uz * reach, z - ux * reach),
       ].filter((u): u is number => u !== null);
       let v = top;
-      if (covered.length) {
-        const c = Math.min(...covered);
-        // Under the floor's slab it stops a hair below its top, so its cap
-        // never fights the floor there; where a wall of that floor stands
-        // on it, it meets that wall's foot.
-        const carries = upperWalls.some((w) => {
-          if (Math.abs(w.y - c) >= 0.05) return false;
+      /** A wall of a floor above, standing at level `y`, stands on it here
+       * (not where that wall has a doorway). */
+      const carriesAt = (y: number) =>
+        upperWalls.some((w) => {
+          if (Math.abs(w.y - y) >= 0.05) return false;
           if (
             pointToSegmentDistance(x, z, w.a[0], w.a[1], w.b[0], w.b[1]) >=
             Math.max(t, w.t) / 2 + 0.01
@@ -788,15 +801,28 @@ function buildFloor(
               : 0;
           return !w.doors.some(([d0, d1]) => along > d0 && along < d1);
         });
-        if (c <= top + 0.8) v = carries ? c : c - JOINT_INSET_M;
+      if (covered.length) {
+        const c = Math.min(...covered);
+        // Under the floor's slab it stops a hair below its top, so its cap
+        // never fights the floor there; where a wall of that floor stands
+        // on it, it meets that wall's foot.
+        if (c <= top + 0.8) v = carriesAt(c) ? c : c - JOINT_INSET_M;
       }
-      // Never up through the roof over it.
+      // Never up through the roof over it, unless it carries a wall above
+      // (then it meets that wall's foot, the roof dying into it).
       const roof = roofAcross(x, z, ux, uz, t);
-      if (roof !== null && v > roof[1]) v = roof[1];
+      if (roof !== null && v > roof[1] && !carriesAt(v)) v = roof[1];
       v = Math.max(v, base + 0.3);
       const last = runs[runs.length - 1];
-      if (last && Math.abs(last.top - v) < 0.001) last.s1 = ((k + 1) * L) / n;
-      else runs.push({ s0: (k * L) / n, s1: ((k + 1) * L) / n, top: v });
+      if (last && Math.abs(last.top - v) < 0.001 && last.out === out)
+        last.s1 = ((k + 1) * L) / n;
+      else
+        runs.push({
+          s0: (k * L) / n,
+          s1: ((k + 1) * L) / n,
+          top: v,
+          ...(out ? { out } : {}),
+        });
     }
     // The joint overlaps past either end belong to the end runs.
     runs[0]!.s0 = -Infinity;
@@ -1205,6 +1231,7 @@ function buildFloor(
         y0: number,
         y1: number,
         depth = t,
+        side: 1 | -1 | undefined = outside,
       ): Box3d => {
         const [x, z] = at((s0 + s1) / 2);
         return {
@@ -1216,9 +1243,9 @@ function buildFloor(
           // An inside wall a hair thinner than drawn, so where it carries
           // straight on from an outside wall their faces never share a
           // plane (the sided and the painted would fight).
-          depth: depth === t && !outside ? t - 2 * JOINT_INSET_M : depth,
+          depth: depth === t && !side ? t - 2 * JOINT_INSET_M : depth,
           angle,
-          ...(outside && depth === t ? { outside } : {}),
+          ...(side && depth === t ? { outside: side } : {}),
         };
       };
       // The front: a door gets a porch, the rest a stone wainscot.
@@ -1343,9 +1370,11 @@ function buildFloor(
           const hi = Math.min(y1 ?? r.top, r.top);
           if (p1 - p0 <= 0.001 || hi - y0 <= 0.005) continue;
           const cut = Math.max(y0, Math.min(hi, stoneTop));
+          // Out of doors where this stretch is, else as the wall is.
+          const side = outside ?? r.out;
           if (cut - y0 > 0.005)
-            walls.push({ ...box(p0, p1, y0, cut), stone: true });
-          if (hi - cut > 0.005) walls.push(box(p0, p1, cut, hi));
+            walls.push({ ...box(p0, p1, y0, cut, t, side), stone: true });
+          if (hi - cut > 0.005) walls.push(box(p0, p1, cut, hi, t, side));
         }
       };
       const nx = -dz * (t / 2);
@@ -2588,12 +2617,45 @@ function plannedRoof(
   const lowest = [...input.floors].sort((a, b) => a.baseY - b.baseY)[0];
   const m = metersPerUnit(lowest?.layout.scale ?? null);
   const sections = plan.parts.map((part) => partSection(part, m));
-  const faces = sections.flatMap((s) => sectionFaces(s));
+  // A roof never stands inside a storey above its eave (a garage roof
+  // running on under the bedroom over the garage): cut out of those rooms
+  // where it rises above their floor.
+  const floorsAll = input.context ?? input.floors;
+  const cuts = eaveCuts(sections);
+  const faces = sections.flatMap((s) => {
+    const eave = Math.min(s.eave0, s.eave1);
+    const rooms = floorsAll.flatMap((f) => {
+      const fm = metersPerUnit(f.layout.scale);
+      return f.layout.rooms
+        .filter(
+          (r) =>
+            !r.outdoor &&
+            r.points.length >= 3 &&
+            f.baseY + (r.floor_offset_m ?? 0) > eave + 0.05,
+        )
+        .map((r) => ({
+          y: f.baseY + (r.floor_offset_m ?? 0),
+          poly: r.points.map(([x, y]): Vec2 => [x * fm, y * fm]),
+        }));
+    });
+    const si = sections.indexOf(s);
+    const strips = cuts.filter((c) => c.section === si);
+    return [...sectionFaces(s), ...strips.flatMap((c) => c.caps)].flatMap(
+      (face) =>
+        [
+          ...rooms,
+          ...strips.map((c) => ({ y: -Infinity, poly: c.strip })),
+        ].reduce<RoofFace3d[]>(
+          (acc, room) => acc.flatMap((f) => cutFace(f, room.poly, room.y)),
+          [face],
+        ),
+    );
+  });
   for (const f of built)
     for (const p of f.porches) {
       // A side running into a roof's eave (a garage beside the door): the
-      // porch takes that roof's eave and pitch, so the two slopes meet in
-      // a valley at the corner.
+      // porch takes that roof's eave, pitch and overhang, so the two slopes
+      // meet in a valley at the corner and their edges in one point.
       const [wa, wb, ob, oa] = p.corners;
       const own = f.baseY + p.eave;
       const meets = sections
@@ -2637,12 +2699,118 @@ function plannedRoof(
         p.corners,
         eave,
         meets ? meets.pitch : PORCH_PITCH,
-        PORCH_OVERHANG_M,
+        // Its overhang too, so the two eaves' edges meet at the corner.
+        meets ? meets.overhang : PORCH_OVERHANG_M,
         p.abutted,
       );
       if (s) faces.push(...sectionFaces(s));
     }
   return { ...roofColors(input.dark), grid: null, faces };
+}
+
+/** A roof face less the part of it inside a room's outline (x, z) that
+ * stands above `level`: the face in convex pieces. A vertical face (a
+ * fascia, a gable) inside the outline and above the level goes whole. */
+function cutFace(face: RoofFace3d, room: Vec2[], level: number): RoofFace3d[] {
+  const pts = face.points;
+  if (pts.length < 3 || Math.max(...pts.map((p) => p[1])) <= level + 0.01)
+    return [face];
+  const [a, b, c] = pts;
+  const ux = b![0] - a![0];
+  const uy = b![1] - a![1];
+  const uz = b![2] - a![2];
+  const vx = c![0] - a![0];
+  const vy = c![1] - a![1];
+  const vz = c![2] - a![2];
+  const nx = uy * vz - uz * vy;
+  const ny = uz * vx - ux * vz;
+  const nz = ux * vy - uy * vx;
+  const len = Math.hypot(nx, ny, nz);
+  if (len < 1e-9) return [face];
+  if (Math.abs(ny) / len < 0.05) {
+    const cx = pts.reduce((acc, p) => acc + p[0], 0) / pts.length;
+    const cz = pts.reduce((acc, p) => acc + p[2], 0) / pts.length;
+    return pointInPolygon(cx, cz, room) ? [] : [face];
+  }
+  // The face's height over a spot, from its plane.
+  const yAt = (x: number, z: number) =>
+    a![1] - (nx * (x - a![0]) + nz * (z - a![2])) / ny;
+  // Room outline wound counter-clockwise (x, z), so "inside" is left.
+  let area2 = 0;
+  room.forEach(([x, z], k) => {
+    const [x2, z2] = room[(k + 1) % room.length]!;
+    area2 += x * z2 - x2 * z;
+  });
+  const ring = area2 > 0 ? room : [...room].reverse();
+  // Only a convex room cuts cleanly by half-planes; others: its box.
+  const convex = ring.every((p, k) => {
+    const q = ring[(k + 1) % ring.length]!;
+    const r = ring[(k + 2) % ring.length]!;
+    return (
+      (q[0] - p[0]) * (r[1] - q[1]) - (q[1] - p[1]) * (r[0] - q[0]) >= -1e-9
+    );
+  });
+  const cut = convex
+    ? ring
+    : (() => {
+        const xs = ring.map((p) => p[0]);
+        const zs = ring.map((p) => p[1]);
+        const [x0, x1, z0, z1] = [
+          Math.min(...xs),
+          Math.max(...xs),
+          Math.min(...zs),
+          Math.max(...zs),
+        ];
+        return [
+          [x0, z0],
+          [x1, z0],
+          [x1, z1],
+          [x0, z1],
+        ] as Vec2[];
+      })();
+  const clipXZ = (poly: Vec2[], f: (x: number, z: number) => number) => {
+    const out: Vec2[] = [];
+    for (let i = 0; i < poly.length; i++) {
+      const p = poly[i]!;
+      const q = poly[(i + 1) % poly.length]!;
+      const fp = f(p[0], p[1]);
+      const fq = f(q[0], q[1]);
+      if (fp <= 0) out.push(p);
+      if ((fp < 0 && fq > 0) || (fp > 0 && fq < 0)) {
+        const t = fp / (fp - fq);
+        out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
+      }
+    }
+    return out;
+  };
+  const polyArea = (poly: Vec2[]) =>
+    Math.abs(
+      poly.reduce((acc, p, k) => {
+        const q = poly[(k + 1) % poly.length]!;
+        return acc + p[0] * q[1] - q[0] * p[1];
+      }, 0),
+    ) / 2;
+  let rest: Vec2[] = pts.map((p) => [p[0], p[2]]);
+  const pieces: Vec2[][] = [];
+  for (let k = 0; k < cut.length && rest.length >= 3; k++) {
+    const p = cut[k]!;
+    const q = cut[(k + 1) % cut.length]!;
+    // > 0 outside this edge (to its right, the ring being CCW).
+    const side = (x: number, z: number) =>
+      -((q[0] - p[0]) * (z - p[1]) - (q[1] - p[1]) * (x - p[0]));
+    const outside = clipXZ(rest, (x, z) => -side(x, z));
+    if (outside.length >= 3 && polyArea(outside) > 1e-5) pieces.push(outside);
+    rest = clipXZ(rest, side);
+  }
+  // What's left lies inside the room: kept only where it's below the floor.
+  if (rest.length >= 3 && polyArea(rest) > 1e-5) {
+    const high = Math.max(...rest.map(([x, z]) => yAt(x, z)));
+    if (high <= level + 0.01) pieces.push(rest);
+  }
+  return pieces.map((poly) => ({
+    ...face,
+    points: poly.map(([x, z]): [number, number, number] => [x, yAt(x, z), z]),
+  }));
 }
 
 /** What stands on the floors below one, on its floor plane (metres): their
