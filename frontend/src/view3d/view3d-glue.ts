@@ -1469,15 +1469,13 @@ function createView3d(options: View3dOptions): View3dHandle {
     }
   }
 
-  /** The plan models the stairs on this floor, or the flight up to it
-   * from the floor below: a scan's own stairs there would double them. */
+  /** The plan models the stairs on this floor or a floor next to it (a
+   * flight up to it, or down into it): a scan's own stairs there would
+   * double them. */
   function planStairsAt(floorId: string): boolean {
     const ordered = [...floors.values()].sort((a, b) => a.order - b.order);
     const i = ordered.findIndex((f) => f.spec.floorId === floorId);
-    return (
-      !!ordered[i]?.spec.hasStairs ||
-      (i > 0 && !!ordered[i - 1]?.spec.hasStairs)
-    );
+    return [i - 1, i, i + 1].some((k) => !!ordered[k]?.spec.hasStairs);
   }
 
   /** World-space boxes of the shown scans' room floors. */

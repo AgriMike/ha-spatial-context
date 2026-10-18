@@ -1517,13 +1517,14 @@ function buildFloor(
   const states = computeItemStates(layout.furniture, hass);
   const items: Item3d[] = [];
   for (const item of layout.furniture) {
+    // An open free-form line is a mark on the plan, not a thing in the
+    // room: left out.
+    if (item.points && item.points.length >= 2 && item.closed === false)
+      continue;
     const entry = catalogItem(item.kind);
     const flip = !!item.mirrored !== !!entry?.flip;
     const prims = itemPrims(item, entry);
-    const placed =
-      item.points && item.points.length >= 2 && item.closed === false
-        ? { y0: 0, height: 0.01 }
-        : itemHeight(item.kind, entry, H);
+    const placed = itemHeight(item.kind, entry, H);
     // In a room set higher or lower, with it.
     const height = placed.height;
     const y0 = placed.y0 + offsetAt(item.x, item.y);
