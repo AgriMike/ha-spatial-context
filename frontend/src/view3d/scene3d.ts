@@ -159,6 +159,9 @@ const STAIRS_KIND = "stairs_straight";
 /** How far wall joints stop short of an outer face, and window pieces lap
  * into their opening: enough that no two faces share a plane. */
 const JOINT_INSET_M = 0.003;
+const JOINT_PROUD_M = 0.002;
+/** Gaps this narrow between an upper floor's rooms still count as floor. */
+const ABOVE_SLIVER_M = 0.06;
 /** A ledge's lid over a closet: its thickness above the walls. */
 const SLAB_LID_M = 0.04;
 /** The half wall material (see materials.ts) and its height. */
@@ -821,6 +824,60 @@ function buildFloor(
       st.sides.some((sd) => alongShare([a, b], sd, 0.2) >= 0.4),
     );
 
+  // Every wall segment (metres), for joining free wall ends to the walls
+  // they meet.
+  const segsM = layout.walls.flatMap((w) =>
+    w.points.slice(1).map((q, k) => {
+      const p = w.points[k]!;
+      return {
+        id: w.id,
+        a: [p[0] * m, p[1] * m] as Vec2,
+        b: [q[0] * m, q[1] * m] as Vec2,
+        t: wallThicknessCm(w) / 100,
+      };
+    }),
+  );
+  /** How far a wall's free end (at `end`, pointing along `dir`) runs on
+   * to close against a wall it meets: past that wall's far face at an L
+   * corner (the lower id a hair proud, the other a hair short), into its
+   * middle at a T, across a small gap to it; 0 for a truly free end (a
+   * door jamb). */
+  const freeEndExt = (id: string, end: Vec2, dir: Vec2): number => {
+    let ext = 0;
+    for (const o of segsM) {
+      if (o.t <= RAIL_THICKNESS_M) continue;
+      const ux = o.b[0] - o.a[0];
+      const uz = o.b[1] - o.a[1];
+      const len2 = ux * ux + uz * uz;
+      if (len2 < 1e-6) continue;
+      const k = Math.max(
+        0,
+        Math.min(1, ((end[0] - o.a[0]) * ux + (end[1] - o.a[1]) * uz) / len2),
+      );
+      const qx = o.a[0] + ux * k - end[0];
+      const qz = o.a[1] + uz * k - end[1];
+      const d = Math.hypot(qx, qz);
+      if (d > 0.15) continue;
+      // Straight ahead (or right here), not off to the side.
+      const ahead = qx * dir[0] + qz * dir[1];
+      const side = Math.abs(qx * dir[1] - qz * dir[0]);
+      if (ahead < -0.01 || side > 0.02) continue;
+      // Not along the same line (a wall continuing straight on).
+      const cross = Math.abs(ux * dir[1] - uz * dir[0]) / Math.sqrt(len2);
+      if (cross < 0.5) continue;
+      if (o.id === id && d < 0.005) continue;
+      const atEnd =
+        Math.min(
+          Math.hypot(o.a[0] - end[0], o.a[1] - end[1]),
+          Math.hypot(o.b[0] - end[0], o.b[1] - end[1]),
+        ) < 0.02;
+      const e = atEnd
+        ? o.t / 2 + (id < o.id ? JOINT_PROUD_M : -JOINT_INSET_M)
+        : d + o.t / 2 - JOINT_INSET_M;
+      ext = Math.max(ext, Math.min(0.3, e));
+    }
+    return ext;
+  };
   for (const wall of layout.walls) {
     const pts = wall.points;
     if (pts.length < 2) continue;
@@ -905,9 +962,20 @@ function buildFloor(
       // Overlap the next/previous segment at joints so corners close —
       // a hair short of its outer face, so the two boxes' faces never lie
       // in one plane (they'd flicker in stripes).
-      const ext0 = i > 0 || closed ? Math.max(0, t / 2 - JOINT_INSET_M) : 0;
+      // Overlap the next/previous segment at joints so corners close: a
+      // segment's end runs a hair past the other's outer face and the next
+      // one's start stops a hair short, so their faces never share a plane
+      // (they'd flicker) and no notch is left at the outer corner. A free
+      // end meeting another wall (an L or a T, or falling just short of
+      // one) reaches into it the same way.
+      const ext0 =
+        i > 0 || closed
+          ? Math.max(0, t / 2 - JOINT_INSET_M)
+          : freeEndExt(wall.id, [ax * m, ay * m], [-dx, -dz]);
       const ext1 =
-        i < pts.length - 2 || closed ? Math.max(0, t / 2 - JOINT_INSET_M) : 0;
+        i < pts.length - 2 || closed
+          ? t / 2 + JOINT_PROUD_M
+          : freeEndExt(wall.id, [bx * m, by * m], [dx, dz]);
       const box = (
         s0: number,
         s1: number,
@@ -2243,13 +2311,59 @@ function floorAboveOf(
         .map((r) => ({
           y: f.baseY + (r.floor_offset_m ?? 0) - floor.baseY,
           points: r.points.map(([x, y]): [number, number] => [x * m, y * m]),
-        }));
+        }))
+        .concat(
+          // A staircase up there (a stairwell no room covers) is that
+          // floor down to its lower end's level: walls under it stop there.
+          f.layout.furniture
+            .filter((it) => it.kind === STAIRS_KIND)
+            .map((it) => {
+              const a = (-it.rotation_deg * Math.PI) / 180;
+              const c = Math.cos(a);
+              const sn = Math.sin(a);
+              const w = it.width_cm / 200;
+              const d = it.depth_cm / 200;
+              const P = (lx: number, lz: number): [number, number] => [
+                it.x * m + lx * c + lz * sn,
+                it.y * m - lx * sn + lz * c,
+              ];
+              const levelBeyond = (lz: number) => {
+                const [x, z] = P(0, lz);
+                return (
+                  f.layout.rooms.find(
+                    (r) =>
+                      !r.outdoor &&
+                      r.points.length >= 3 &&
+                      pointInPolygon(x / m, z / m, r.points),
+                  )?.floor_offset_m ?? 0
+                );
+              };
+              const low = Math.min(levelBeyond(d + 0.3), levelBeyond(-d - 0.3));
+              return {
+                y: f.baseY + low - floor.baseY,
+                points: [P(-w, -d), P(w, -d), P(w, d), P(-w, d)],
+              };
+            }),
+        );
     });
   return (x, z) => {
     let best: number | null = null;
     for (const r of rooms)
       if ((best === null || r.y < best) && pointInPolygon(x, z, r.points))
         best = r.y;
+    if (best !== null) return best;
+    // In a sliver between two rooms' outlines (a few centimetres where
+    // they don't quite meet): the nearest room's.
+    let near = ABOVE_SLIVER_M;
+    for (const r of rooms)
+      r.points.forEach((a, k) => {
+        const b = r.points[(k + 1) % r.points.length]!;
+        const d = pointToSegmentDistance(x, z, a[0], a[1], b[0], b[1]);
+        if (d < near || (d === near && best !== null && r.y < best)) {
+          near = d;
+          best = r.y;
+        }
+      });
     return best;
   };
 }
@@ -2257,7 +2371,7 @@ function floorAboveOf(
 /** The hillside the building stands on: grade on its high and low sides,
  * falling toward a compass bearing. Rooms whose floor sits below the high
  * side's grade are cut out of the ground, so a walk-out basement still
- * shows inside. */
+ * shows inside; so are patios at that level (dug out to the walk-out). */
 function terrain(
   input: SceneInput,
   ground: GroundSetting,
@@ -2270,7 +2384,6 @@ function terrain(
     return f.layout.rooms
       .filter(
         (r) =>
-          !r.outdoor &&
           r.points.length >= 3 &&
           f.baseY + (r.floor_offset_m ?? 0) < top - 0.01,
       )

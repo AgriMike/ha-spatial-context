@@ -88,9 +88,14 @@ function wallGeometry(
   // a gable, its ends at corners and round windows and doors.
   const indoor = b.outside === 1 ? 20 : b.outside === -1 ? 16 : -1;
   for (let v = 0; v < count; v++) {
+    // Its top (and bottom) is the same painted cap on every wall, so
+    // tops read as one clean cut where walls meet.
+    const cap = v >= 8 && v < 16;
     const c =
       own ??
-      (indoor >= 0 && !(v >= indoor && v < indoor + 4) ? outdoor : paint);
+      (!cap && indoor >= 0 && !(v >= indoor && v < indoor + 4)
+        ? outdoor
+        : paint);
     colors[v * 3] = c.r;
     colors[v * 3 + 1] = c.g;
     colors[v * 3 + 2] = c.b;
@@ -461,9 +466,11 @@ function stairsModel(
   // it at the floor's level, running the flight's length to the wall.
   if (Math.max(st.front, st.back) <= 0.05) {
     st.rails.forEach((on, i) => {
-      if (!on) return;
       const x = (i === 0 ? -1 : 1) * (W / 2 + 0.05);
+      // A straight wall down each side from the floor to the flight's
+      // foot (between it and a flight beside it, too).
       box(0.1, rise, D, x, rise / 2, 0, paint);
+      if (!on) return;
       const top = rise + 0.95;
       const ends = [-D / 2 + 0.05, D / 2 - 0.05];
       for (const z of ends) box(0.09, 1.0, 0.09, x, rise + 0.5, z, white);
