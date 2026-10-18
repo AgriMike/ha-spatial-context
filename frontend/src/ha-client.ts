@@ -82,8 +82,12 @@ export class HaClient {
       // A backend from before the 3D editor's finishes (not restarted
       // since updating) refuses those fields: save the rest, and say so.
       const message = (err as { message?: string })?.message ?? "";
-      if (!/extra keys not allowed/i.test(message) || !hasFinishes(layout))
-        throw err;
+      const aboutFinishes =
+        /extra keys not allowed/i.test(message) ||
+        [...ROOM_FINISH_KEYS, ...ITEM_FINISH_KEYS].some((k) =>
+          message.includes(k),
+        );
+      if (!aboutFinishes || !hasFinishes(layout)) throw err;
       const result = await send(withoutFinishes(layout));
       layoutFinishesUnsaved = true;
       return result;

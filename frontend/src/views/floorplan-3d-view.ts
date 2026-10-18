@@ -1234,7 +1234,12 @@ export class Floorplan3dView extends LitElement {
     const m = metersPerUnit(layout.scale);
     const toPlan = (p: [number, number] | null): Pt | null =>
       p ? [p[0] / m, p[1] / m] : null;
-    const floorPt = toPlan(e.hit.floor);
+    // On a room's own floor where the pointer is over one (a sunken
+    // garage sits below the floor's level), else on the floor's level.
+    const floorPt =
+      e.hit.ref?.kind === "room" && e.hit.point
+        ? ([e.hit.point[0] / m, e.hit.point[2] / m] as Pt)
+        : toPlan(e.hit.floor);
     const grid = e.shift ? 0 : 5 * this._perCm;
     const reach = 15 * this._perCm;
     const H = this.floorId ? this._wallHeight(this.floorId) : 2.4;
@@ -1834,7 +1839,9 @@ export class Floorplan3dView extends LitElement {
               }}
               @library-close=${() => this._setTool("select")}
             ></furniture-library-sidebar>`
-          : this._renderSelection(layout)
+          : this._tool === "select"
+            ? this._renderSelection(layout)
+            : nothing
       }
     </div>`;
   }
