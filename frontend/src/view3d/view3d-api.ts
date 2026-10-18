@@ -103,11 +103,13 @@ export interface Item3d {
    * front (local +z) and back ends, and whether its left (local -x) and
    * right sides get a railing. `railEnds` (per side, metres from its low
    * and high ends) is where a railing runs into a wall: it stops there,
-   * no newel post. */
+   * no newel post. `landing` is how far (metres) the floor at its top
+   * runs back over it from its high end. */
   stairs?: {
     front: number;
     back: number;
     rails: [boolean, boolean];
+    landing?: number;
     railEnds?: [[number, number], [number, number]];
   };
 }

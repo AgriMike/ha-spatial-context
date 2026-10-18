@@ -168,6 +168,8 @@ const LID_DROP_M = 0.001;
 /** The half wall material (see materials.ts) and its height. */
 const HALF_WALL_MATERIAL = "half_wall";
 const HALF_WALL_M = 1.0;
+/** A floor's depth at an open edge (a header under a half wall there). */
+const FLOOR_EDGE_M = 0.25;
 /** A banister: its newel posts, spindles (and their spacing), handrail,
  * and colours. */
 const NEWEL_M = 0.09;
@@ -580,6 +582,8 @@ function buildFloor(
     /** The planned roof's height (metres above this floor's level) over a
      * spot, null where it has none (or there's no planned roof). */
     roofOver: (x: number, z: number) => number | null;
+    /** What stands on the floors below, on this floor's plane. */
+    below: Below;
   },
 ): Floor3d {
   const { layout, wallHeight: H } = input;
@@ -773,11 +777,29 @@ function buildFloor(
       };
       const front = levelAt(P(0, d / 2 + 0.3));
       const back = levelAt(P(0, -d / 2 - 0.3));
+      const top = Math.max(front, back);
+      // How far back from its high end the floor up there runs over it:
+      // its top step is that floor.
+      const high = front > back ? 1 : -1;
+      const floorAt = ([x, z]: Vec2): boolean => {
+        const room = layout.rooms.find(
+          (r) =>
+            !r.outdoor &&
+            r.points.length >= 3 &&
+            pointInPolygon(x / m, z / m, r.points),
+        );
+        const y = room ? (room.floor_offset_m ?? 0) : floorAbove(x, z);
+        return y !== null && Math.abs(y - top) < 0.05;
+      };
+      let landing = 0;
+      while (landing < d && floorAt(P(0, high * (d / 2 - landing - 0.01))))
+        landing += 0.02;
       return {
         item: f,
         front,
         back,
-        top: Math.max(front, back),
+        top,
+        landing,
         sides: [
           [P(-w / 2, -d / 2), P(-w / 2, d / 2)],
           [P(w / 2, -d / 2), P(w / 2, d / 2)],
@@ -1241,6 +1263,54 @@ function buildFloor(
       if (half) {
         const top = base + HALF_WALL_M;
         walls.push(box(-ext0, L + ext1, base, top));
+        // Standing at the floor's open edge (over a stairwell), it gets a
+        // header down through the floor's depth, so it doesn't stand on a
+        // bare slab edge; not where a wall below carries it or a flight
+        // comes up under it.
+        const reach = t / 2 + 0.12;
+        const hasRoom = (x: number, z: number) =>
+          layout.rooms.some(
+            (r) =>
+              !r.outdoor &&
+              r.points.length >= 3 &&
+              pointInPolygon(x / m, z / m, r.points),
+          );
+        const open = (sv: number) => {
+          const [x, z] = at(sv);
+          // Which side is floor: judged a little in from the ends, so a
+          // corner (the floor carrying on round it) doesn't count.
+          const [sx, sz] = at(Math.min(Math.max(sv, t), L - t));
+          const sides = [
+            hasRoom(sx - dz * reach, sz + dx * reach),
+            hasRoom(sx + dz * reach, sz - dx * reach),
+          ];
+          if (sides[0] === sides[1]) return false;
+          if (
+            exterior.below.walls.some(
+              (w) =>
+                pointToSegmentDistance(x, z, w.a[0], w.a[1], w.b[0], w.b[1]) <
+                (w.t + t) / 2,
+            )
+          )
+            return false;
+          return !exterior.below.flights.some((poly) =>
+            pointInPolygon(x, z, poly),
+          );
+        };
+        const step = 0.05;
+        let from: number | null = null;
+        for (let sv = -ext0; sv <= L + ext1 + 1e-9; sv += step) {
+          const end = Math.min(sv + step, L + ext1);
+          const on = open(Math.min((sv + end) / 2, L + ext1));
+          if (on && from === null) from = sv;
+          if ((!on || end >= L + ext1) && from !== null) {
+            const to = on ? end : sv;
+            if (to - from > 0.2)
+              walls.push(box(from, to, base - FLOOR_EDGE_M, base));
+            from = null;
+          }
+          if (end >= L + ext1) break;
+        }
         walls.push({
           ...box(-ext0, L + ext1, top, top + 0.04, t + 0.04),
           color: dark ? TRIM_WHITE_DARK : BANISTER_WHITE,
@@ -1680,6 +1750,7 @@ function buildFloor(
               front: flight.front,
               back: flight.back,
               rails: [railed(si, 0), railed(si, 1)] as [boolean, boolean],
+              landing: flight.landing,
               railEnds: [railEnds(si, 0), railEnds(si, 1)] as [
                 [number, number],
                 [number, number],
@@ -1820,6 +1891,7 @@ export function buildScene(input: SceneInput): Scene3d {
                   })),
             );
           }),
+        below: belowOf(f, input.context ?? input.floors),
       },
     ),
   );
@@ -2398,6 +2470,53 @@ function plannedRoof(
       if (s) faces.push(...sectionFaces(s));
     }
   return { ...roofColors(input.dark), grid: null, faces };
+}
+
+/** What stands on the floors below one, on its floor plane (metres): their
+ * walls (segment and thickness) and their flights' footprints. */
+interface Below {
+  walls: { a: Vec2; b: Vec2; t: number }[];
+  flights: Vec2[][];
+}
+
+function belowOf(floor: FloorInput, floors: FloorInput[]): Below {
+  // Only floors whose walls reach up to this one's level.
+  const lower = floors.filter(
+    (f) =>
+      f.baseY < floor.baseY - 0.3 &&
+      f.baseY + f.wallHeight >= floor.baseY - 0.3,
+  );
+  return {
+    walls: lower.flatMap((f) => {
+      const m = metersPerUnit(f.layout.scale);
+      return f.layout.walls
+        .filter((w) => wallThicknessCm(w) / 100 > RAIL_THICKNESS_M)
+        .flatMap((w) =>
+          w.points.slice(1).map((p, i) => ({
+            a: [w.points[i]![0] * m, w.points[i]![1] * m] as Vec2,
+            b: [p[0] * m, p[1] * m] as Vec2,
+            t: wallThicknessCm(w) / 100,
+          })),
+        );
+    }),
+    flights: lower.flatMap((f) => {
+      const m = metersPerUnit(f.layout.scale);
+      return f.layout.furniture
+        .filter((it) => it.kind === STAIRS_KIND)
+        .map((it) => {
+          const a = (-it.rotation_deg * Math.PI) / 180;
+          const c = Math.cos(a);
+          const sn = Math.sin(a);
+          const w = it.width_cm / 200;
+          const d = it.depth_cm / 200;
+          const P = (lx: number, lz: number): Vec2 => [
+            it.x * m + lx * c + lz * sn,
+            it.y * m - lx * sn + lz * c,
+          ];
+          return [P(-w, -d), P(w, -d), P(w, d), P(-w, d)];
+        });
+    }),
+  };
 }
 
 /** A wall of a floor above, on this floor's plane (metres): its segment,

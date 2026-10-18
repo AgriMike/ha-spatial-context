@@ -446,11 +446,16 @@ function stairsModel(
     return mesh;
   };
   for (let k = 1; k <= n; k++) {
-    // Step k: solid from its riser to the high end, its tread on top.
+    // Step k: solid from its riser to the high end, its tread on top. The
+    // top step, where the floor up there runs over it, is that floor: no
+    // tread, its solid tucked under the floor's top.
     const zs = z0 + dir * (k - 1) * run;
     const zEnd = z0 + dir * D;
     const len = Math.abs(zEnd - zs);
-    box(W, h, len, 0, (k - 1) * h + h / 2, (zs + zEnd) / 2, paint);
+    const landed = k === n && (st.landing ?? 0) >= run - 0.02;
+    const hk = landed ? h - 0.004 : h;
+    box(W, hk, len, 0, (k - 1) * h + hk / 2, (zs + zEnd) / 2, paint);
+    if (landed) continue;
     // The tread sits on it, its nosing a little proud of the riser.
     box(
       W + 0.02,
