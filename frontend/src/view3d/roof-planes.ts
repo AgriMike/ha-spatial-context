@@ -16,6 +16,10 @@ const FASCIA_M = 0.17;
  * edge never shows through it. */
 const HEEL_M = 0.15;
 export const ROOF_OVERHANG_M = 0.35;
+/** Gable ends stand this far out from their wall line (a part's edges are
+ * the walls' centre lines): flush with an outside wall's face, so the wall
+ * below doesn't show a ledge under them. */
+const GABLE_OUT_M = 0.08;
 
 /** A section in its own frame: `a` along the ridge, `c` across it, both
  * metres from `origin` on the floor plane (x, z). */
@@ -41,8 +45,6 @@ export interface RoofSection {
   /** A lean-to: one slope only, falling to the c1 side from a wall along
    * c0 (no eave or overhang there). */
   shed?: boolean;
-  /** Its gable ends stand open (a porch's sides): rakes but no siding. */
-  openSides?: boolean;
 }
 
 /** A plane over the frame: h = ka * a + kc * c + k. */
@@ -187,8 +189,8 @@ export function sectionFaces(s: RoofSection): RoofFace3d[] {
   });
   // Gable ends: sided from the roof down to the base, on the wall line.
   ([0, 1] as const).forEach((end) => {
-    if (s.ends[end] !== "gable" || s.openSides) return;
-    const a = end === 0 ? s.a0 : s.a1;
+    if (s.ends[end] !== "gable") return;
+    const a = end === 0 ? s.a0 - GABLE_OUT_M : s.a1 + GABLE_OUT_M;
     // The surface along the wall line bends where two planes cross.
     const cs = new Set<number>([s.c0, s.c1]);
     for (let i = 0; i < ps.length; i++)
@@ -246,7 +248,7 @@ export function partSection(part: RoofPart, m: number): RoofSection {
 
 /** A porch roof against a wall (corners along the wall's face a, b, then
  * out from b and from a): a lean-to falling from the wall straight down
- * to its eave at the front, its sides open. */
+ * to its eave at the front, its sides sided down to the eave. */
 export function porchSection(
   corners: [Vec2, Vec2, Vec2, Vec2],
   eave: number,
@@ -273,6 +275,5 @@ export function porchSection(
     base: eave,
     gable: "siding",
     shed: true,
-    openSides: true,
   };
 }
