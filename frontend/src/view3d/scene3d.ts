@@ -1598,7 +1598,7 @@ function buildRoof(
       }
     }
   }
-  // Porch roofs: hipped down from the wall to the eave on the open sides.
+  // Porch roofs: lean-tos from the wall down to the eave at the front.
   for (const p of porches) {
     const [wa, wb, , oa] = p.corners;
     const width = Math.hypot(wb[0] - wa[0], wb[1] - wa[1]);
@@ -1629,8 +1629,10 @@ function buildRoof(
         const out = rx * ox + rz * oz;
         // Behind the wall's face is the house.
         if (out < 0) continue;
-        const free = Math.min(along, width - along, depth - out);
-        if (free < -PORCH_OVERHANG_M) continue;
+        // A lean-to, falling from the wall straight down to the front.
+        const o = PORCH_OVERHANG_M;
+        const free = depth - out;
+        if (free < -o || along < -o || along > width + o) continue;
         raise(j * nx + i, p.eave + PORCH_PITCH * free, p.eave);
       }
   }

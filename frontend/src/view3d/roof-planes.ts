@@ -38,6 +38,11 @@ export interface RoofSection {
   /** Gable ends are sided down to here (world Y). */
   base: number;
   gable: "siding" | "shake";
+  /** A lean-to: one slope only, falling to the c1 side from a wall along
+   * c0 (no eave or overhang there). */
+  shed?: boolean;
+  /** Its gable ends stand open (a porch's sides): rakes but no siding. */
+  openSides?: boolean;
 }
 
 /** A plane over the frame: h = ka * a + kc * c + k. */
@@ -80,9 +85,10 @@ function area(poly: Vec2[]): number {
  * hipped end. */
 function planes(s: RoofSection): Plane[] {
   const out: Plane[] = [
-    { ka: 0, kc: s.pitch, k: s.eave0 + HEEL_M - s.pitch * s.c0 },
     { ka: 0, kc: -s.pitch, k: s.eave1 + HEEL_M + s.pitch * s.c1 },
   ];
+  if (!s.shed)
+    out.push({ ka: 0, kc: s.pitch, k: s.eave0 + HEEL_M - s.pitch * s.c0 });
   const low = Math.min(s.eave0, s.eave1) + HEEL_M;
   if (s.ends[0] === "hip")
     out.push({ ka: s.pitch, kc: 0, k: low - s.pitch * s.a0 });
@@ -100,11 +106,11 @@ function surface(ps: Plane[], a: number, c: number): number {
 export function sectionFaces(s: RoofSection): RoofFace3d[] {
   const ps = planes(s);
   const o = s.overhang;
-  const lo = s.ends[0] === "open" ? 0 : o;
-  const hi = s.ends[1] === "open" ? 0 : o;
-  const A0 = s.a0 - lo;
-  const A1 = s.a1 + hi;
-  const C0 = s.c0 - o;
+  // Open ends stop at the wall line; so does a lean-to's high side.
+  const reach = (end: RoofEnd) => (end === "open" ? 0 : o);
+  const A0 = s.a0 - reach(s.ends[0]);
+  const A1 = s.a1 + reach(s.ends[1]);
+  const C0 = s.shed ? s.c0 : s.c0 - o;
   const C1 = s.c1 + o;
   const world = (a: number, c: number, y: number): Vec3 => [
     s.origin[0] + s.along[0] * a + s.across[0] * c,
@@ -124,11 +130,12 @@ export function sectionFaces(s: RoofSection): RoofFace3d[] {
   const edgeOf = (p: Vec2, q: Vec2): { inward: Vec2; rake: boolean } | null => {
     const on = (i: 0 | 1, v: number) =>
       Math.abs(p[i] - v) < eps && Math.abs(q[i] - v) < eps;
-    if (on(1, C0)) return { inward: [0, 1], rake: false };
+    const trimmed = (end: RoofEnd) => end !== "open";
+    if (on(1, C0)) return s.shed ? null : { inward: [0, 1], rake: false };
     if (on(1, C1)) return { inward: [0, -1], rake: false };
-    if (on(0, A0) && s.ends[0] !== "open")
+    if (on(0, A0) && trimmed(s.ends[0]))
       return { inward: [1, 0], rake: s.ends[0] === "gable" };
-    if (on(0, A1) && s.ends[1] !== "open")
+    if (on(0, A1) && trimmed(s.ends[1]))
       return { inward: [-1, 0], rake: s.ends[1] === "gable" };
     return null;
   };
@@ -146,8 +153,9 @@ export function sectionFaces(s: RoofSection): RoofFace3d[] {
       points: poly.map(([a, c]) => world(a, c, heightOf(plane, a, c))),
       kind: "shingle",
     });
-    // Fascia and soffit along the outer edges.
-    for (let k = 0; k < poly.length; k++) {
+    // Fascia and soffit along the outer edges (none without an overhang:
+    // a part like that only closes another off).
+    for (let k = 0; k < poly.length && o > 0.01; k++) {
       const p = poly[k]!;
       const q = poly[(k + 1) % poly.length]!;
       const edge = edgeOf(p, q);
@@ -179,7 +187,7 @@ export function sectionFaces(s: RoofSection): RoofFace3d[] {
   });
   // Gable ends: sided from the roof down to the base, on the wall line.
   ([0, 1] as const).forEach((end) => {
-    if (s.ends[end] !== "gable") return;
+    if (s.ends[end] !== "gable" || s.openSides) return;
     const a = end === 0 ? s.a0 : s.a1;
     // The surface along the wall line bends where two planes cross.
     const cs = new Set<number>([s.c0, s.c1]);
@@ -237,7 +245,8 @@ export function partSection(part: RoofPart, m: number): RoofSection {
 }
 
 /** A porch roof against a wall (corners along the wall's face a, b, then
- * out from b and from a), hipped down to its eave on the open sides. */
+ * out from b and from a): a lean-to falling from the wall straight down
+ * to its eave at the front, its sides open. */
 export function porchSection(
   corners: [Vec2, Vec2, Vec2, Vec2],
   eave: number,
@@ -250,18 +259,20 @@ export function porchSection(
   if (width < 0.1 || depth < 0.1) return null;
   return {
     origin: wa,
-    along: [(oa[0] - wa[0]) / depth, (oa[1] - wa[1]) / depth],
-    across: [(wb[0] - wa[0]) / width, (wb[1] - wa[1]) / width],
+    along: [(wb[0] - wa[0]) / width, (wb[1] - wa[1]) / width],
+    across: [(oa[0] - wa[0]) / depth, (oa[1] - wa[1]) / depth],
     a0: 0,
-    a1: depth,
+    a1: width,
     c0: 0,
-    c1: width,
+    c1: depth,
     eave0: eave,
     eave1: eave,
     pitch,
-    ends: ["open", "hip"],
+    ends: ["gable", "gable"],
     overhang,
     base: eave,
     gable: "siding",
+    shed: true,
+    openSides: true,
   };
 }

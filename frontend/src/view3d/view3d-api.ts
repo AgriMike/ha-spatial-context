@@ -33,8 +33,8 @@ export interface Box3d {
 }
 
 /** A porch roof against an outside wall: `corners` along the wall's
- * outdoor face (a, b), then out from b and from a; hipped down from the
- * wall to its eave on the three open sides. */
+ * outdoor face (a, b), then out from b and from a; a lean-to falling from
+ * the wall to its eave at the front. */
 export interface Porch3d {
   corners: [Vec2, Vec2, Vec2, Vec2];
   /** Metres above the floor's level. */
