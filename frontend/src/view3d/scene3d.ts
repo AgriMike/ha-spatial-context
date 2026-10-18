@@ -679,11 +679,30 @@ function buildFloor(
       let v = top;
       if (covered.length) {
         const c = Math.min(...covered);
-        if (c <= top + 0.8) v = c;
+        // Under the floor's slab it stops a hair below its top, so its cap
+        // never fights the floor there; where a wall of that floor stands
+        // on it, it meets that wall's foot.
+        const carries = upperWalls.some((w) => {
+          if (Math.abs(w.y - c) >= 0.05) return false;
+          if (
+            pointToSegmentDistance(x, z, w.a[0], w.a[1], w.b[0], w.b[1]) >=
+            Math.max(t, w.t) / 2 + 0.01
+          )
+            return false;
+          const wl = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
+          const along =
+            wl > 0
+              ? ((x - w.a[0]) * (w.b[0] - w.a[0]) +
+                  (z - w.a[1]) * (w.b[1] - w.a[1])) /
+                wl
+              : 0;
+          return !w.doors.some(([d0, d1]) => along > d0 && along < d1);
+        });
+        if (c <= top + 0.8) v = carries ? c : c - JOINT_INSET_M;
       }
       v = Math.max(v, base + 0.3);
       const last = runs[runs.length - 1];
-      if (last && Math.abs(last.top - v) < 0.005) last.s1 = ((k + 1) * L) / n;
+      if (last && Math.abs(last.top - v) < 0.001) last.s1 = ((k + 1) * L) / n;
       else runs.push({ s0: (k * L) / n, s1: ((k + 1) * L) / n, top: v });
     }
     // The joint overlaps past either end belong to the end runs.
@@ -1268,6 +1287,9 @@ function buildFloor(
       // along the front, concrete elsewhere.
       // A wall over a lower floor stands on that floor's walls, and one
       // overhanging it a little (a bay) is cantilevered.
+      // Its top stops a hair under the floor (no fighting the floor where a
+      // door leaves it bare), and the wall comes down to meet it.
+      let foot = base;
       const [mx, mz] = at(L / 2);
       if (
         outside &&
@@ -1278,11 +1300,13 @@ function buildFloor(
         const [x1, z1] = at(L + ext1);
         const ground =
           Math.min(exterior.groundAt(x0, z0), exterior.groundAt(x1, z1)) - 0.1;
-        if (base - ground > 0.02)
+        if (base - ground > 0.02) {
+          foot = base - JOINT_INSET_M;
           walls.push({
-            ...box(-ext0, L + ext1, ground, base),
+            ...box(-ext0, L + ext1, ground, foot),
             ...(facesFront ? { stone: true } : { color: FOUNDATION }),
           });
+        }
       }
 
       const holes = (bySeg.get(i) ?? [])
@@ -1296,7 +1320,7 @@ function buildFloor(
       let cursor = -ext0;
       for (const hole of holes) {
         const { opening } = hole;
-        if (hole.s0 > cursor) solid(cursor, hole.s0, base);
+        if (hole.s0 > cursor) solid(cursor, hole.s0, foot);
         const top = topOver(hole.s0, hole.s1);
         const isDoor = opening.type === "door";
         // A window's kind sets its glass: a transom is a ~45 cm strip just
@@ -1317,7 +1341,7 @@ function buildFloor(
               : style === "full"
                 ? 0
                 : Math.min(WINDOW_SILL_M, head - off - 0.1)) + off;
-        if (sill > base) solid(hole.s0, hole.s1, base, sill);
+        if (sill > base) solid(hole.s0, hole.s1, foot, sill);
         if (head < top - 0.005) walls.push(box(hole.s0, hole.s1, head, top));
         // An outside door: a patio door (wide) glazed like a window, any
         // other shut with a door leaf; doors between rooms stand open.
@@ -1423,7 +1447,7 @@ function buildFloor(
         }
         cursor = hole.s1;
       }
-      if (L + ext1 > cursor) solid(cursor, L + ext1, base);
+      if (L + ext1 > cursor) solid(cursor, L + ext1, foot);
     }
   }
 
@@ -2377,13 +2401,15 @@ function plannedRoof(
 }
 
 /** A wall of a floor above, on this floor's plane (metres): its segment,
- * the level it stands on, its thickness and height. */
+ * the level it stands on, its thickness and height, and its doorways
+ * (metres along it from `a`), where it doesn't reach down to its floor. */
 interface UpperWall {
   a: Vec2;
   b: Vec2;
   y: number;
   t: number;
   h: number;
+  doors: [number, number][];
 }
 
 /** For one floor: the walls of floors above it, as segments on the floor
@@ -2401,13 +2427,33 @@ function upperWallsOf(floor: FloorInput, floors: FloorInput[]): UpperWall[] {
             : t <= RAIL_THICKNESS_M
               ? RAIL_HEIGHT_M
               : f.wallHeight;
-        return w.points.slice(1).map((p, i) => ({
-          a: [w.points[i]![0] * m, w.points[i]![1] * m] as Vec2,
-          b: [p[0] * m, p[1] * m] as Vec2,
-          y: f.baseY - floor.baseY,
-          t,
-          h,
-        }));
+        const doors = f.layout.openings
+          .filter((o) => o.wallId === w.id && o.type === "door")
+          .map((o) => ({
+            o,
+            k: nearestPointOnPolyline(w.points, o.x, o.y).segmentIndex,
+          }));
+        return w.points.slice(1).map((p, i) => {
+          const q = w.points[i]!;
+          const len = distance(q[0], q[1], p[0], p[1]);
+          return {
+            a: [q[0] * m, q[1] * m] as Vec2,
+            b: [p[0] * m, p[1] * m] as Vec2,
+            y: f.baseY - floor.baseY,
+            t,
+            h,
+            doors: doors
+              .filter((d) => d.k === i && len > 0)
+              .map(({ o }): [number, number] => {
+                const s =
+                  (((o.x - q[0]) * (p[0] - q[0]) +
+                    (o.y - q[1]) * (p[1] - q[1])) /
+                    len) *
+                  m;
+                return [s - (o.width * m) / 2, s + (o.width * m) / 2];
+              }),
+          };
+        });
       });
     });
 }

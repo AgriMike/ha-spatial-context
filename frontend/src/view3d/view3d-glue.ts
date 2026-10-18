@@ -469,8 +469,9 @@ function stairsModel(
     st.rails.forEach((on, i) => {
       const x = (i === 0 ? -1 : 1) * (W / 2 + 0.05);
       // A straight wall down each side from the floor to the flight's
-      // foot (between it and a flight beside it, too).
-      box(0.1, rise, D, x, rise / 2, 0, paint);
+      // foot (between it and a flight beside it, too), its top a hair
+      // under the floor so the two never fight.
+      box(0.1, rise - 0.004, D, x, (rise - 0.004) / 2, 0, paint);
       if (!on) return;
       const top = rise + 0.95;
       const ends = [-D / 2 + 0.05, D / 2 - 0.05];
