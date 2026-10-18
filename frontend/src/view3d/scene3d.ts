@@ -156,6 +156,9 @@ function itemShape(
 }
 /** The staircase item (see furniture-catalog.ts). */
 const STAIRS_KIND = "stairs_straight";
+/** How far wall joints stop short of an outer face, and window pieces lap
+ * into their opening: enough that no two faces share a plane. */
+const JOINT_INSET_M = 0.003;
 /** A ledge's lid over a closet: its thickness above the walls. */
 const SLAB_LID_M = 0.04;
 /** The half wall material (see materials.ts) and its height. */
@@ -899,8 +902,12 @@ function buildFloor(
           ...runs.filter((r) => r.s1 > s0 && r.s0 < s1).map((r) => r.top),
         );
       // Overlap the next/previous segment at joints so corners close.
-      const ext0 = i > 0 || closed ? t / 2 : 0;
-      const ext1 = i < pts.length - 2 || closed ? t / 2 : 0;
+      // Overlap the next/previous segment at joints so corners close —
+      // a hair short of its outer face, so the two boxes' faces never lie
+      // in one plane (they'd flicker in stripes).
+      const ext0 = i > 0 || closed ? Math.max(0, t / 2 - JOINT_INSET_M) : 0;
+      const ext1 =
+        i < pts.length - 2 || closed ? Math.max(0, t / 2 - JOINT_INSET_M) : 0;
       const box = (
         s0: number,
         s1: number,
@@ -1157,7 +1164,13 @@ function buildFloor(
         const patio = outdoorDoor && !opening.garage && hole.s1 - hole.s0 > 1.2;
         if (!isDoor || patio) {
           panes.push({
-            box: box(hole.s0, hole.s1, sill, head, 0.02),
+            box: box(
+              hole.s0 + JOINT_INSET_M,
+              hole.s1 - JOINT_INSET_M,
+              sill + JOINT_INSET_M,
+              head - JOINT_INSET_M,
+              0.02,
+            ),
             kind: "glass",
             color: "#86a6bd",
             opacity: 0.38,
@@ -1176,11 +1189,24 @@ function buildFloor(
           const d = t + 0.04;
           const trim = dark ? TRIM_WHITE_DARK : TRIM_WHITE;
           const pieces: [number, number, number, number][] = [
-            [hole.s0 - w, hole.s0, isDoor ? sill : sill - w, head + w],
-            [hole.s1, hole.s1 + w, isDoor ? sill : sill - w, head + w],
-            [hole.s0, hole.s1, head, head + w],
+            // Each piece laps a few millimetres into the opening, so its
+            // faces never share a plane with the wall's.
+            [
+              hole.s0 - w,
+              hole.s0 + JOINT_INSET_M,
+              isDoor ? sill : sill - w,
+              head + w,
+            ],
+            [
+              hole.s1 - JOINT_INSET_M,
+              hole.s1 + w,
+              isDoor ? sill : sill - w,
+              head + w,
+            ],
+            [hole.s0, hole.s1, head - JOINT_INSET_M, head + w],
           ];
-          if (!isDoor) pieces.push([hole.s0, hole.s1, sill - w, sill]);
+          if (!isDoor)
+            pieces.push([hole.s0, hole.s1, sill - w, sill + JOINT_INSET_M]);
           if (patio) {
             const mid = (hole.s0 + hole.s1) / 2;
             pieces.push([mid - w / 2, mid + w / 2, sill, head]);

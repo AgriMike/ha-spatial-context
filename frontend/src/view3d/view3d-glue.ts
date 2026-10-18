@@ -456,6 +456,37 @@ function stairsModel(
       tread,
     );
   }
+  // A flight down from its floor (its top is the floor's level): a wall
+  // along each open side up to the floor, and a level banister on top of
+  // it at the floor's level, running the flight's length to the wall.
+  if (Math.max(st.front, st.back) <= 0.05) {
+    st.rails.forEach((on, i) => {
+      if (!on) return;
+      const x = (i === 0 ? -1 : 1) * (W / 2 + 0.05);
+      box(0.1, rise, D, x, rise / 2, 0, paint);
+      const top = rise + 0.95;
+      const ends = [-D / 2 + 0.05, D / 2 - 0.05];
+      for (const z of ends) box(0.09, 1.0, 0.09, x, rise + 0.5, z, white);
+      box(0.07, 0.05, D, x, top - 0.025, 0, wood);
+      box(0.05, 0.04, D, x, rise + 0.08, 0, white);
+      const count = Math.floor(D / 0.11);
+      for (let k = 1; k < count; k++) {
+        const z = -D / 2 + (D * k) / count;
+        if (Math.abs(z - ends[0]!) < 0.06 || Math.abs(z - ends[1]!) < 0.06)
+          continue;
+        box(
+          0.025,
+          top - 0.05 - (rise + 0.1),
+          0.025,
+          x,
+          (top - 0.05 + rise + 0.1) / 2,
+          z,
+          white,
+        );
+      }
+    });
+    return;
+  }
   // Banisters: the handrail 0.9 m above the treads' nosing line.
   const railH = 0.9;
   const zLow = z0 + dir * 0.06;
