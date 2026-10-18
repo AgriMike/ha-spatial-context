@@ -3,6 +3,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { counterModel, furnitureModel } from "./furniture-models";
 import type {
   Box3d,
   EditHit,
@@ -1322,6 +1323,20 @@ function createView3d(options: View3dOptions): View3dHandle {
   // --- the building ---------------------------------------------------------
 
   function buildItem(item: Item3d): THREE.Object3D {
+    const furniture =
+      item.shape !== "block"
+        ? null
+        : item.counter
+          ? counterModel(item.footprint, item.height, item.tint ?? null)
+          : furnitureModel(item);
+    if (furniture) {
+      furniture.name = item.name;
+      furniture.position.set(item.x, item.y0, item.z);
+      furniture.rotation.y = item.angle;
+      furniture.userData["xz"] = [item.x, item.z];
+      furniture.userData["itemId"] = item.id;
+      return furniture;
+    }
     if (item.shape !== "block") {
       const model = modelItem(item);
       model.name = item.name;

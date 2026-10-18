@@ -2002,6 +2002,28 @@ function buildFloor(
       angle: (-item.rotation_deg * Math.PI) / 180,
       y0: flight ? Math.min(flight.front, flight.back) : y0,
       height: flight ? Math.abs(flight.front - flight.back) : height,
+      ...(entry &&
+      !flight &&
+      shape === "block" &&
+      !(item.points && item.points.length >= 2) &&
+      !isShapeKind(entry.id)
+        ? {
+            model: {
+              kind: entry.id,
+              draw: entry.draw,
+              opts: entry.opts,
+              flip,
+              tint: own,
+            },
+          }
+        : {}),
+      ...(item.points &&
+      item.points.length >= 3 &&
+      item.closed !== false &&
+      height >= 0.7 &&
+      height <= 1.2
+        ? { counter: true, tint: own }
+        : {}),
       ...(flight
         ? {
             stairs: {

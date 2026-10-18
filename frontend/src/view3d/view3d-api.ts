@@ -127,6 +127,20 @@ export interface Item3d {
    * and high ends) is where a railing runs into a wall: it stops there,
    * no newel post. `landing` is how far (metres) the floor at its top
    * runs back over it from its high end. */
+  /** A catalog item drawn as a 3D model (see furniture-models.ts): its
+   * catalog id, drawing kind and options, whether it's mirrored, and the
+   * colour picked for it (null: the model's own). */
+  model?: {
+    kind: string;
+    draw: string;
+    opts: Record<string, string | number | boolean | undefined>;
+    flip: boolean;
+    tint: string | null;
+  };
+  /** A free-form outline tall enough to be a counter: drawn as one. */
+  counter?: boolean;
+  /** The colour picked for the item (null: its model's own). */
+  tint?: string | null;
   stairs?: {
     front: number;
     back: number;
