@@ -246,14 +246,20 @@ export function partSection(part: RoofPart, m: number): RoofSection {
   };
 }
 
+/** How far a porch roof runs on past a side a wall meets, into that
+ * wall's roof, so it dies into the slope rather than ending in mid-air. */
+const PORCH_RUN_ON_M = 1.5;
+
 /** A porch roof against a wall (corners along the wall's face a, b, then
  * out from b and from a): a lean-to falling from the wall straight down
- * to its eave at the front, its sides sided down to the eave. */
+ * to its eave at the front, its sides sided down to the eave, or running
+ * on into the roof of a wall that meets that side. */
 export function porchSection(
   corners: [Vec2, Vec2, Vec2, Vec2],
   eave: number,
   pitch: number,
   overhang: number,
+  abutted: [boolean, boolean] = [false, false],
 ): RoofSection | null {
   const [wa, wb, , oa] = corners;
   const width = Math.hypot(wb[0] - wa[0], wb[1] - wa[1]);
@@ -263,14 +269,14 @@ export function porchSection(
     origin: wa,
     along: [(wb[0] - wa[0]) / width, (wb[1] - wa[1]) / width],
     across: [(oa[0] - wa[0]) / depth, (oa[1] - wa[1]) / depth],
-    a0: 0,
-    a1: width,
+    a0: abutted[0] ? -PORCH_RUN_ON_M : 0,
+    a1: abutted[1] ? width + PORCH_RUN_ON_M : width,
     c0: 0,
     c1: depth,
     eave0: eave,
     eave1: eave,
     pitch,
-    ends: ["gable", "gable"],
+    ends: [abutted[0] ? "open" : "gable", abutted[1] ? "open" : "gable"],
     overhang,
     base: eave,
     gable: "siding",

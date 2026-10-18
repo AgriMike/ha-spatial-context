@@ -790,29 +790,14 @@ function buildFloor(
           const wb = out(at(s1), t / 2);
           const ob = out(wb, PORCH_DEPTH_M);
           const oa = out(wa, PORCH_DEPTH_M);
-          porches.push({ corners: [wa, wb, ob, oa], eave: off + PORCH_EAVE_M });
-          const mid = out(at((s0 + s1) / 2), t / 2 + PORCH_DEPTH_M / 2);
-          walls.push({
-            x: mid[0],
-            z: mid[1],
-            y0: off - 0.5,
-            y1: off - 0.12,
-            length: s1 - s0,
-            depth: PORCH_DEPTH_M,
-            angle,
-            color: CONCRETE,
-          });
-          // A post at each open corner; none where a wall meets the
-          // porch's side (a garage standing forward of the door).
-          for (const [corner, wallEnd, along] of [
-            [oa, wa, 1],
-            [ob, wb, -1],
-          ] as const) {
+          // Which of its sides a wall meets (a garage standing forward of
+          // the door): no post there, and its roof runs on into that wall's.
+          const abuts = ([corner, wallEnd]: [Vec2, Vec2]) => {
             const side: Vec2 = [
               (corner[0] + wallEnd[0]) / 2,
               (corner[1] + wallEnd[1]) / 2,
             ];
-            const abutted = layout.walls.some((w) =>
+            return layout.walls.some((w) =>
               w.points.some((p, k) => {
                 const q = w.points[k + 1];
                 return (
@@ -830,7 +815,33 @@ function buildFloor(
                 );
               }),
             );
-            if (abutted) continue;
+          };
+          const abutted: [boolean, boolean] = [
+            abuts([oa, wa]),
+            abuts([ob, wb]),
+          ];
+          porches.push({
+            corners: [wa, wb, ob, oa],
+            eave: off + PORCH_EAVE_M,
+            abutted,
+          });
+          const mid = out(at((s0 + s1) / 2), t / 2 + PORCH_DEPTH_M / 2);
+          walls.push({
+            x: mid[0],
+            z: mid[1],
+            y0: off - 0.5,
+            y1: off - 0.12,
+            length: s1 - s0,
+            depth: PORCH_DEPTH_M,
+            angle,
+            color: CONCRETE,
+          });
+          // A post at each open corner.
+          for (const [corner, along, side] of [
+            [oa, 1, 0],
+            [ob, -1, 1],
+          ] as const) {
+            if (abutted[side]) continue;
             const inset = POST_M / 2 + 0.05;
             walls.push({
               x: corner[0] + dx * along * inset - outward[0] * inset,
@@ -1705,6 +1716,7 @@ function plannedRoof(
         f.baseY + p.eave,
         PORCH_PITCH,
         PORCH_OVERHANG_M,
+        p.abutted,
       );
       if (s) faces.push(...sectionFaces(s));
     }

@@ -39,6 +39,9 @@ export interface Porch3d {
   corners: [Vec2, Vec2, Vec2, Vec2];
   /** Metres above the floor's level. */
   eave: number;
+  /** Whether a wall meets its a side and its b side (no post there; the
+   * roof runs on into that wall's). */
+  abutted?: [boolean, boolean];
 }
 
 export interface Pane3d {
