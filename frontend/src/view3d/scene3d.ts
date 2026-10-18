@@ -594,6 +594,9 @@ function buildFloor(
     roofOver: (x: number, z: number) => number | null;
     /** What stands on the floors below, on this floor's plane. */
     below: Below;
+    /** The highest planned roof surface at a spot that lies below `y`
+     * (metres above this floor's level), else null. */
+    roofBelow: (x: number, z: number, y: number) => number | null;
   },
 ): Floor3d {
   const { layout, wallHeight: H } = input;
@@ -753,13 +756,25 @@ function buildFloor(
     t: number,
     base: number,
     top: number,
-  ): { s0: number; s1: number; top: number; out?: 1 | -1 }[] => {
+  ): {
+    s0: number;
+    s1: number;
+    top: number;
+    out?: 1 | -1;
+    bot?: number;
+  }[] => {
     const L = distance(a[0], a[1], b[0], b[1]) * m;
     const ux = ((b[0] - a[0]) * m) / L;
     const uz = ((b[1] - a[1]) * m) / L;
     const reach = t / 2 + 0.2;
     const n = Math.max(1, Math.round(L / 0.1));
-    const runs: { s0: number; s1: number; top: number; out?: 1 | -1 }[] = [];
+    const runs: {
+      s0: number;
+      s1: number;
+      top: number;
+      out?: 1 | -1;
+      bot?: number;
+    }[] = [];
     // Which side is out of doors here (a wall indoors along most of its
     // length can run on out past the house's roof).
     const indoorAt = (x: number, z: number) =>
@@ -813,8 +828,29 @@ function buildFloor(
       const roof = roofAcross(x, z, ux, uz, t);
       if (roof !== null && v > roof[1] && !carriesAt(v)) v = roof[1];
       v = Math.max(v, base + 0.3);
+      // Standing over a lower roof (a bedroom over the garage, nothing
+      // under it but that roof): it reaches down into the roof, so no gap
+      // shows between them.
+      let bot: number | undefined;
+      const lows: number[] = [];
+      for (const ds of [-L / n / 2, L / n / 2])
+        for (const o of [-t / 2 - 0.01, 0, t / 2 + 0.01]) {
+          const px = x + ux * ds - uz * o;
+          const pz = z + uz * ds + ux * o;
+          const r = exterior.roofBelow(px, pz, base);
+          if (r !== null) lows.push(r);
+        }
+      if (lows.length) {
+        const low = Math.min(...lows);
+        if (low < base - 0.005 && low > base - 1.2) bot = low - 0.03;
+      }
       const last = runs[runs.length - 1];
-      if (last && Math.abs(last.top - v) < 0.001 && last.out === out)
+      if (
+        last &&
+        Math.abs(last.top - v) < 0.001 &&
+        last.out === out &&
+        last.bot === bot
+      )
         last.s1 = ((k + 1) * L) / n;
       else
         runs.push({
@@ -822,6 +858,7 @@ function buildFloor(
           s1: ((k + 1) * L) / n,
           top: v,
           ...(out ? { out } : {}),
+          ...(bot !== undefined ? { bot } : {}),
         });
     }
     // The joint overlaps past either end belong to the end runs.
@@ -1363,8 +1400,12 @@ function buildFloor(
       /** Solid wall over [s0, s1] from y0 up to `y1` (else the wall's
        * top), cut where the top changes along it; stone below the front's
        * wainscot line. */
-      const solid = (s0: number, s1: number, y0: number, y1?: number) => {
+      const solid = (s0: number, s1: number, y0f: number, y1?: number) => {
         for (const r of runs) {
+          // From the wall's foot, down into a roof under it where there's
+          // one.
+          const y0 =
+            y0f === foot && r.bot !== undefined ? Math.min(y0f, r.bot) : y0f;
           const p0 = Math.max(s0, r.s0);
           const p1 = Math.min(s1, r.s1);
           const hi = Math.min(y1 ?? r.top, r.top);
@@ -2053,6 +2094,16 @@ export function buildScene(input: SceneInput): Scene3d {
             );
           }),
         below: belowOf(f, input.context ?? input.floors),
+        roofBelow: (x, z, y) => {
+          let best: number | null = null;
+          for (const s of sections) {
+            const h = sectionHeightAt(s, x, z);
+            if (h === null) continue;
+            const r = h - f.baseY;
+            if (r < y && (best === null || r > best)) best = r;
+          }
+          return best;
+        },
       },
     ),
   );
@@ -2644,7 +2695,10 @@ function plannedRoof(
       (face) =>
         [
           ...rooms,
-          ...strips.map((c) => ({ y: -Infinity, poly: c.strip })),
+          // The overhang strips (not a gable's siding: that's its wall).
+          ...(face.kind === "siding" || face.kind === "shake"
+            ? []
+            : strips.map((c) => ({ y: -Infinity, poly: c.strip }))),
         ].reduce<RoofFace3d[]>(
           (acc, room) => acc.flatMap((f) => cutFace(f, room.poly, room.y)),
           [face],
@@ -2709,40 +2763,21 @@ function plannedRoof(
 }
 
 /** A roof face less the part of it inside a room's outline (x, z) that
- * stands above `level`: the face in convex pieces. A vertical face (a
- * fascia, a gable) inside the outline and above the level goes whole. */
+ * stands above `level`: the face in convex pieces, clipped exactly (a
+ * vertical face, a gable or a fascia, as much as a sloped one). */
 function cutFace(face: RoofFace3d, room: Vec2[], level: number): RoofFace3d[] {
-  const pts = face.points;
+  type P3 = [number, number, number];
+  const pts = face.points as P3[];
   if (pts.length < 3 || Math.max(...pts.map((p) => p[1])) <= level + 0.01)
     return [face];
-  const [a, b, c] = pts;
-  const ux = b![0] - a![0];
-  const uy = b![1] - a![1];
-  const uz = b![2] - a![2];
-  const vx = c![0] - a![0];
-  const vy = c![1] - a![1];
-  const vz = c![2] - a![2];
-  const nx = uy * vz - uz * vy;
-  const ny = uz * vx - ux * vz;
-  const nz = ux * vy - uy * vx;
-  const len = Math.hypot(nx, ny, nz);
-  if (len < 1e-9) return [face];
-  if (Math.abs(ny) / len < 0.05) {
-    const cx = pts.reduce((acc, p) => acc + p[0], 0) / pts.length;
-    const cz = pts.reduce((acc, p) => acc + p[2], 0) / pts.length;
-    return pointInPolygon(cx, cz, room) ? [] : [face];
-  }
-  // The face's height over a spot, from its plane.
-  const yAt = (x: number, z: number) =>
-    a![1] - (nx * (x - a![0]) + nz * (z - a![2])) / ny;
-  // Room outline wound counter-clockwise (x, z), so "inside" is left.
+  // Room outline wound counter-clockwise (x, z), so "inside" is left; a
+  // concave one cuts as its box.
   let area2 = 0;
   room.forEach(([x, z], k) => {
     const [x2, z2] = room[(k + 1) % room.length]!;
     area2 += x * z2 - x2 * z;
   });
   const ring = area2 > 0 ? room : [...room].reverse();
-  // Only a convex room cuts cleanly by half-planes; others: its box.
   const convex = ring.every((p, k) => {
     const q = ring[(k + 1) % ring.length]!;
     const r = ring[(k + 2) % ring.length]!;
@@ -2750,7 +2785,7 @@ function cutFace(face: RoofFace3d, room: Vec2[], level: number): RoofFace3d[] {
       (q[0] - p[0]) * (r[1] - q[1]) - (q[1] - p[1]) * (r[0] - q[0]) >= -1e-9
     );
   });
-  const cut = convex
+  const cut: Vec2[] = convex
     ? ring
     : (() => {
         const xs = ring.map((p) => p[0]);
@@ -2766,51 +2801,59 @@ function cutFace(face: RoofFace3d, room: Vec2[], level: number): RoofFace3d[] {
           [x1, z0],
           [x1, z1],
           [x0, z1],
-        ] as Vec2[];
+        ];
       })();
-  const clipXZ = (poly: Vec2[], f: (x: number, z: number) => number) => {
-    const out: Vec2[] = [];
+  /** The polygon cut down to where f(x, z) <= 0 (f linear). */
+  const clip3 = (poly: P3[], f: (x: number, z: number) => number): P3[] => {
+    const out: P3[] = [];
     for (let i = 0; i < poly.length; i++) {
       const p = poly[i]!;
       const q = poly[(i + 1) % poly.length]!;
-      const fp = f(p[0], p[1]);
-      const fq = f(q[0], q[1]);
+      const fp = f(p[0], p[2]);
+      const fq = f(q[0], q[2]);
       if (fp <= 0) out.push(p);
       if ((fp < 0 && fq > 0) || (fp > 0 && fq < 0)) {
         const t = fp / (fp - fq);
-        out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
+        out.push([
+          p[0] + (q[0] - p[0]) * t,
+          p[1] + (q[1] - p[1]) * t,
+          p[2] + (q[2] - p[2]) * t,
+        ]);
       }
     }
     return out;
   };
-  const polyArea = (poly: Vec2[]) =>
-    Math.abs(
-      poly.reduce((acc, p, k) => {
-        const q = poly[(k + 1) % poly.length]!;
-        return acc + p[0] * q[1] - q[0] * p[1];
-      }, 0),
-    ) / 2;
-  let rest: Vec2[] = pts.map((p) => [p[0], p[2]]);
-  const pieces: Vec2[][] = [];
+  /** Its area in 3D (any orientation). */
+  const area3 = (poly: P3[]) => {
+    let nx = 0;
+    let ny = 0;
+    let nz = 0;
+    for (let i = 0; i < poly.length; i++) {
+      const p = poly[i]!;
+      const q = poly[(i + 1) % poly.length]!;
+      nx += p[1] * q[2] - p[2] * q[1];
+      ny += p[2] * q[0] - p[0] * q[2];
+      nz += p[0] * q[1] - p[1] * q[0];
+    }
+    return Math.hypot(nx, ny, nz) / 2;
+  };
+  let rest: P3[] = pts;
+  const pieces: P3[][] = [];
   for (let k = 0; k < cut.length && rest.length >= 3; k++) {
     const p = cut[k]!;
     const q = cut[(k + 1) % cut.length]!;
     // > 0 outside this edge (to its right, the ring being CCW).
     const side = (x: number, z: number) =>
       -((q[0] - p[0]) * (z - p[1]) - (q[1] - p[1]) * (x - p[0]));
-    const outside = clipXZ(rest, (x, z) => -side(x, z));
-    if (outside.length >= 3 && polyArea(outside) > 1e-5) pieces.push(outside);
-    rest = clipXZ(rest, side);
+    const outside = clip3(rest, (x, z) => -side(x, z));
+    if (outside.length >= 3 && area3(outside) > 1e-5) pieces.push(outside);
+    rest = clip3(rest, side);
   }
   // What's left lies inside the room: kept only where it's below the floor.
-  if (rest.length >= 3 && polyArea(rest) > 1e-5) {
-    const high = Math.max(...rest.map(([x, z]) => yAt(x, z)));
-    if (high <= level + 0.01) pieces.push(rest);
+  if (rest.length >= 3 && area3(rest) > 1e-5) {
+    if (Math.max(...rest.map((p) => p[1])) <= level + 0.01) pieces.push(rest);
   }
-  return pieces.map((poly) => ({
-    ...face,
-    points: poly.map(([x, z]): [number, number, number] => [x, yAt(x, z), z]),
-  }));
+  return pieces.map((points) => ({ ...face, points }));
 }
 
 /** What stands on the floors below one, on its floor plane (metres): their

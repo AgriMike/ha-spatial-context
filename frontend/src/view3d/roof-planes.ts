@@ -140,10 +140,21 @@ export function eaveCuts(
       rx * s.across[0] + rz * s.across[1],
     ];
   };
+  /** A section's highest point: the lower of two meeting at a gable line
+   * is the one that stops there. */
+  const top = (s: RoofSection) => {
+    const ps = planes(s);
+    let best = -Infinity;
+    for (const a of [s.a0, (s.a0 + s.a1) / 2, s.a1])
+      for (const c of [s.c0, (s.c0 + s.c1) / 2, s.c1])
+        best = Math.max(best, surface(ps, a, c));
+    return best;
+  };
   sections.forEach((s, i) => {
     const o = s.overhang;
     if (o < 0.01) return;
     const ps = planes(s);
+    const own = top(s);
     // Its wall lines that carry an overhang: the eaves (c fixed) and any
     // trimmed end (a fixed), each with the way out.
     const lines: { axis: 0 | 1; v: number; dir: 1 | -1 }[] = [
@@ -161,7 +172,7 @@ export function eaveCuts(
       axis === 1 ? [along, across] : [across, along];
     for (const { axis, v, dir } of lines)
       sections.forEach((b, j) => {
-        if (i === j) return;
+        if (i === j || top(b) <= own + 0.01) return;
         ([0, 1] as const).forEach((end) => {
           if (b.ends[end] === "open") return;
           const ab = end === 0 ? b.a0 : b.a1;
