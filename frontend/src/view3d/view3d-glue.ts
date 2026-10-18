@@ -221,11 +221,27 @@ function gridRoof(
     [2, 0],
     [1, 0],
   ];
+  // A cell where the roof drops sharply (a higher part's eave or gable
+  // over a lower roof) would hang a curtain from the higher part down to
+  // the lower one, in front of the wall between them and its windows: it
+  // counts as an edge instead, so the higher part is closed only down to
+  // its own eave.
+  const steep = (i: number, j: number) => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let dj = 0; dj <= 2; dj++)
+      for (let di = 0; di <= 2; di++) {
+        lo = Math.min(lo, h(i + di, j + dj));
+        hi = Math.max(hi, h(i + di, j + dj));
+      }
+    return hi - lo > 0.4;
+  };
   const cell = (i: number, j: number) =>
     i >= 0 &&
     j >= 0 &&
     defined(i + 1, j + 1) &&
-    ring.every(([di, dj]) => defined(i + di, j + dj));
+    ring.every(([di, dj]) => defined(i + di, j + dj)) &&
+    !steep(i, j);
   const tri = (p: THREE.Vector3, q: THREE.Vector3, r: THREE.Vector3) => {
     const n = new THREE.Vector3()
       .subVectors(q, p)
@@ -239,25 +255,9 @@ function gridRoof(
   };
   const P = (i: number, j: number, y = h(i, j)) =>
     new THREE.Vector3(x0 + i * step, y, z0 + j * step);
-  // A cell joining an eave's overhang to a lower roof below it would hang
-  // a curtain in front of the wall under that eave (and its windows):
-  // left open instead.
-  const curtain = (i: number, j: number) => {
-    let lo = Infinity;
-    let hi = -Infinity;
-    let overhang = false;
-    for (let dj = 0; dj <= 2; dj++)
-      for (let di = 0; di <= 2; di++) {
-        const k = (j + dj) * nx + i + di;
-        lo = Math.min(lo, heights[k]!);
-        hi = Math.max(hi, heights[k]!);
-        if (heights[k]! < eaves[k]! - 0.005) overhang = true;
-      }
-    return overhang && hi - lo > 0.4;
-  };
   for (let j = 0; j + 2 < nz; j += 2)
     for (let i = 0; i + 2 < nx; i += 2) {
-      if (!cell(i, j) || curtain(i, j)) continue;
+      if (!cell(i, j)) continue;
       const mid = P(i + 1, j + 1);
       const around = ring.map(([di, dj]) => P(i + di, j + dj));
       around.forEach((p, k) => tri(p, around[(k + 1) % 8]!, mid));
