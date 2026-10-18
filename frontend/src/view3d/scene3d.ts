@@ -162,8 +162,9 @@ const JOINT_INSET_M = 0.003;
 const JOINT_PROUD_M = 0.002;
 /** Gaps this narrow between an upper floor's rooms still count as floor. */
 const ABOVE_SLIVER_M = 0.06;
-/** A ledge's lid over a closet: its thickness above the walls. */
-const SLAB_LID_M = 0.04;
+/** A ledge's lid over a closet: how far its top sits below the walls'
+ * tops, so it reads as one surface with them without fighting them. */
+const LID_DROP_M = 0.001;
 /** The half wall material (see materials.ts) and its height. */
 const HALF_WALL_MATERIAL = "half_wall";
 const HALF_WALL_M = 1.0;
@@ -564,7 +565,7 @@ function buildFloor(
   showLights: boolean,
   nightGlow: number,
   floorAbove: (x: number, z: number) => number | null,
-  upperWalls: { a: Vec2; b: Vec2; y: number }[],
+  upperWalls: UpperWall[],
   /** Which way the street is (unit, floor plane), and the stone
    * wainscot's top above this floor's level. */
   exterior: {
@@ -817,6 +818,82 @@ function buildFloor(
         (o.top > st.top || (o.top === st.top && oi < si)),
     );
   };
+  /** Where a staircase side's railing runs into a wall (this floor's, or
+   * one standing on a floor above, like the landing's half wall carrying
+   * on from it): metres from its low and high ends at which it stops,
+   * 0 where it ends free. */
+  const railEnds = (si: number, side: 0 | 1): [number, number] => {
+    const st = stairs[si]!;
+    const f = st.item;
+    const d = f.depth_cm / 100;
+    const [back, front] = st.sides[side]!;
+    // The railing's line, 5 cm in from the side (as drawn), low end first.
+    const cx = f.x * m;
+    const cz = f.y * m;
+    const inset = (p: Vec2): Vec2 => {
+      const mx = (back[0] + front[0]) / 2;
+      const mz = (back[1] + front[1]) / 2;
+      const k = Math.hypot(mx - cx, mz - cz);
+      return k < 1e-6
+        ? p
+        : [p[0] - ((mx - cx) / k) * 0.05, p[1] - ((mz - cz) / k) * 0.05];
+    };
+    const low = st.front < st.back ? front : back;
+    const high = low === front ? back : front;
+    const p0 = inset(low);
+    const p1 = inset(high);
+    const rx = (p1[0] - p0[0]) / d;
+    const rz = (p1[1] - p0[1]) / d;
+    const bottom = Math.min(st.front, st.back);
+    const rise = Math.abs(st.front - st.back);
+    // The handrail's height (above this floor's level) along it.
+    const railAt = (u: number) => bottom + rise * (u / d) + 0.9;
+    /** The stretch of the railing's line inside a wall's footprint. */
+    const inside = (a: Vec2, b: Vec2, t: number): [number, number] | null => {
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (L < 0.01) return null;
+      const vx = (b[0] - a[0]) / L;
+      const vz = (b[1] - a[1]) / L;
+      let lo = 0;
+      let hi = d;
+      for (const [o, du, min, max] of [
+        [(p0[0] - a[0]) * vx + (p0[1] - a[1]) * vz, rx * vx + rz * vz, 0, L],
+        [
+          -(p0[0] - a[0]) * vz + (p0[1] - a[1]) * vx,
+          -rx * vz + rz * vx,
+          -t / 2 - 0.01,
+          t / 2 + 0.01,
+        ],
+      ] as const) {
+        if (Math.abs(du) < 1e-9) {
+          if (o < min || o > max) return null;
+          continue;
+        }
+        const ua = (min - o) / du;
+        const ub = (max - o) / du;
+        lo = Math.max(lo, Math.min(ua, ub));
+        hi = Math.min(hi, Math.max(ua, ub));
+      }
+      return hi > lo ? [lo, hi] : null;
+    };
+    let lowCut = 0;
+    let highCut = 0;
+    const meet = (a: Vec2, b: Vec2, t: number, y0: number, y1: number) => {
+      const span = inside(a, b, t);
+      if (!span) return;
+      const [u0, u1] = span;
+      if (u1 >= d - 0.1 && railAt(u0) > y0 && railAt(u0) < y1)
+        highCut = Math.max(highCut, d - u0);
+      if (u0 <= 0.1 && railAt(u1) > y0 && railAt(u1) < y1)
+        lowCut = Math.max(lowCut, u1);
+    };
+    for (const o of segsM)
+      if (o.t > RAIL_THICKNESS_M) meet(o.a, o.b, o.t, -Infinity, Infinity);
+    for (const w of upperWalls)
+      if (w.t > RAIL_THICKNESS_M) meet(w.a, w.b, w.t, w.y, w.y + w.h);
+    // A railing nearly all inside walls is no railing: left as drawn.
+    return lowCut + highCut > d - 0.3 ? [0, 0] : [lowCut, highCut];
+  };
   /** A thin rail along a staircase's side: the staircase's own railing
    * stands in for it. */
   const alongStairs = (a: Vec2, b: Vec2) =>
@@ -883,11 +960,27 @@ function buildFloor(
     if (pts.length < 2) continue;
     const t = wallThicknessCm(wall) / 100;
     // A stub (a door jamb, a closet return) stands alone as an odd slab:
-    // left out.
+    // left out. One joining two walls at its ends (the short jog where a
+    // wall steps over) closes the step between them: kept.
     let run = 0;
     for (let i = 0; i < pts.length - 1; i++)
       run += distance(pts[i]![0], pts[i]![1], pts[i + 1]![0], pts[i + 1]![1]);
-    if (run * m < STUB_M) continue;
+    const joined = (p: Vec2) =>
+      segsM.some(
+        (o) =>
+          o.id !== wall.id &&
+          o.t > RAIL_THICKNESS_M &&
+          pointToSegmentDistance(
+            p[0] * m,
+            p[1] * m,
+            o.a[0],
+            o.a[1],
+            o.b[0],
+            o.b[1],
+          ) < 0.02,
+      );
+    if (run * m < STUB_M && !(joined(pts[0]!) && joined(pts[pts.length - 1]!)))
+      continue;
     // A thin one is a stair rail or balustrade: waist high.
     const rail = t <= RAIL_THICKNESS_M;
     // A half wall (a landing's guard) stops about a metre up, capped.
@@ -1500,7 +1593,7 @@ function buildFloor(
         slabs.push({
           id: `${room.id}:ledge`,
           name: `${room.name} ledge`,
-          y: (room.floor_offset_m ?? 0) + H + SLAB_LID_M,
+          y: (room.floor_offset_m ?? 0) + H - LID_DROP_M,
           points: pts,
           color: dark ? "#8a8580" : "#f4f1ec",
           finish: "plain",
@@ -1563,6 +1656,10 @@ function buildFloor(
               front: flight.front,
               back: flight.back,
               rails: [railed(si, 0), railed(si, 1)] as [boolean, boolean],
+              railEnds: [railEnds(si, 0), railEnds(si, 1)] as [
+                [number, number],
+                [number, number],
+              ],
             },
           }
         : {}),
@@ -2279,23 +2376,39 @@ function plannedRoof(
   return { ...roofColors(input.dark), grid: null, faces };
 }
 
+/** A wall of a floor above, on this floor's plane (metres): its segment,
+ * the level it stands on, its thickness and height. */
+interface UpperWall {
+  a: Vec2;
+  b: Vec2;
+  y: number;
+  t: number;
+  h: number;
+}
+
 /** For one floor: the walls of floors above it, as segments on the floor
  * plane (metres) with their level relative to it. */
-function upperWallsOf(
-  floor: FloorInput,
-  floors: FloorInput[],
-): { a: Vec2; b: Vec2; y: number }[] {
+function upperWallsOf(floor: FloorInput, floors: FloorInput[]): UpperWall[] {
   return floors
     .filter((f) => f.baseY > floor.baseY + 0.5)
     .flatMap((f) => {
       const m = metersPerUnit(f.layout.scale);
-      return f.layout.walls.flatMap((w) =>
-        w.points.slice(1).map((p, i) => ({
+      return f.layout.walls.flatMap((w) => {
+        const t = wallThicknessCm(w) / 100;
+        const h =
+          w.material === HALF_WALL_MATERIAL
+            ? HALF_WALL_M + 0.04
+            : t <= RAIL_THICKNESS_M
+              ? RAIL_HEIGHT_M
+              : f.wallHeight;
+        return w.points.slice(1).map((p, i) => ({
           a: [w.points[i]![0] * m, w.points[i]![1] * m] as Vec2,
           b: [p[0] * m, p[1] * m] as Vec2,
           y: f.baseY - floor.baseY,
-        })),
-      );
+          t,
+          h,
+        }));
+      });
     });
 }
 

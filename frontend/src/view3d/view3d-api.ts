@@ -67,7 +67,8 @@ export interface Slab3d {
   emissive: string | null;
   emissiveIntensity: number;
   outdoor: boolean;
-  /** A lid over a room (a closet's top, a ledge): painted all round. */
+  /** A lid over a room (a closet's top, a ledge): painted all round, like
+   * the walls' tops it lies flush with. */
   lid?: boolean;
 }
 
@@ -100,8 +101,15 @@ export interface Item3d {
   shape: "block" | "plant" | "tree" | "lamp" | "shower" | "stairs";
   /** A staircase: the floor levels (metres above the floor's level) at its
    * front (local +z) and back ends, and whether its left (local -x) and
-   * right sides get a railing. */
-  stairs?: { front: number; back: number; rails: [boolean, boolean] };
+   * right sides get a railing. `railEnds` (per side, metres from its low
+   * and high ends) is where a railing runs into a wall: it stops there,
+   * no newel post. */
+  stairs?: {
+    front: number;
+    back: number;
+    rails: [boolean, boolean];
+    railEnds?: [[number, number], [number, number]];
+  };
 }
 
 export interface Floor3d {

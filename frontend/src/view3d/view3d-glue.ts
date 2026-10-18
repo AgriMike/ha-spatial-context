@@ -501,32 +501,41 @@ function stairsModel(
   const zHigh = z0 + dir * (D - 0.06);
   const yLow = h + railH;
   const yHigh = rise + railH;
+  const slope = (yHigh - yLow) / Math.abs(zHigh - zLow);
+  const railY = (z: number) => yLow + slope * Math.abs(z - zLow);
   st.rails.forEach((on, i) => {
     if (!on) return;
     const x = (i === 0 ? -1 : 1) * (W / 2 - 0.05);
-    for (const [z, y] of [
-      [zLow, 0],
-      [zHigh, rise],
-    ] as const)
-      box(0.09, railH + 0.12, 0.09, x, y + (railH + 0.12) / 2, z, white);
-    const len = Math.hypot(zHigh - zLow, yHigh - yLow);
+    // Where it runs into a wall it stops in that wall's face (a little
+    // into it), with no newel; elsewhere a newel post ends it.
+    const [lowCut, highCut] = st.railEnds?.[i] ?? [0, 0];
+    const za = lowCut > 0 ? z0 + dir * (lowCut - 0.04) : zLow;
+    const zb = highCut > 0 ? z0 + dir * (D - highCut + 0.04) : zHigh;
+    if (lowCut <= 0)
+      box(0.09, railH + 0.12, 0.09, x, (railH + 0.12) / 2, zLow, white);
+    if (highCut <= 0)
+      box(0.09, railH + 0.12, 0.09, x, rise + (railH + 0.12) / 2, zHigh, white);
+    const ya = railY(za);
+    const yb = railY(zb);
     const rail = box(
       0.07,
       0.05,
-      len,
+      Math.hypot(zb - za, yb - ya),
       x,
-      (yLow + yHigh) / 2,
-      (zLow + zHigh) / 2,
+      (ya + yb) / 2,
+      (za + zb) / 2,
       wood,
     );
-    rail.rotation.x = -Math.atan2(yHigh - yLow, Math.abs(zHigh - zLow)) * dir;
+    rail.rotation.x = -Math.atan2(yb - ya, Math.abs(zb - za)) * dir;
     // Two spindles a step, from the tread up to the handrail.
     for (let k = 1; k <= n; k++)
       for (const f of [0.25, 0.75]) {
         const z = z0 + dir * (k - 1 + f) * run;
+        const along = dir * (z - z0);
+        if (along < dir * (za - z0) + 0.04 || along > dir * (zb - z0) - 0.04)
+          continue;
         if (Math.abs(z - zLow) < 0.08 || Math.abs(z - zHigh) < 0.08) continue;
-        const t = Math.abs(z - zLow) / Math.abs(zHigh - zLow);
-        const top = yLow + (yHigh - yLow) * t - 0.03;
+        const top = railY(z) - 0.03;
         const bottom = k * h;
         box(0.025, top - bottom, 0.025, x, (top + bottom) / 2, z, white);
       }
@@ -1146,9 +1155,17 @@ function createView3d(options: View3dOptions): View3dHandle {
       });
       geom.rotateX(-Math.PI / 2);
       geom.translate(0, slab.y + (slab.outdoor ? -SLAB_M - 0.02 : -SLAB_M), 0);
+      // A lid is painted like the walls' tops it lies flush with, so the
+      // two read as one surface.
       const mat = new THREE.MeshStandardMaterial({
-        color: slab.tinted ? slab.color : dark ? "#8a8580" : "#ffffff",
-        roughness: slab.finish === "tile" ? 0.45 : 0.85,
+        color: slab.lid
+          ? spec.wallColor
+          : slab.tinted
+            ? slab.color
+            : dark
+              ? "#8a8580"
+              : "#ffffff",
+        roughness: slab.lid ? 0.92 : slab.finish === "tile" ? 0.45 : 0.85,
         map: slab.finish === "plain" ? null : floorTexture(slab.finish),
       });
       if (slab.emissive) {
@@ -1158,8 +1175,12 @@ function createView3d(options: View3dOptions): View3dHandle {
       // Its edge and underside are the outside's where they show (a bay
       // overhanging the floor below), not the floor's finish.
       const edge = new THREE.MeshStandardMaterial({
-        color: slab.outdoor || slab.lid ? slab.color : spec.sidingColor,
-        roughness: 0.9,
+        color: slab.lid
+          ? spec.wallColor
+          : slab.outdoor
+            ? slab.color
+            : spec.sidingColor,
+        roughness: slab.lid ? 0.92 : 0.9,
       });
       const mesh = new THREE.Mesh(geom, [mat, edge]);
       mesh.name = slab.name || `Room ${slab.id}`;
