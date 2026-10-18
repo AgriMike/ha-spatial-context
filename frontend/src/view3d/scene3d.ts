@@ -13,6 +13,7 @@ import type {
   HomeAssistant,
   Opening,
   RoofPlan,
+  Room,
   Scale,
 } from "../types";
 import {
@@ -25,6 +26,7 @@ import {
 } from "./roof-planes";
 import type {
   Box3d,
+  EditRef,
   FloorFinish,
   Floor3d,
   Item3d,
@@ -36,6 +38,7 @@ import type {
   Slab3d,
   Terrain3d,
   Vec2,
+  WallCover,
 } from "./view3d-api";
 import {
   BASE_WIDTH,
@@ -1239,6 +1242,40 @@ function buildFloor(
         outside,
       } = wallSpan([ax, ay], [bx, by], t);
       const runs = wallRuns([ax, ay], [bx, by], t, base, fullTop);
+      // The rooms either side (left: the box's +Z face), for their wall
+      // coverings.
+      const sideCover = (dir: 1 | -1): WallCover | null => {
+        const reach = (t / 2 + 0.15) / m;
+        const len = distance(ax, ay, bx, by);
+        const nx = (-(by - ay) / len) * dir;
+        const ny = ((bx - ax) / len) * dir;
+        const votes = new Map<Room, number>();
+        for (const f of [0.25, 0.5, 0.75]) {
+          const px = ax + (bx - ax) * f + nx * reach;
+          const py = ay + (by - ay) * f + ny * reach;
+          const room = layout.rooms.find(
+            (r) =>
+              !r.outdoor &&
+              r.points.length >= 3 &&
+              pointInPolygon(px, py, r.points),
+          );
+          if (room) votes.set(room, (votes.get(room) ?? 0) + 1);
+        }
+        let room: Room | null = null;
+        let best = 0;
+        for (const [r, n] of votes) if (n > best) [room, best] = [r, n];
+        if (!room || (!room.wall_finish && !room.wall_color)) return null;
+        return {
+          finish: room.wall_finish ?? "paint",
+          color: room.wall_color ?? (dark ? "#8a8580" : "#f4f1ec"),
+        };
+      };
+      const sideCovers: [WallCover | null, WallCover | null] = [
+        sideCover(1),
+        sideCover(-1),
+      ];
+      const covered = !!(sideCovers[0] || sideCovers[1]);
+      const wallRef: EditRef = { kind: "wall", id: wall.id, seg: i };
       /** The lowest top over [s0, s1]. */
       const topOver = (s0: number, s1: number) =>
         Math.min(
@@ -1283,6 +1320,8 @@ function buildFloor(
           depth: depth === t && !side ? t - 2 * JOINT_INSET_M : depth,
           angle,
           ...(side && depth === t ? { outside: side } : {}),
+          ref: wallRef,
+          ...(covered && depth === t ? { cover: sideCovers } : {}),
         };
       };
       // The front: a door gets a porch, the rest a stone wainscot.
@@ -1563,6 +1602,10 @@ function buildFloor(
       for (const hole of holes) {
         const { opening } = hole;
         if (hole.s0 > cursor) solid(cursor, hole.s0, foot);
+        // What's drawn for the opening itself (its casing, leaf, glass and
+        // covers) picks as the opening.
+        const wallsBefore = walls.length;
+        const panesBefore = panes.length;
         const top = topOver(hole.s0, hole.s1);
         const isDoor = opening.type === "door";
         // A window's kind sets its glass: a transom is a ~45 cm strip just
@@ -1717,6 +1760,11 @@ function buildFloor(
             opacity: garage ? 1 : 0.92,
           });
         }
+        const openingRef: EditRef = { kind: "opening", id: opening.id };
+        for (let k = wallsBefore; k < walls.length; k++)
+          if (walls[k]!.color) walls[k]!.ref = openingRef;
+        for (let k = panesBefore; k < panes.length; k++)
+          panes[k]!.box.ref = openingRef;
         cursor = hole.s1;
       }
       if (L + ext1 > cursor) solid(cursor, L + ext1, foot);
@@ -1853,13 +1901,16 @@ function buildFloor(
       name: room.name,
       y: room.floor_offset_m ?? 0,
       points: room.points.map(([x, y]): Vec2 => [x * m, y * m]),
-      color: mixHex(
-        room.outdoor ? deckBase : floorBase,
-        fill.color,
-        Math.min(1, fill.opacity * 1.6),
-      ),
-      finish: floorFinish(room.name, !!room.outdoor),
-      tinted: fill.opacity > 0.05,
+      // A colour picked for the floor, else the room's fill on the base.
+      color:
+        room.floor_color ??
+        mixHex(
+          room.outdoor ? deckBase : floorBase,
+          fill.color,
+          Math.min(1, fill.opacity * 1.6),
+        ),
+      finish: room.floor_finish ?? floorFinish(room.name, !!room.outdoor),
+      tinted: !!room.floor_color || fill.opacity > 0.05,
       emissive: lit ? light.color : null,
       // A lit room's glow shows at night; daylight drowns it out.
       emissiveIntensity: lit
@@ -1913,7 +1964,12 @@ function buildFloor(
     const entry = catalogItem(item.kind);
     const flip = !!item.mirrored !== !!entry?.flip;
     const prims = itemPrims(item, entry);
-    const placed = itemHeight(item.kind, entry, H);
+    const auto = itemHeight(item.kind, entry, H);
+    // A height or elevation set by hand wins.
+    const placed = {
+      height: item.height_cm ? item.height_cm / 100 : auto.height,
+      y0: item.elevation_cm != null ? item.elevation_cm / 100 : auto.y0,
+    };
     // In a room set higher or lower, with it.
     const height = placed.height;
     const y0 = placed.y0 + offsetAt(item.x, item.y);

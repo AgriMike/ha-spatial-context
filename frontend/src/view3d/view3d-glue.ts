@@ -5,6 +5,10 @@ import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type {
   Box3d,
+  EditHit,
+  EditOverlay,
+  EditPointer,
+  EditRef,
   FloorFinish,
   Floor3d,
   Item3d,
@@ -20,6 +24,7 @@ import type {
   View3dHandle,
   View3dModule,
   View3dOptions,
+  WallFinishKind,
 } from "./view3d-api";
 
 /** Lazily loaded by <floorplan-3d-view> (see views/floorplan-3d-view.ts) —
@@ -70,8 +75,175 @@ function boxGeometry(b: Box3d): THREE.BufferGeometry {
   return g;
 }
 
+/** The wall coverings' atlas: one tile each, in this order (0 is plain
+ * paint), and the size (metres) one tile spans on a wall. */
+const COVER_TILES: WallFinishKind[] = [
+  "paint",
+  "tile",
+  "brick",
+  "wood",
+  "wallpaper",
+  "stone",
+  "shiplap",
+];
+const COVER_TILE_M: Record<WallFinishKind, number> = {
+  paint: 1,
+  tile: 0.6,
+  brick: 0.6,
+  wood: 1.2,
+  wallpaper: 0.8,
+  stone: 1.2,
+  shiplap: 1.2,
+};
+
+let coverAtlas: THREE.Texture | null = null;
+/** Greyscale patterns (white is the covering's own colour), side by
+ * side; tinted by each face's colour. */
+function wallCoverAtlas(): THREE.Texture {
+  if (coverAtlas) return coverAtlas;
+  const T = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = T * COVER_TILES.length;
+  canvas.height = T;
+  const g = canvas.getContext("2d")!;
+  let seed = 7;
+  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const grey = (v: number) => `rgb(${v},${v},${v})`;
+  COVER_TILES.forEach((kind, k) => {
+    const x0 = k * T;
+    g.save();
+    g.beginPath();
+    g.rect(x0, 0, T, T);
+    g.clip();
+    g.fillStyle = "#fff";
+    g.fillRect(x0, 0, T, T);
+    switch (kind) {
+      case "tile": {
+        g.fillStyle = grey(200);
+        for (let i = 0; i <= 4; i++) {
+          g.fillRect(x0 + (i * T) / 4 - 1, 0, 3, T);
+          g.fillRect(x0, (i * T) / 4 - 1, T, 3);
+        }
+        break;
+      }
+      case "brick": {
+        g.fillStyle = grey(150);
+        g.fillRect(x0, 0, T, T);
+        const rows = 8;
+        const h = T / rows;
+        for (let r = 0; r < rows; r++) {
+          const off = r % 2 ? T / 8 : 0;
+          for (let c = -1; c < 4; c++) {
+            g.fillStyle = grey(225 + Math.floor((rand() - 0.5) * 50));
+            g.fillRect(x0 + off + (c * T) / 4 + 2, r * h + 2, T / 4 - 4, h - 4);
+          }
+        }
+        break;
+      }
+      case "wood": {
+        const n = 6;
+        for (let c = 0; c < n; c++) {
+          g.fillStyle = grey(222 + Math.floor((rand() - 0.5) * 40));
+          g.fillRect(x0 + (c * T) / n, 0, T / n, T);
+          g.globalAlpha = 0.15;
+          for (let s = 0; s < 6; s++) {
+            g.fillStyle = grey(140);
+            g.fillRect(x0 + (c * T) / n + rand() * (T / n), 0, 1, T);
+          }
+          g.globalAlpha = 1;
+          g.fillStyle = grey(150);
+          g.fillRect(x0 + (c * T) / n, 0, 2, T);
+        }
+        break;
+      }
+      case "wallpaper": {
+        for (let c = 0; c < 8; c++) {
+          g.fillStyle = grey(c % 2 ? 236 : 252);
+          g.fillRect(x0 + (c * T) / 8, 0, T / 8, T);
+        }
+        g.fillStyle = grey(222);
+        for (let r = 0; r < 8; r++)
+          for (let c = 0; c < 8; c++) {
+            g.beginPath();
+            g.arc(x0 + (c + 0.5) * (T / 8), (r + 0.5) * (T / 8), 3, 0, 7);
+            g.fill();
+          }
+        break;
+      }
+      case "stone": {
+        g.fillStyle = grey(150);
+        g.fillRect(x0, 0, T, T);
+        const rows = 5;
+        const h = T / rows;
+        for (let r = 0; r < rows; r++) {
+          let x = -rand() * 40;
+          while (x < T) {
+            const w = 30 + rand() * 50;
+            g.fillStyle = grey(200 + Math.floor((rand() - 0.5) * 70));
+            g.fillRect(x0 + x + 2, r * h + 2, w - 4, h - 4);
+            x += w;
+          }
+        }
+        break;
+      }
+      case "shiplap": {
+        const n = 8;
+        for (let r = 0; r < n; r++) {
+          g.fillStyle = grey(140);
+          g.fillRect(x0, (r * T) / n, T, 2);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+    g.restore();
+  });
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  // No mipmaps: each tile wraps on its own (see wallMaterial).
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearFilter;
+  coverAtlas = tex;
+  return tex;
+}
+
+/** The walls' material: vertex colours, and each face's covering from the
+ * atlas, tiled across it in metres. */
+function wallMaterial(): THREE.MeshStandardMaterial {
+  const mat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.92,
+    map: wallCoverAtlas(),
+  });
+  const tiles = COVER_TILES.length.toFixed(1);
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nattribute float cover;\nvarying float vCover;",
+      )
+      .replace("#include <uv_vertex>", "#include <uv_vertex>\nvCover = cover;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying float vCover;")
+      .replace(
+        "#include <map_fragment>",
+        [
+          "#ifdef USE_MAP",
+          "vec2 cuv = vec2(",
+          `  (floor(vCover + 0.5) + clamp(fract(vMapUv.x), 0.004, 0.996)) / ${tiles},`,
+          "  clamp(fract(vMapUv.y), 0.004, 0.996));",
+          "diffuseColor *= texture2D(map, cuv);",
+          "#endif",
+        ].join("\n"),
+      );
+  };
+  return mat;
+}
+
 /** A wall box coloured per face: its outdoor face (Box3d.outside) sided,
- * the rest painted. */
+ * the rest painted, or covered (Box3d.cover) where it faces a room that
+ * has a covering; with UVs in metres for the covering's pattern. */
 function wallGeometry(
   b: Box3d,
   paint: THREE.Color,
@@ -81,29 +253,52 @@ function wallGeometry(
   const own = b.color ? new THREE.Color(b.color) : null;
   const outdoor = b.stone ? stone : siding;
   const g = boxGeometry(b);
-  const count = g.getAttribute("position").count;
+  const pos = g.getAttribute("position");
+  const count = pos.count;
   const colors = new Float32Array(count * 3);
+  const cover = new Float32Array(count);
+  const uv = new Float32Array(count * 2);
   // BoxGeometry's faces come +X, -X, +Y, -Y, +Z, -Z, four corners each.
-  // An outside wall's outdoor face and ends are sided; its other long
-  // face, top and bottom are painted.
   const indoor = b.outside === 1 ? 20 : b.outside === -1 ? 16 : -1;
+  // The wall's direction on the floor plane (local +X after rotateY).
+  const ux = Math.cos(b.angle);
+  const uz = -Math.sin(b.angle);
+  const covers = b.cover?.map((c) =>
+    c
+      ? {
+          tile: Math.max(0, COVER_TILES.indexOf(c.finish)),
+          color: new THREE.Color(c.color),
+          size: COVER_TILE_M[c.finish] ?? 1,
+        }
+      : null,
+  );
   for (let v = 0; v < count; v++) {
+    const face = Math.floor(v / 4);
     // Its top (and bottom) is the same painted cap on every wall, so
     // tops read as one clean cut where walls meet. An inside wall's ends
     // are painted (a jamb, a wall stopping above a half wall); an outside
     // wall's are sided: where one shows past a corner it's the outside of
     // the house (its door jambs are cased over).
-    const cap = v >= 8 && v < 16;
-    const c =
-      own ??
-      (!cap && indoor >= 0 && !(v >= indoor && v < indoor + 4)
-        ? outdoor
-        : paint);
+    const cap = face === 2 || face === 3;
+    const isOutdoor = !cap && indoor >= 0 && !(v >= indoor && v < indoor + 4);
+    const side = face === 4 ? 0 : face === 5 ? 1 : -1;
+    const cov = !own && !isOutdoor && side >= 0 ? covers?.[side] : null;
+    const c = own ?? (isOutdoor ? outdoor : (cov?.color ?? paint));
     colors[v * 3] = c.r;
     colors[v * 3 + 1] = c.g;
     colors[v * 3 + 2] = c.b;
+    cover[v] = cov ? cov.tile : 0;
+    const size = cov?.size ?? 1;
+    const x = pos.getX(v);
+    const y = pos.getY(v);
+    const z = pos.getZ(v);
+    const along = face < 2 ? x * -uz + z * ux : x * ux + z * uz;
+    uv[v * 2] = (cap ? x : along) / size;
+    uv[v * 2 + 1] = (cap ? z : y) / size;
   }
   g.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  g.setAttribute("cover", new THREE.BufferAttribute(cover, 1));
+  g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
   return g;
 }
 
@@ -786,26 +981,24 @@ function fillWalls(
     const merged = mergeGeometries(parts);
     for (const p of parts) p.dispose();
     if (merged) {
-      const mesh = new THREE.Mesh(
-        merged,
-        new THREE.MeshStandardMaterial({
-          vertexColors: true,
-          roughness: 0.92,
-        }),
-      );
+      const mesh = new THREE.Mesh(merged, wallMaterial());
       mesh.name = "Walls";
+      // Which box each triangle came from (12 a box), for picking.
+      mesh.userData["boxes"] = kept;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       walls.add(mesh);
     }
   }
   const byLook = new Map<string, THREE.BufferGeometry[]>();
+  const boxesByLook = new Map<string, Box3d[]>();
   for (const pane of spec.panes) {
     if (!keep(pane.box)) continue;
     const key = `${pane.kind}|${pane.color}|${pane.opacity}`;
     const list = byLook.get(key) ?? [];
     list.push(boxGeometry(pane.box));
     byLook.set(key, list);
+    boxesByLook.set(key, [...(boxesByLook.get(key) ?? []), pane.box]);
   }
   for (const [key, parts] of byLook) {
     const [kind, color, opacity] = key.split("|") as [string, string, string];
@@ -832,6 +1025,7 @@ function fillWalls(
           : "Blinds";
     mesh.castShadow = kind !== "glass";
     mesh.receiveShadow = kind !== "glass";
+    mesh.userData["boxes"] = boxesByLook.get(key);
     walls.add(mesh);
   }
 }
@@ -891,6 +1085,7 @@ const FLOOR_TILE_M: Record<FloorFinish, number> = {
   carpet: 1.5,
   concrete: 3,
   deck: 1.4,
+  stone: 2.4,
 };
 
 function floorTexture(finish: FloorFinish): THREE.Texture {
@@ -965,6 +1160,22 @@ function floorTexture(finish: FloorFinish): THREE.Texture {
     case "concrete":
       noise([188, 186, 182], 0.1, 20000);
       break;
+    case "stone": {
+      // Flagstones: irregular slabs in a running pattern, dark joints.
+      noise([176, 170, 160], 0.1, 12000);
+      const rows = 3;
+      const h = size / rows;
+      for (let r = 0; r < rows; r++) {
+        let x = -rand() * size * 0.3;
+        while (x < size) {
+          const w = size * (0.22 + rand() * 0.25);
+          g.fillStyle = shade([176, 170, 160], 0.22);
+          g.fillRect(x + 3, r * h + 3, w - 6, h - 6);
+          x += w;
+        }
+      }
+      break;
+    }
   }
   const tex = new THREE.CanvasTexture(canvas);
   tex.wrapS = THREE.RepeatWrapping;
@@ -1117,6 +1328,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       model.position.set(item.x, item.y0, item.z);
       model.rotation.y = item.angle;
       model.userData["xz"] = [item.x, item.z];
+      model.userData["itemId"] = item.id;
       return model;
     }
     const shape = floorShape(item.footprint);
@@ -1151,6 +1363,7 @@ function createView3d(options: View3dOptions): View3dHandle {
     mesh.name = item.name;
     mesh.position.set(item.x, item.y0, item.z);
     mesh.userData["xz"] = [item.x, item.z];
+    mesh.userData["itemId"] = item.id;
     mesh.rotation.y = item.angle;
     mesh.castShadow = item.height > 0.03 && !item.light;
     mesh.receiveShadow = true;
@@ -1160,6 +1373,7 @@ function createView3d(options: View3dOptions): View3dHandle {
   function buildFloor(spec: Floor3d, pointLights: Set<string>): FloorEntry {
     const group = new THREE.Group();
     group.name = spec.name;
+    group.userData["floorId"] = spec.floorId;
     const walls = new THREE.Group();
     walls.name = "Walls";
     group.add(walls);
@@ -1202,6 +1416,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       });
       const mesh = new THREE.Mesh(geom, [mat, edge]);
       mesh.name = slab.name || `Room ${slab.id}`;
+      if (!slab.lid) mesh.userData["roomId"] = slab.id;
       mesh.receiveShadow = true;
       group.add(mesh);
       // Facing down: the shape in XY (z as y) turned so +Z looks down.
@@ -1947,6 +2162,377 @@ function createView3d(options: View3dOptions): View3dHandle {
   canvas.addEventListener("pointerup", onPointerUp);
   canvas.addEventListener("pointercancel", onPointerUp);
 
+  // --- editing -----------------------------------------------------------------
+
+  /** The floor being edited (null: not editing). */
+  let editFloorId: string | null = null;
+  let editOverlay: EditOverlay = {};
+  const overlayGroup = new THREE.Group();
+  overlayGroup.name = "Edit overlay";
+  overlayGroup.renderOrder = 999;
+  scene.add(overlayGroup);
+  /** The handles' pick spheres, by index. */
+  let handleMeshes: THREE.Mesh[] = [];
+  let editDragId: number | null = null;
+  let editDown: { x: number; y: number; id: number; moved: boolean } | null =
+    null;
+  let hoverQueued: PointerEvent | null = null;
+
+  const SELECT_COLOR = "#1e88e5";
+  const HOVER_COLOR = "#ffb300";
+
+  function editEntry(): FloorEntry | undefined {
+    return editFloorId ? floors.get(editFloorId) : undefined;
+  }
+
+  function shownChain(o: THREE.Object3D | null): boolean {
+    for (let n = o; n; n = n.parent) {
+      if (!n.visible) return false;
+      if (n.name === "Scans" || n === overlayGroup) return false;
+    }
+    return true;
+  }
+
+  /** What's under the pointer, in the edit floor's frame. */
+  function editHitAt(e: { clientX: number; clientY: number }): EditHit {
+    const rect = renderer.domElement.getBoundingClientRect();
+    pointer.set(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    raycaster.setFromCamera(pointer, camera);
+    const entry = editEntry();
+    const floorY = entry ? entry.group.position.y : 0;
+    const handleHit = raycaster.intersectObjects(handleMeshes, false)[0];
+    const handle = handleHit
+      ? handleMeshes.indexOf(handleHit.object as THREE.Mesh)
+      : null;
+    const groups = [...floors.values()].map((f) => f.group);
+    const hits = raycaster
+      .intersectObjects(groups, true)
+      .filter((h) => shownChain(h.object));
+    const h = hits[0];
+    let ref: EditRef | null = null;
+    if (h) {
+      let floorId: string | null = null;
+      for (let n: THREE.Object3D | null = h.object; n; n = n.parent) {
+        const ud = n.userData;
+        if (!ref && typeof ud["itemId"] === "string")
+          ref = { kind: "item", id: ud["itemId"] as string };
+        if (!ref && typeof ud["roomId"] === "string")
+          ref = { kind: "room", id: ud["roomId"] as string };
+        if (typeof ud["floorId"] === "string") {
+          floorId = ud["floorId"] as string;
+          break;
+        }
+      }
+      const boxes = h.object.userData["boxes"] as Box3d[] | undefined;
+      if (!ref && boxes && h.faceIndex != null)
+        ref = boxes[Math.floor(h.faceIndex / 12)]?.ref ?? null;
+      if (floorId !== editFloorId) ref = null;
+    }
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -floorY);
+    const at = raycaster.ray.intersectPlane(plane, new THREE.Vector3());
+    const n = h?.face?.normal
+      ? h.face.normal.clone().transformDirection(h.object.matrixWorld)
+      : null;
+    return {
+      ref,
+      point: h ? [h.point.x, h.point.y - floorY, h.point.z] : null,
+      normal: n ? [n.x, n.y, n.z] : null,
+      floor: at ? [at.x, at.z] : null,
+      handle: handle !== null && handle >= 0 ? handle : null,
+    };
+  }
+
+  function sendEdit(
+    type: EditPointer["type"],
+    e: PointerEvent | MouseEvent,
+  ): boolean {
+    if (!options.onEditPointer) return false;
+    const r = options.onEditPointer({
+      type,
+      hit: editHitAt(e),
+      shift: e.shiftKey,
+      alt: e.altKey,
+      ctrl: e.ctrlKey || e.metaKey,
+      button: e.button,
+    });
+    return r === true;
+  }
+
+  const onEditDown = (e: PointerEvent) => {
+    if (!editFloorId || e.button !== 0) return;
+    editDown = { x: e.clientX, y: e.clientY, id: e.pointerId, moved: false };
+    if (sendEdit("down", e)) {
+      editDragId = e.pointerId;
+      controls.enabled = false;
+      renderer.domElement.setPointerCapture(e.pointerId);
+      e.stopPropagation();
+    }
+  };
+  const onEditMove = (e: PointerEvent) => {
+    if (!editFloorId) return;
+    if (
+      editDown &&
+      e.pointerId === editDown.id &&
+      Math.hypot(e.clientX - editDown.x, e.clientY - editDown.y) > 4
+    )
+      editDown.moved = true;
+    if (editDragId === e.pointerId) {
+      sendEdit("drag", e);
+      return;
+    }
+    if (e.buttons !== 0) return;
+    // Hover at most once a frame.
+    const queued = hoverQueued;
+    hoverQueued = e;
+    if (!queued)
+      requestAnimationFrame(() => {
+        const last = hoverQueued;
+        hoverQueued = null;
+        if (last && editFloorId) sendEdit("move", last);
+      });
+  };
+  const onEditUp = (e: PointerEvent) => {
+    if (!editFloorId) return;
+    const wasDrag = editDragId === e.pointerId;
+    if (wasDrag) {
+      sendEdit("up", e);
+      editDragId = null;
+      controls.enabled = true;
+    }
+    if (editDown && editDown.id === e.pointerId && !editDown.moved)
+      sendEdit("click", e);
+    editDown = null;
+  };
+  const onEditDblClick = (e: MouseEvent) => {
+    if (!editFloorId) return;
+    sendEdit("dblclick", e);
+  };
+
+  function clearOverlay(): void {
+    for (const child of [...overlayGroup.children]) {
+      overlayGroup.remove(child);
+      child.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        mesh.geometry?.dispose();
+        const mat = mesh.material as THREE.Material | THREE.Material[];
+        if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+        else mat?.dispose();
+      });
+    }
+    handleMeshes = [];
+  }
+
+  /** Box outlines (and a faint fill) over the boxes, in a colour. */
+  function outlineBoxes(boxes: Box3d[], color: string, fill: number): void {
+    for (const b of boxes) {
+      const grown = {
+        ...b,
+        length: b.length + 0.02,
+        depth: b.depth + 0.02,
+        y0: b.y0 - 0.01,
+        y1: b.y1 + 0.01,
+      };
+      const g = boxGeometry(grown);
+      const edges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(g),
+        new THREE.LineBasicMaterial({
+          color,
+          depthTest: false,
+          transparent: true,
+          opacity: 0.95,
+        }),
+      );
+      edges.renderOrder = 1000;
+      overlayGroup.add(edges);
+      if (fill > 0) {
+        const mesh = new THREE.Mesh(
+          g,
+          new THREE.MeshBasicMaterial({
+            color,
+            transparent: true,
+            opacity: fill,
+            depthWrite: false,
+          }),
+        );
+        mesh.renderOrder = 999;
+        overlayGroup.add(mesh);
+      } else g.dispose();
+    }
+  }
+
+  /** The boxes drawn for a plan thing on the edit floor. */
+  function refBoxes(entry: FloorEntry, ref: EditRef): Box3d[] {
+    if (ref.kind === "wall" || ref.kind === "opening") {
+      const match = (b: Box3d) =>
+        b.ref?.kind === ref.kind &&
+        b.ref.id === ref.id &&
+        (ref.seg === undefined || b.ref.seg === ref.seg);
+      return [
+        ...entry.spec.walls.filter(match),
+        ...entry.spec.panes.map((p) => p.box).filter(match),
+      ];
+    }
+    if (ref.kind === "item") {
+      const obj = entry.furniture.children.find(
+        (c) => c.userData["itemId"] === ref.id,
+      );
+      if (!obj) return [];
+      // Its own (unturned) bounds, turned with it.
+      const item = entry.spec.items.find((i) => i.id === ref.id);
+      if (!item) return [];
+      return [
+        {
+          x: obj.position.x,
+          z: obj.position.z,
+          y0: item.y0,
+          y1: item.y0 + Math.max(0.05, item.height),
+          length: item.width,
+          depth: item.depth,
+          angle: obj.rotation.y,
+        },
+      ];
+    }
+    return [];
+  }
+
+  function drawRef(ref: EditRef, color: string, fill: number): void {
+    const entry = editEntry();
+    if (!entry) return;
+    if (ref.kind === "room") {
+      const slab = entry.spec.slabs.find((s) => s.id === ref.id);
+      if (!slab) return;
+      const pts = slab.points.map(
+        ([x, z]) => new THREE.Vector3(x, slab.y + 0.02, z),
+      );
+      const line = new THREE.LineLoop(
+        new THREE.BufferGeometry().setFromPoints(pts),
+        new THREE.LineBasicMaterial({
+          color,
+          depthTest: false,
+          transparent: true,
+        }),
+      );
+      line.renderOrder = 1000;
+      overlayGroup.add(line);
+      if (fill > 0) {
+        const shape = new THREE.Shape(
+          slab.points.map(([x, z]) => new THREE.Vector2(x, z)),
+        );
+        const g = new THREE.ShapeGeometry(shape);
+        g.rotateX(Math.PI / 2);
+        g.translate(0, slab.y + 0.015, 0);
+        const mesh = new THREE.Mesh(
+          g,
+          new THREE.MeshBasicMaterial({
+            color,
+            transparent: true,
+            opacity: fill,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+          }),
+        );
+        overlayGroup.add(mesh);
+      }
+      return;
+    }
+    outlineBoxes(refBoxes(entry, ref), color, fill);
+  }
+
+  function applyOverlay(): void {
+    clearOverlay();
+    const entry = editEntry();
+    if (!entry) {
+      invalidate();
+      return;
+    }
+    overlayGroup.position.y = entry.group.position.y;
+    const o = editOverlay;
+    if (o.hover && !(o.select && sameRef(o.hover, o.select)))
+      drawRef(o.hover, HOVER_COLOR, 0.12);
+    if (o.select) drawRef(o.select, SELECT_COLOR, 0.18);
+    if (o.ghost?.length) {
+      for (const b of o.ghost) {
+        const mesh = new THREE.Mesh(
+          boxGeometry(b),
+          new THREE.MeshBasicMaterial({
+            color: "#43a047",
+            transparent: true,
+            opacity: 0.45,
+            depthWrite: false,
+          }),
+        );
+        mesh.renderOrder = 998;
+        overlayGroup.add(mesh);
+      }
+      outlineBoxes(o.ghost, "#2e7d32", 0);
+    }
+    for (const line of o.lines ?? []) {
+      if (line.length < 2) continue;
+      const l = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(
+          line.map(([x, y, z]) => new THREE.Vector3(x, y, z)),
+        ),
+        new THREE.LineBasicMaterial({
+          color: "#e53935",
+          depthTest: false,
+          transparent: true,
+        }),
+      );
+      l.renderOrder = 1001;
+      overlayGroup.add(l);
+    }
+    (o.handles ?? []).forEach(([x, y, z], k) => {
+      const active = o.activeHandle === k;
+      const dot = new THREE.Mesh(
+        new THREE.SphereGeometry(0.075, 16, 12),
+        new THREE.MeshBasicMaterial({
+          color: active ? "#ff7043" : "#ffffff",
+          depthTest: false,
+          transparent: true,
+        }),
+      );
+      dot.position.set(x, y, z);
+      dot.renderOrder = 1002;
+      const ring = new THREE.Mesh(
+        new THREE.SphereGeometry(0.1, 16, 12),
+        new THREE.MeshBasicMaterial({
+          color: SELECT_COLOR,
+          depthTest: false,
+          transparent: true,
+          opacity: 0.9,
+          side: THREE.BackSide,
+        }),
+      );
+      ring.position.set(x, y, z);
+      ring.renderOrder = 1001;
+      // A larger, unseen sphere to grab it by.
+      const pick = new THREE.Mesh(
+        new THREE.SphereGeometry(0.18, 8, 6),
+        new THREE.MeshBasicMaterial({ visible: false }),
+      );
+      pick.position.set(x, y, z);
+      overlayGroup.add(ring, dot, pick);
+      pick.updateMatrixWorld(true);
+      handleMeshes.push(pick);
+    });
+    overlayGroup.updateMatrixWorld(true);
+    invalidate();
+  }
+
+  function sameRef(a: EditRef, b: EditRef): boolean {
+    return a.kind === b.kind && a.id === b.id;
+  }
+
+  const canvasEl = renderer.domElement;
+  canvasEl.addEventListener("pointerdown", onEditDown, true);
+  canvasEl.addEventListener("pointermove", onEditMove);
+  canvasEl.addEventListener("pointerup", onEditUp);
+  canvasEl.addEventListener("pointercancel", onEditUp);
+  canvasEl.addEventListener("dblclick", onEditDblClick);
+
   // --- export ---------------------------------------------------------------
 
   async function exportGlb(): Promise<Blob> {
@@ -1960,8 +2546,35 @@ function createView3d(options: View3dOptions): View3dHandle {
   }
 
   return {
-    setScene,
+    setScene(spec) {
+      setScene(spec);
+      applyOverlay();
+    },
     setScans,
+    setEditFloor(floorId) {
+      editFloorId = floorId;
+      if (!floorId) {
+        editOverlay = {};
+        editDragId = null;
+        controls.enabled = true;
+      }
+      canvasEl.style.cursor = floorId ? "default" : "";
+      applyOverlay();
+    },
+    setEditOverlay(overlay) {
+      editOverlay = overlay;
+      applyOverlay();
+    },
+    previewItem(id, x, z, angle) {
+      const obj = editEntry()?.furniture.children.find(
+        (c) => c.userData["itemId"] === id,
+      );
+      if (!obj) return;
+      obj.position.x = x;
+      obj.position.z = z;
+      obj.rotation.y = angle;
+      applyOverlay();
+    },
     setScanMode(mode) {
       if (mode === scanMode) return;
       scanMode = mode;
@@ -1980,6 +2593,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       applyWallHiding();
       placeFloors();
       placeSun();
+      applyOverlay();
       invalidate();
     },
     view,
@@ -2004,6 +2618,11 @@ function createView3d(options: View3dOptions): View3dHandle {
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
       canvas.removeEventListener("pointercancel", onPointerUp);
+      canvasEl.removeEventListener("pointerdown", onEditDown, true);
+      canvasEl.removeEventListener("pointermove", onEditMove);
+      canvasEl.removeEventListener("pointerup", onEditUp);
+      canvasEl.removeEventListener("pointercancel", onEditUp);
+      canvasEl.removeEventListener("dblclick", onEditDblClick);
       controls.dispose();
       disposeObject(scene, false);
       for (const t of textures.values()) t.dispose();

@@ -99,6 +99,17 @@ _ROOM_SCHEMA = {
         vol.Coerce(float), vol.Range(min=-360, max=360)
     ),
     vol.Optional("label_color"): vol.Any(vol.Match(r"^#[0-9a-fA-F]{6}$"), None),
+    # The 3D view's finishes (see types.ts's Room): the floor's material and
+    # colour, and the covering and colour of the walls facing into it.
+    vol.Optional("floor_finish"): vol.Any(
+        None, vol.In(["wood", "tile", "carpet", "concrete", "stone", "plain"])
+    ),
+    vol.Optional("floor_color"): vol.Any(vol.Match(r"^#[0-9a-fA-F]{6}$"), None),
+    vol.Optional("wall_finish"): vol.Any(
+        None,
+        vol.In(["paint", "tile", "brick", "wood", "wallpaper", "stone", "shiplap"]),
+    ),
+    vol.Optional("wall_color"): vol.Any(vol.Match(r"^#[0-9a-fA-F]{6}$"), None),
 }
 
 _PIN_SCHEMA = {
@@ -185,6 +196,14 @@ _FURNITURE_SCHEMA = {
         vol.Length(max=500),
     ),
     vol.Optional("closed"): bool,
+    # The 3D view's height for the item and how far above the floor it
+    # stands (a wall shelf, a hung TV), centimetres; unset = the catalog's.
+    vol.Optional("height_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=1, max=2000))
+    ),
+    vol.Optional("elevation_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=-500, max=2000))
+    ),
     # A drawn shape's per-corner rounding, 0-100 % each.
     vol.Optional("corners"): vol.Any(
         None,

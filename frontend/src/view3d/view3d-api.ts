@@ -30,6 +30,28 @@ export interface Box3d {
   stone?: boolean;
   /** One colour all over instead: a porch post, a stoop. */
   color?: string;
+  /** What it's part of on the plan, for picking in the editor. */
+  ref?: EditRef;
+  /** The covering of its painted long faces facing into a room: local +Z
+   * then -Z (null: plain paint in the floor's wall colour). */
+  cover?: [WallCover | null, WallCover | null];
+}
+
+/** A wall's covering on one face: its kind and colour. */
+export interface WallCover {
+  finish: WallFinishKind;
+  color: string;
+}
+
+export type WallFinishKind =
+  "paint" | "tile" | "brick" | "wood" | "wallpaper" | "stone" | "shiplap";
+
+/** A thing on a floor's plan the editor can pick: a wall (and its
+ * segment), an opening, a furniture item, a room. */
+export interface EditRef {
+  kind: "wall" | "opening" | "item" | "room";
+  id: string;
+  seg?: number;
 }
 
 /** A porch roof against an outside wall: `corners` along the wall's
@@ -73,7 +95,7 @@ export interface Slab3d {
 }
 
 export type FloorFinish =
-  "wood" | "tile" | "carpet" | "concrete" | "deck" | "plain";
+  "wood" | "tile" | "carpet" | "concrete" | "stone" | "deck" | "plain";
 
 export interface Item3d {
   id: string;
@@ -247,6 +269,11 @@ export interface View3dOptions {
   /** A scan was dragged (or snapped) to a new pose. `final` is true when
    * the drag ends — the moment to save. */
   onScanMove?(id: string, pose: ScanPose, final: boolean): void;
+  /** Editing (see View3dHandle's setEditFloor): the pointer went down,
+   * moved, came up, clicked or double-clicked over the scene. Returning
+   * true from a "down" starts a drag: the camera stays put and the moves
+   * that follow come as "drag" until the "up". */
+  onEditPointer?(e: EditPointer): boolean | void;
   /** A scan finished loading (or failed). */
   onScanStatus?(
     id: string,
@@ -255,7 +282,51 @@ export interface View3dOptions {
   ): void;
 }
 
+/** What's under the pointer while editing. Points are in the edit
+ * floor's own frame: x, z on its plan (metres), y above its level. */
+export interface EditHit {
+  /** The thing hit on the edit floor (null: nothing of its own, or another
+   * floor's). */
+  ref: EditRef | null;
+  point: [number, number, number] | null;
+  /** The hit face's normal (world). */
+  normal: [number, number, number] | null;
+  /** Where the pointer meets the edit floor's level. */
+  floor: [number, number] | null;
+  /** A handle (setEditOverlay's) under the pointer: its index. */
+  handle: number | null;
+}
+
+export interface EditPointer {
+  type: "down" | "move" | "drag" | "up" | "click" | "dblclick";
+  hit: EditHit;
+  shift: boolean;
+  alt: boolean;
+  ctrl: boolean;
+  button: number;
+}
+
+/** What the editor draws over the scene, on the edit floor. */
+export interface EditOverlay {
+  select?: EditRef | null;
+  hover?: EditRef | null;
+  /** Grab handles (edit-floor frame); `activeHandle` drawn picked. */
+  handles?: [number, number, number][];
+  activeHandle?: number | null;
+  /** Guide lines (polylines, edit-floor frame). */
+  lines?: [number, number, number][][];
+  /** Boxes to preview (a wall being drawn, a door about to be placed). */
+  ghost?: Box3d[];
+}
+
 export interface View3dHandle {
+  /** Turns editing on for a floor (null: off): pointer events go to
+   * onEditPointer and the overlay is drawn on it. */
+  setEditFloor(floorId: string | null): void;
+  setEditOverlay(overlay: EditOverlay): void;
+  /** Shows a furniture item at a new spot and turn while it's dragged
+   * (edit-floor frame, metres; angle as Item3d's), before it's saved. */
+  previewItem(id: string, x: number, z: number, angle: number): void;
   setScene(scene: Scene3d): void;
   /** Adds, updates and removes scans to match the list. */
   setScans(scans: ScanPlacement3d[]): void;

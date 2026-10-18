@@ -5146,6 +5146,11 @@ export class SpatialContextPanel extends LitElement {
                           editable
                           closable
                           @close-3d=${() => (this._view3dOpen = false)}
+                          @layout-edit=${(
+                            e: CustomEvent<{ patch: Partial<FloorLayout> }>,
+                          ) => this._updateLayout(e.detail.patch)}
+                          @layout-undo=${() => this._undoRedo("undo")}
+                          @layout-redo=${() => this._undoRedo("redo")}
                         ></floorplan-3d-view>`
                       : nothing
                   }

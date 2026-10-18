@@ -3,17 +3,56 @@ import { property, query, state } from "lit/decorators.js";
 import { safeCustomElement } from "../define";
 import { sharedStyles, switchStyles } from "../styles";
 import { localize } from "../i18n";
-import { HaClient, fetchScan } from "../ha-client";
+import { HaClient, fetchScan, layoutFinishesUnsaved } from "../ha-client";
 import type {
+  FloorFinishKind,
   FloorLayout,
   FloorMeta,
+  FurnitureItem,
   GroundSetting,
   HomeAssistant,
+  Opening,
+  OpeningType,
   RoofPart,
   RoofPlan,
+  Room,
   RoomScan,
   View3dSettings,
+  Wall,
+  WallFinishKind,
 } from "../types";
+import { catalogItem } from "../canvas/furniture-catalog";
+import {
+  WALL_MATERIALS,
+  materialLabel,
+  wallThicknessCm,
+} from "../canvas/materials";
+import {
+  DOOR_WIDTH_CM,
+  NEW_WALL_CM,
+  WINDOW_WIDTH_CM,
+  addItem,
+  addOpening,
+  addWall,
+  deleteItem,
+  deleteOpening,
+  deleteWall,
+  duplicateItem,
+  insertCorner,
+  moveCorners,
+  moveSegment,
+  offsetFrom,
+  patchItem,
+  patchOpening,
+  patchRoom,
+  patchWall,
+  snapAngle,
+  snapPoint,
+  spotOnWall,
+  type LayoutPatch,
+  type Pt,
+} from "./editor3d";
+import "./furniture-library-sidebar";
 import { COMPASS_POINTS, type Sky } from "../canvas/sun";
 import {
   computeCoverOpenness,
@@ -29,12 +68,25 @@ import {
   type FloorInput,
 } from "../view3d/scene3d";
 import type {
+  Box3d,
+  EditPointer,
+  EditRef,
   ScanMode,
   ScanPlacement3d,
   ScanPose,
   View3dHandle,
   View3dModule,
 } from "../view3d/view3d-api";
+
+/** The 3D editor's tools. */
+type EditTool = "select" | "wall" | "door" | "window" | "object";
+
+/** A drag under way in the 3D editor (plan units). */
+type EditDrag =
+  | { kind: "item"; id: string; offset: Pt; at: Pt }
+  | { kind: "seg"; wallId: string; seg: number; start: Pt; d: number }
+  | { kind: "corner"; wallId: string; index: number; from: Pt; to: Pt }
+  | { kind: "opening"; id: string; wallId: string; at: Pt };
 
 /** Where the lazily loaded three.js module is served (see rollup's
  * view3dModule and frontend.py's static path). */
@@ -350,6 +402,72 @@ export class Floorplan3dView extends LitElement {
       .divider {
         border-top: 1px solid var(--sc-divider);
       }
+      .editor .tools {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 4px;
+      }
+      .editor .tools button {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        padding: 6px 2px;
+        font-size: var(--sc-fs-caption);
+        border: 1px solid var(--sc-divider);
+      }
+      .editor .tools button.active {
+        background: color-mix(in srgb, var(--sc-accent) 18%, transparent);
+        border-color: var(--sc-accent);
+      }
+      .editor .tools ha-icon,
+      .editor .buttons ha-icon {
+        --mdc-icon-size: 20px;
+      }
+      .editor .buttons {
+        align-items: center;
+      }
+      .editor .row input[type="text"] {
+        flex: 1;
+        min-width: 0;
+        height: var(--sc-h-field);
+        padding: 0 8px;
+        border: 1px solid var(--sc-divider);
+        border-radius: var(--sc-r-control);
+        background: var(--sc-bg);
+        color: var(--sc-fg);
+        font: inherit;
+      }
+      .editor .row select {
+        width: 150px;
+      }
+      .editor .row input[type="color"] {
+        width: 48px;
+        height: 32px;
+        padding: 0;
+        border: 1px solid var(--sc-divider);
+        border-radius: var(--sc-r-control);
+        background: none;
+      }
+      .editor .row button.icon {
+        padding: 4px;
+        display: inline-flex;
+      }
+      .editor .unit {
+        width: 22px;
+        font-size: var(--sc-fs-small);
+        color: var(--sc-fg-secondary);
+      }
+      .editor button.danger {
+        color: var(--sc-danger);
+      }
+      .editor furniture-library-sidebar {
+        position: static;
+        width: auto;
+        max-height: 60vh;
+        min-height: 320px;
+        flex: 1;
+      }
       .notice {
         position: absolute;
         left: 50%;
@@ -408,6 +526,18 @@ export class Floorplan3dView extends LitElement {
   @state() private _uploading = false;
   @state() private _scanStatus = new Map<string, string>();
   @state() private _exporting = false;
+  /** The 3D editor: on, its tool, what's selected and hovered. */
+  @state() private _editing = false;
+  @state() private _tool: EditTool = "select";
+  @state() private _sel: EditRef | null = null;
+  @state() private _hover: EditRef | null = null;
+  @state() private _armedKind: string | null = null;
+  private _armedRot = 0;
+  /** A wall being drawn, its corners so far (plan units). */
+  private _draft: Pt[] = [];
+  private _ghost: Box3d[] = [];
+  private _lines: [number, number, number][][] = [];
+  private _drag: EditDrag | null = null;
 
   @query(".stage") private _stage!: HTMLElement;
   @query("input[type=file]") private _fileInput!: HTMLInputElement;
@@ -425,6 +555,7 @@ export class Floorplan3dView extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    window.addEventListener("keydown", this._onEditKey, true);
     // Back after being detached (destroyed in disconnectedCallback).
     this.requestUpdate();
     // The sun moves: re-light every minute while following the clock.
@@ -435,6 +566,7 @@ export class Floorplan3dView extends LitElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    window.removeEventListener("keydown", this._onEditKey, true);
     if (this._clock) clearInterval(this._clock);
     for (const [floorId, timer] of this._saveTimers) {
       clearTimeout(timer);
@@ -474,6 +606,7 @@ export class Floorplan3dView extends LitElement {
             ? fetchScan(this.hass, id)
             : Promise.reject(new Error("offline")),
         onScanMove: this._onScanMove,
+        onEditPointer: (e) => this._onEditPointer(e),
         onScanStatus: (id, status, message) => {
           const next = new Map(this._scanStatus);
           if (status === "ready") next.delete(id);
@@ -786,6 +919,11 @@ export class Floorplan3dView extends LitElement {
       handle.setSpread(spread);
     }
     handle.setScanMode(this._scanMode);
+    handle.setEditFloor(this._editing ? this.floorId : null);
+    // What was selected may be gone (undone, deleted on the plan).
+    if (this._sel && this.layout && !this._refExists(this._sel))
+      this._sel = null;
+    if (this._editing) this._pushOverlay();
     handle.setEditScan(
       this.editable && this._sheetOpen && this._moveMode
         ? this._selectedScanId
@@ -795,9 +933,29 @@ export class Floorplan3dView extends LitElement {
   };
   private _lastLayouts: FloorLayout[] = [];
 
-  /** The roof goes on the whole building, never a single floor. */
+  /** The roof goes on the whole building, never a single floor; it's off
+   * while editing (the rooms are what's edited). */
   private get _roofShown(): boolean {
-    return this.dollhouse && this._roof && this._shownFloorIds.length > 1;
+    return (
+      !this._editing &&
+      this.dollhouse &&
+      this._roof &&
+      this._shownFloorIds.length > 1
+    );
+  }
+
+  private _refExists(ref: EditRef): boolean {
+    const l = this.layout;
+    if (!l) return false;
+    const list =
+      ref.kind === "wall"
+        ? l.walls
+        : ref.kind === "opening"
+          ? l.openings
+          : ref.kind === "item"
+            ? l.furniture
+            : l.rooms;
+    return (list as { id: string }[]).some((x) => x.id === ref.id);
   }
   private _spreadShown = -1;
 
@@ -967,6 +1125,933 @@ export class Floorplan3dView extends LitElement {
     );
   }
 
+  // --- editor -------------------------------------------------------------------
+
+  /** Units per centimetre on this floor's plan. */
+  private get _perCm(): number {
+    return this.layout ? 1 / (metersPerUnit(this.layout.scale) * 100) : 1;
+  }
+
+  private _toggleEditing(): void {
+    this._editing = !this._editing;
+    this._tool = "select";
+    this._sel = null;
+    this._hover = null;
+    this._draft = [];
+    this._ghost = [];
+    this._lines = [];
+    this._drag = null;
+    if (this._editing) this._sheetOpen = false;
+    this._sceneSig = "";
+  }
+
+  private _setTool(tool: EditTool): void {
+    this._tool = tool;
+    this._draft = [];
+    this._ghost = [];
+    this._lines = [];
+    if (tool !== "object") this._armedKind = null;
+    this._pushOverlay();
+  }
+
+  /** Sends a change to the panel: one undo step, saved like a plan edit. */
+  private _edit(patch: LayoutPatch): void {
+    if (!Object.keys(patch).length) return;
+    this.dispatchEvent(
+      new CustomEvent("layout-edit", {
+        detail: { patch },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private _wallOf(id: string | undefined): Wall | undefined {
+    return this.layout?.walls.find((w) => w.id === id);
+  }
+
+  /** A box (edit-floor frame) standing on a plan segment. */
+  private _segBox(
+    a: Pt,
+    b: Pt,
+    thickCm: number,
+    y0: number,
+    y1: number,
+  ): Box3d {
+    const m = metersPerUnit(this.layout?.scale ?? null);
+    const dx = (b[0] - a[0]) * m;
+    const dz = (b[1] - a[1]) * m;
+    return {
+      x: ((a[0] + b[0]) / 2) * m,
+      z: ((a[1] + b[1]) / 2) * m,
+      y0,
+      y1,
+      length: Math.max(0.01, Math.hypot(dx, dz)),
+      depth: thickCm / 100,
+      angle: Math.atan2(-dz, dx),
+    };
+  }
+
+  /** What the overlay shows: the selection, the hover, a selected wall's
+   * corners, and the previews. */
+  private _pushOverlay(): void {
+    const handle = this._handle;
+    if (!handle || !this._editing || !this.floorId) return;
+    const m = metersPerUnit(this.layout?.scale ?? null);
+    const H = this._wallHeight(this.floorId);
+    let handles: [number, number, number][] = [];
+    const wall =
+      this._sel?.kind === "wall" ? this._wallOf(this._sel.id) : undefined;
+    if (wall)
+      handles = this._cornerPoints(wall).map((p) => [
+        p[0] * m,
+        H + 0.05,
+        p[1] * m,
+      ]);
+    handle.setEditOverlay({
+      select: this._sel,
+      hover: this._hover,
+      handles,
+      activeHandle: this._drag?.kind === "corner" ? this._drag.index : null,
+      lines: this._lines,
+      ghost: this._ghost,
+    });
+  }
+
+  /** A wall's corners, without a closed outline's repeated last point. */
+  private _cornerPoints(wall: Wall): Pt[] {
+    const pts = wall.points as Pt[];
+    const closed =
+      pts.length > 2 &&
+      Math.abs(pts[0]![0] - pts[pts.length - 1]![0]) < 1e-6 &&
+      Math.abs(pts[0]![1] - pts[pts.length - 1]![1]) < 1e-6;
+    return closed ? pts.slice(0, -1) : pts;
+  }
+
+  private _onEditPointer = (e: EditPointer): boolean => {
+    const layout = this.layout;
+    if (!layout || !this._editing) return false;
+    const m = metersPerUnit(layout.scale);
+    const toPlan = (p: [number, number] | null): Pt | null =>
+      p ? [p[0] / m, p[1] / m] : null;
+    const floorPt = toPlan(e.hit.floor);
+    const grid = e.shift ? 0 : 5 * this._perCm;
+    const reach = 15 * this._perCm;
+    const H = this.floorId ? this._wallHeight(this.floorId) : 2.4;
+    const tool = this._tool;
+
+    // --- drawing a wall ---
+    if (tool === "wall") {
+      if (!floorPt) return false;
+      let p = snapPoint(layout, floorPt, grid, reach);
+      const last = this._draft[this._draft.length - 1];
+      if (last && !e.alt) p = snapAngle(last, p);
+      if (e.type === "move" || e.type === "click") {
+        if (e.type === "click") {
+          const first = this._draft[0];
+          if (
+            first &&
+            this._draft.length >= 3 &&
+            Math.hypot(p[0] - first[0], p[1] - first[1]) < reach
+          ) {
+            this._finishWall([...this._draft, first]);
+            return false;
+          }
+          if (!last || Math.hypot(p[0] - last[0], p[1] - last[1]) > 1e-6)
+            this._draft = [...this._draft, p];
+        }
+        const pts = [...this._draft, p];
+        this._ghost = pts
+          .slice(1)
+          .map((b, k) => this._segBox(pts[k]!, b, NEW_WALL_CM, 0, H));
+        this._lines = [pts.map((q) => [q[0] * m, H + 0.02, q[1] * m])];
+        this._pushOverlay();
+      } else if (e.type === "dblclick") {
+        this._finishWall(this._draft);
+      }
+      return false;
+    }
+
+    // --- placing a door or window ---
+    if (tool === "door" || tool === "window") {
+      const wall =
+        e.hit.ref?.kind === "wall" ? this._wallOf(e.hit.ref.id) : undefined;
+      const at = e.hit.point
+        ? ([e.hit.point[0] / m, e.hit.point[2] / m] as Pt)
+        : floorPt;
+      const widthCm = tool === "door" ? DOOR_WIDTH_CM : WINDOW_WIDTH_CM;
+      const width = widthCm * this._perCm;
+      const spot = wall && at ? spotOnWall(wall, at, width / 2) : null;
+      if (e.type === "move") {
+        if (wall && spot) {
+          const a = wall.points[spot.seg] as Pt;
+          const b = wall.points[spot.seg + 1] as Pt;
+          const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+          const ux = (b[0] - a[0]) / len;
+          const uy = (b[1] - a[1]) / len;
+          const half = width / 2;
+          const p0: Pt = [spot.at[0] - ux * half, spot.at[1] - uy * half];
+          const p1: Pt = [spot.at[0] + ux * half, spot.at[1] + uy * half];
+          this._ghost = [
+            this._segBox(
+              p0,
+              p1,
+              wallThicknessCm(wall) + 4,
+              tool === "door" ? 0 : 0.9,
+              2.1,
+            ),
+          ];
+        } else this._ghost = [];
+        this._pushOverlay();
+      } else if (e.type === "click" && wall && spot) {
+        const { patch, id } = addOpening(layout, wall, spot.at, tool, width);
+        this._edit(patch);
+        this._sel = { kind: "opening", id };
+        this._ghost = [];
+        if (!e.shift) this._tool = "select";
+        this._pushOverlay();
+      }
+      return false;
+    }
+
+    // --- placing an object ---
+    if (tool === "object") {
+      const entry = this._armedKind ? catalogItem(this._armedKind) : undefined;
+      if (!entry || !floorPt) return false;
+      const p = snapPoint({ ...layout, walls: [] }, floorPt, grid, 0);
+      if (e.type === "move") {
+        const a = (-this._armedRot * Math.PI) / 180;
+        this._ghost = [
+          {
+            x: p[0] * m,
+            z: p[1] * m,
+            y0: 0,
+            y1: 0.8,
+            length: entry.w / 100,
+            depth: entry.d / 100,
+            angle: a,
+          },
+        ];
+        this._pushOverlay();
+      } else if (e.type === "click") {
+        const added = addItem(layout, entry.id, p, this._armedRot);
+        if (added) {
+          this._edit(added.patch);
+          this._sel = { kind: "item", id: added.id };
+        }
+        if (!e.shift) {
+          this._tool = "select";
+          this._armedKind = null;
+          this._ghost = [];
+        }
+        this._pushOverlay();
+      }
+      return false;
+    }
+
+    // --- selecting and dragging ---
+    const sel = this._sel;
+    if (e.type === "move") {
+      const hover = e.hit.ref;
+      if (JSON.stringify(hover) !== JSON.stringify(this._hover)) {
+        this._hover = hover;
+        this._pushOverlay();
+      }
+      return false;
+    }
+    if (e.type === "down") {
+      if (e.hit.handle !== null && sel?.kind === "wall") {
+        const wall = this._wallOf(sel.id);
+        const corner = wall
+          ? this._cornerPoints(wall)[e.hit.handle]
+          : undefined;
+        if (wall && corner) {
+          this._drag = {
+            kind: "corner",
+            wallId: wall.id,
+            index: e.hit.handle,
+            from: corner,
+            to: corner,
+          };
+          this._pushOverlay();
+          return true;
+        }
+      }
+      const ref = e.hit.ref;
+      if (
+        !ref ||
+        !sel ||
+        ref.kind !== sel.kind ||
+        ref.id !== sel.id ||
+        !floorPt
+      )
+        return false;
+      if (ref.kind === "item") {
+        const item = layout.furniture.find((f) => f.id === ref.id);
+        if (!item || item.locked) return false;
+        this._drag = {
+          kind: "item",
+          id: item.id,
+          offset: [item.x - floorPt[0], item.y - floorPt[1]],
+          at: [item.x, item.y],
+        };
+        return true;
+      }
+      if (ref.kind === "wall" && ref.seg !== undefined) {
+        this._drag = {
+          kind: "seg",
+          wallId: ref.id,
+          seg: ref.seg,
+          start: floorPt,
+          d: 0,
+        };
+        return true;
+      }
+      if (ref.kind === "opening") {
+        const o = layout.openings.find((x) => x.id === ref.id);
+        if (!o) return false;
+        this._drag = {
+          kind: "opening",
+          id: o.id,
+          wallId: o.wallId,
+          at: [o.x, o.y],
+        };
+        return true;
+      }
+      return false;
+    }
+    if (e.type === "drag" && this._drag && floorPt) {
+      const drag = this._drag;
+      if (drag.kind === "item") {
+        const item = layout.furniture.find((f) => f.id === drag.id);
+        if (!item) return false;
+        const raw: Pt = [
+          floorPt[0] + drag.offset[0],
+          floorPt[1] + drag.offset[1],
+        ];
+        drag.at =
+          grid > 0
+            ? [
+                Math.round(raw[0] / grid) * grid,
+                Math.round(raw[1] / grid) * grid,
+              ]
+            : raw;
+        this._handle?.previewItem(
+          item.id,
+          drag.at[0] * m,
+          drag.at[1] * m,
+          (-item.rotation_deg * Math.PI) / 180,
+        );
+      } else if (drag.kind === "seg") {
+        const wall = this._wallOf(drag.wallId);
+        const a = wall?.points[drag.seg] as Pt | undefined;
+        const b = wall?.points[drag.seg + 1] as Pt | undefined;
+        if (!wall || !a || !b) return false;
+        let d = offsetFrom(a, b, floorPt) - offsetFrom(a, b, drag.start);
+        const step = e.shift ? 0 : 1 * this._perCm;
+        if (step > 0) d = Math.round(d / step) * step;
+        drag.d = d;
+        this._ghostFor(
+          moveSegment(layout, wall.id, drag.seg, d, 1.5 * this._perCm),
+          H,
+        );
+      } else if (drag.kind === "corner") {
+        const p = snapPoint(layout, floorPt, grid, reach, {
+          wallId: drag.wallId,
+          index: drag.index,
+        });
+        drag.to = p;
+        this._ghostFor(
+          moveCorners(layout, [{ from: drag.from, to: p }], 1.5 * this._perCm),
+          H,
+        );
+      } else if (drag.kind === "opening") {
+        const o = layout.openings.find((x) => x.id === drag.id);
+        const hitWall =
+          e.hit.ref?.kind === "wall" ? this._wallOf(e.hit.ref.id) : undefined;
+        const wall = hitWall ?? this._wallOf(drag.wallId);
+        if (!o || !wall) return false;
+        const spot = spotOnWall(wall, floorPt, o.width / 2);
+        if (!spot) return false;
+        drag.at = spot.at;
+        drag.wallId = wall.id;
+        const a = wall.points[spot.seg] as Pt;
+        const b = wall.points[spot.seg + 1] as Pt;
+        const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        const ux = (b[0] - a[0]) / len;
+        const uy = (b[1] - a[1]) / len;
+        const half = o.width / 2;
+        this._ghost = [
+          this._segBox(
+            [spot.at[0] - ux * half, spot.at[1] - uy * half],
+            [spot.at[0] + ux * half, spot.at[1] + uy * half],
+            wallThicknessCm(wall) + 4,
+            o.type === "door" ? 0 : 0.9,
+            2.1,
+          ),
+        ];
+        this._pushOverlay();
+      }
+      return false;
+    }
+    if (e.type === "up" && this._drag) {
+      const drag = this._drag;
+      this._drag = null;
+      this._ghost = [];
+      if (drag.kind === "item") {
+        const item = layout.furniture.find((f) => f.id === drag.id);
+        if (item && (item.x !== drag.at[0] || item.y !== drag.at[1]))
+          this._edit(
+            patchItem(layout, drag.id, { x: drag.at[0], y: drag.at[1] }),
+          );
+      } else if (drag.kind === "seg" && Math.abs(drag.d) > 1e-9) {
+        this._edit(
+          moveSegment(layout, drag.wallId, drag.seg, drag.d, 1.5 * this._perCm),
+        );
+      } else if (
+        drag.kind === "corner" &&
+        (drag.to[0] !== drag.from[0] || drag.to[1] !== drag.from[1])
+      ) {
+        this._edit(
+          moveCorners(
+            layout,
+            [{ from: drag.from, to: drag.to }],
+            1.5 * this._perCm,
+          ),
+        );
+      } else if (drag.kind === "opening") {
+        this._edit(
+          patchOpening(layout, drag.id, {
+            x: drag.at[0],
+            y: drag.at[1],
+            wallId: drag.wallId,
+          }),
+        );
+      }
+      this._pushOverlay();
+      return false;
+    }
+    if (e.type === "click") {
+      this._sel = e.hit.ref;
+      this._hover = null;
+      this._pushOverlay();
+      return false;
+    }
+    if (e.type === "dblclick" && e.hit.ref?.kind === "wall" && e.hit.point) {
+      // A new corner where the wall was double-clicked.
+      const wall = this._wallOf(e.hit.ref.id);
+      const seg = e.hit.ref.seg;
+      if (wall && seg !== undefined) {
+        const spot = spotOnWall(
+          wall,
+          [e.hit.point[0] / m, e.hit.point[2] / m],
+          0,
+        );
+        if (spot) this._edit(insertCorner(layout, wall.id, spot.seg, spot.at));
+      }
+    }
+    return false;
+  };
+
+  /** Previews the walls a change would move, as boxes. */
+  private _ghostFor(patch: LayoutPatch, H: number): void {
+    const layout = this.layout;
+    if (!layout || !patch.walls) return;
+    const ghost: Box3d[] = [];
+    patch.walls.forEach((w, k) => {
+      const old = layout.walls[k];
+      if (old && old.points === w.points) return;
+      if (old && JSON.stringify(old.points) === JSON.stringify(w.points))
+        return;
+      const t = wallThicknessCm(w);
+      for (let i = 0; i + 1 < w.points.length; i++)
+        ghost.push(
+          this._segBox(w.points[i] as Pt, w.points[i + 1] as Pt, t, 0, H),
+        );
+    });
+    this._ghost = ghost;
+    this._pushOverlay();
+  }
+
+  private _finishWall(points: Pt[]): void {
+    const layout = this.layout;
+    const pts = points.filter(
+      (p, k) =>
+        k === 0 ||
+        Math.hypot(p[0] - points[k - 1]![0], p[1] - points[k - 1]![1]) > 1e-6,
+    );
+    this._draft = [];
+    this._ghost = [];
+    this._lines = [];
+    if (layout && pts.length >= 2) {
+      const { patch, id } = addWall(layout, pts);
+      this._edit(patch);
+      this._sel = { kind: "wall", id, seg: 0 };
+      this._tool = "select";
+    }
+    this._pushOverlay();
+  }
+
+  private _deleteSelection(): void {
+    const layout = this.layout;
+    const sel = this._sel;
+    if (!layout || !sel) return;
+    if (sel.kind === "item") this._edit(deleteItem(layout, sel.id));
+    else if (sel.kind === "wall") this._edit(deleteWall(layout, sel.id));
+    else if (sel.kind === "opening") this._edit(deleteOpening(layout, sel.id));
+    else return;
+    this._sel = null;
+    this._pushOverlay();
+  }
+
+  private _onEditKey = (e: KeyboardEvent): void => {
+    if (!this._editing) return;
+    const path = e.composedPath();
+    const target = path[0] as HTMLElement | undefined;
+    if (
+      target &&
+      (target.tagName === "INPUT" ||
+        target.tagName === "SELECT" ||
+        target.tagName === "TEXTAREA")
+    )
+      return;
+    const layout = this.layout;
+    const key = e.key;
+    const mod = e.ctrlKey || e.metaKey;
+    const take = () => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    if (key === "Escape") {
+      take();
+      if (this._drag) {
+        this._drag = null;
+        this._ghost = [];
+        this._sceneSig = "";
+        this._rebuild();
+      } else if (this._draft.length) this._setTool("wall");
+      else if (this._tool !== "select") this._setTool("select");
+      else {
+        this._sel = null;
+        this._pushOverlay();
+      }
+      return;
+    }
+    if (key === "Enter" && this._tool === "wall") {
+      take();
+      this._finishWall(this._draft);
+      return;
+    }
+    if ((key === "Delete" || key === "Backspace") && this._sel) {
+      take();
+      if (this._tool === "wall" && this._draft.length) {
+        this._draft = this._draft.slice(0, -1);
+        return;
+      }
+      this._deleteSelection();
+      return;
+    }
+    if (!mod && key.toLowerCase() === "r" && layout) {
+      const step = e.shiftKey ? 15 : 90;
+      if (this._tool === "object") {
+        take();
+        this._armedRot = (this._armedRot + step) % 360;
+        return;
+      }
+      if (this._sel?.kind === "item") {
+        const item = layout.furniture.find((f) => f.id === this._sel!.id);
+        if (item) {
+          take();
+          this._edit(
+            patchItem(layout, item.id, {
+              rotation_deg: (item.rotation_deg + step) % 360,
+            }),
+          );
+        }
+      }
+      return;
+    }
+    if (
+      mod &&
+      key.toLowerCase() === "d" &&
+      layout &&
+      this._sel?.kind === "item"
+    ) {
+      take();
+      const copy = duplicateItem(layout, this._sel.id, 20 * this._perCm);
+      if (copy) {
+        this._edit(copy.patch);
+        this._sel = { kind: "item", id: copy.id };
+        this._pushOverlay();
+      }
+    }
+  };
+
+  // --- editor panel -------------------------------------------------------------
+
+  private _num(
+    label: string,
+    value: number | null,
+    onChange: (v: number | null) => void,
+    opts: {
+      unit?: string;
+      step?: number;
+      min?: number;
+      max?: number;
+      placeholder?: string;
+    } = {},
+  ) {
+    return html`<label class="row">
+      <span>${label}</span>
+      <input
+        type="number"
+        step=${opts.step ?? 1}
+        min=${opts.min ?? nothing}
+        max=${opts.max ?? nothing}
+        placeholder=${opts.placeholder ?? ""}
+        .value=${value === null ? "" : String(Math.round(value * 10) / 10)}
+        @change=${(e: Event) => {
+          const raw = (e.target as HTMLInputElement).value.trim();
+          const v = raw === "" ? null : Number(raw);
+          if (v === null || Number.isFinite(v)) onChange(v);
+        }}
+      />
+      <span class="unit">${opts.unit ?? ""}</span>
+    </label>`;
+  }
+
+  private _color(
+    label: string,
+    value: string | null | undefined,
+    onChange: (v: string | null) => void,
+  ) {
+    return html`<div class="row">
+      <span>${label}</span>
+      <input
+        type="color"
+        .value=${value ?? "#ffffff"}
+        @change=${(e: Event) => onChange((e.target as HTMLInputElement).value)}
+      />
+      <button
+        class="icon"
+        title=${localize("edit3d.auto")}
+        ?disabled=${!value}
+        @click=${() => onChange(null)}
+      >
+        <ha-icon icon="mdi:backup-restore"></ha-icon>
+      </button>
+    </div>`;
+  }
+
+  private _select<T extends string>(
+    label: string,
+    value: T | null | undefined,
+    options: [T | "", string][],
+    onChange: (v: T | null) => void,
+  ) {
+    return html`<label class="row">
+      <span>${label}</span>
+      <select
+        @change=${(e: Event) => {
+          const v = (e.target as HTMLSelectElement).value;
+          onChange(v === "" ? null : (v as T));
+        }}
+      >
+        ${options.map(
+          ([v, text]) =>
+            html`<option value=${v} ?selected=${(value ?? "") === v}>
+              ${text}
+            </option>`,
+        )}
+      </select>
+    </label>`;
+  }
+
+  private _renderEditor() {
+    const layout = this.layout;
+    if (!layout) return nothing;
+    const tools: [EditTool, string, string][] = [
+      ["select", "mdi:cursor-default-outline", localize("edit3d.select")],
+      ["wall", "mdi:wall", localize("edit3d.wall")],
+      ["door", "mdi:door", localize("edit3d.door")],
+      ["window", "mdi:window-closed-variant", localize("edit3d.window")],
+      ["object", "mdi:sofa-outline", localize("edit3d.object")],
+    ];
+    const hint: Record<EditTool, string> = {
+      select: localize("edit3d.selectHint"),
+      wall: localize("edit3d.wallHint"),
+      door: localize("edit3d.openingHint"),
+      window: localize("edit3d.openingHint"),
+      object: localize("edit3d.objectHint"),
+    };
+    return html`<div class="sheet floating-panel editor">
+      <div class="tools">
+        ${tools.map(
+          ([tool, icon, label]) =>
+            html`<button
+              class=${this._tool === tool ? "active" : ""}
+              title=${label}
+              @click=${() => this._setTool(tool)}
+            >
+              <ha-icon icon=${icon}></ha-icon><span>${label}</span>
+            </button>`,
+        )}
+      </div>
+      <div class="buttons">
+        <button
+          title=${localize("edit3d.undo")}
+          @click=${() => this._fire("layout-undo")}
+        >
+          <ha-icon icon="mdi:undo"></ha-icon>
+        </button>
+        <button
+          title=${localize("edit3d.redo")}
+          @click=${() => this._fire("layout-redo")}
+        >
+          <ha-icon icon="mdi:redo"></ha-icon>
+        </button>
+        <span class="spacer"></span>
+        <button class="primary" @click=${() => this._toggleEditing()}>
+          ${localize("edit3d.done")}
+        </button>
+      </div>
+      <span class="hint">${hint[this._tool]}</span>
+      ${
+        layoutFinishesUnsaved
+          ? html`<span class="hint error"
+              >${localize("edit3d.restartNeeded")}</span
+            >`
+          : nothing
+      }
+      ${
+        this._tool === "object"
+          ? html`<furniture-library-sidebar
+              class="library"
+              .armedKind=${this._armedKind}
+              @furniture-armed=${(e: CustomEvent<{ kind: string | null }>) => {
+                this._armedKind = e.detail.kind;
+                if (!e.detail.kind) this._setTool("select");
+              }}
+              @library-close=${() => this._setTool("select")}
+            ></furniture-library-sidebar>`
+          : this._renderSelection(layout)
+      }
+    </div>`;
+  }
+
+  private _renderSelection(layout: FloorLayout) {
+    const sel = this._sel;
+    if (!sel)
+      return html`<span class="hint"
+        >${localize("edit3d.nothingSelected")}</span
+      >`;
+    const cm = (units: number) => units / this._perCm;
+    const units = (cmv: number) => cmv * this._perCm;
+    if (sel.kind === "item") {
+      const item = layout.furniture.find((f) => f.id === sel.id);
+      if (!item) return nothing;
+      const entry = catalogItem(item.kind);
+      const set = (patch: Partial<FurnitureItem>) =>
+        this._edit(patchItem(layout, item.id, patch));
+      return html`<h3>${item.label || entry?.name || item.kind}</h3>
+        <label class="row">
+          <span>${localize("edit3d.name")}</span>
+          <input
+            type="text"
+            .value=${item.label ?? ""}
+            placeholder=${entry?.name ?? ""}
+            @change=${(e: Event) => set({ label: (e.target as HTMLInputElement).value.trim() || null })}
+          />
+        </label>
+        ${this._num(localize("edit3d.width"), item.width_cm, (v) => v && v > 0 && set({ width_cm: v }), { unit: "cm", min: 1 })}
+        ${this._num(localize("edit3d.depth"), item.depth_cm, (v) => v && v > 0 && set({ depth_cm: v }), { unit: "cm", min: 1 })}
+        ${this._num(localize("edit3d.height"), item.height_cm ?? null, (v) => set({ height_cm: v && v > 0 ? v : null }), { unit: "cm", placeholder: localize("edit3d.auto") })}
+        ${this._num(localize("edit3d.elevation"), item.elevation_cm ?? null, (v) => set({ elevation_cm: v }), { unit: "cm", placeholder: localize("edit3d.auto") })}
+        ${this._num(localize("edit3d.rotation"), item.rotation_deg, (v) => v !== null && set({ rotation_deg: ((v % 360) + 360) % 360 }), { unit: "°" })}
+        ${this._color(localize("edit3d.color"), item.color, (v) => set({ color: v }))}
+        <label class="row">
+          <span>${localize("edit3d.mirrored")}</span>
+          <input
+            type="checkbox"
+            .checked=${!!item.mirrored}
+            @change=${(e: Event) => set({ mirrored: (e.target as HTMLInputElement).checked })}
+          />
+        </label>
+        <div class="buttons">
+          <button
+            @click=${() => set({ rotation_deg: (item.rotation_deg + 270) % 360 })}
+          >
+            <ha-icon icon="mdi:rotate-left"></ha-icon>
+          </button>
+          <button
+            @click=${() => set({ rotation_deg: (item.rotation_deg + 90) % 360 })}
+          >
+            <ha-icon icon="mdi:rotate-right"></ha-icon>
+          </button>
+          <button
+            @click=${() => {
+              const copy = duplicateItem(layout, item.id, 20 * this._perCm);
+              if (copy) {
+                this._edit(copy.patch);
+                this._sel = { kind: "item", id: copy.id };
+              }
+            }}
+          >
+            ${localize("edit3d.duplicate")}
+          </button>
+          <button class="danger" @click=${() => this._deleteSelection()}>
+            ${localize("edit3d.delete")}
+          </button>
+        </div>`;
+    }
+    if (sel.kind === "wall") {
+      const wall = this._wallOf(sel.id);
+      if (!wall) return nothing;
+      const seg = Math.min(sel.seg ?? 0, wall.points.length - 2);
+      const a = wall.points[seg] as Pt;
+      const b = wall.points[seg + 1] as Pt;
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const half = wall.material === "half_wall";
+      return html`<h3>${localize("edit3d.wall")}</h3>
+        ${this._num(localize("edit3d.thickness"), wallThicknessCm(wall), (v) => v && v > 0 && this._edit(patchWall(layout, wall.id, { thickness_cm: v })), { unit: "cm", min: 1, step: 0.5 })}
+        ${this._num(
+          localize("edit3d.length"),
+          cm(len),
+          (v) => {
+            if (!v || v <= 0 || len <= 0) return;
+            const k = units(v) / len;
+            const to: Pt = [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
+            this._edit(
+              moveCorners(layout, [{ from: b, to }], 1.5 * this._perCm),
+            );
+          },
+          { unit: "cm", min: 1 },
+        )}
+        ${this._select(
+          localize("edit3d.material"),
+          wall.material,
+          [
+            ...WALL_MATERIALS.map((mat): [string, string] => [
+              mat.id,
+              materialLabel(mat),
+            ]),
+            ["half_wall", localize("edit3d.halfWall")],
+          ],
+          (v) => v && this._edit(patchWall(layout, wall.id, { material: v })),
+        )}
+        <span class="hint"
+          >${half ? localize("edit3d.halfWallHint") : localize("edit3d.wallDragHint")}</span
+        >
+        <div class="buttons">
+          <button
+            @click=${() => this._edit(insertCorner(layout, wall.id, seg, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]))}
+          >
+            ${localize("edit3d.addCorner")}
+          </button>
+          <button class="danger" @click=${() => this._deleteSelection()}>
+            ${localize("edit3d.delete")}
+          </button>
+        </div>`;
+    }
+    if (sel.kind === "opening") {
+      const o = layout.openings.find((x) => x.id === sel.id);
+      if (!o) return nothing;
+      const set = (patch: Partial<Opening>) =>
+        this._edit(patchOpening(layout, o.id, patch));
+      return html`<h3>
+          ${o.type === "door" ? localize("edit3d.door") : localize("edit3d.window")}
+        </h3>
+        ${this._select<OpeningType>(
+          localize("edit3d.type"),
+          o.type,
+          [
+            ["door", localize("edit3d.door")],
+            ["window", localize("edit3d.window")],
+          ],
+          (v) => v && set({ type: v }),
+        )}
+        ${this._num(localize("edit3d.width"), cm(o.width), (v) => v && v > 0 && set({ width: units(v) }), { unit: "cm", min: 10 })}
+        ${
+          o.type === "window"
+            ? this._select<"standard" | "transom" | "full">(
+                localize("edit3d.windowStyle"),
+                o.window_style ?? "standard",
+                [
+                  ["standard", localize("edit3d.styleStandard")],
+                  ["transom", localize("edit3d.styleTransom")],
+                  ["full", localize("edit3d.styleFull")],
+                ],
+                (v) => set({ window_style: v ?? "standard" }),
+              )
+            : html`<label class="row">
+                <span>${localize("edit3d.garageDoor")}</span>
+                <input
+                  type="checkbox"
+                  .checked=${!!o.garage}
+                  @change=${(e: Event) => set({ garage: (e.target as HTMLInputElement).checked })}
+                />
+              </label>`
+        }
+        <span class="hint">${localize("edit3d.openingDragHint")}</span>
+        <div class="buttons">
+          <button class="danger" @click=${() => this._deleteSelection()}>
+            ${localize("edit3d.delete")}
+          </button>
+        </div>`;
+    }
+    const room = layout.rooms.find((r) => r.id === sel.id);
+    if (!room) return nothing;
+    const set = (patch: Partial<Room>) =>
+      this._edit(patchRoom(layout, room.id, patch));
+    return html`<h3>${room.name}</h3>
+      <label class="row">
+        <span>${localize("edit3d.name")}</span>
+        <input
+          type="text"
+          .value=${room.name}
+          @change=${(e: Event) => {
+            const v = (e.target as HTMLInputElement).value.trim();
+            if (v) set({ name: v });
+          }}
+        />
+      </label>
+      <div class="divider"></div>
+      ${this._select<FloorFinishKind>(
+        localize("edit3d.floorFinish"),
+        room.floor_finish ?? null,
+        [
+          ["", localize("edit3d.auto")],
+          ["wood", localize("edit3d.finishWood")],
+          ["tile", localize("edit3d.finishTile")],
+          ["carpet", localize("edit3d.finishCarpet")],
+          ["stone", localize("edit3d.finishStone")],
+          ["concrete", localize("edit3d.finishConcrete")],
+          ["plain", localize("edit3d.finishPlain")],
+        ],
+        (v) => set({ floor_finish: v }),
+      )}
+      ${this._color(localize("edit3d.floorColor"), room.floor_color, (v) => set({ floor_color: v }))}
+      <div class="divider"></div>
+      ${this._select<WallFinishKind>(
+        localize("edit3d.wallFinish"),
+        room.wall_finish ?? null,
+        [
+          ["", localize("edit3d.finishPaint")],
+          ["wallpaper", localize("edit3d.finishWallpaper")],
+          ["tile", localize("edit3d.finishTile")],
+          ["brick", localize("edit3d.finishBrick")],
+          ["stone", localize("edit3d.finishStone")],
+          ["wood", localize("edit3d.finishWoodPanel")],
+          ["shiplap", localize("edit3d.finishShiplap")],
+        ],
+        (v) => set({ wall_finish: v }),
+      )}
+      ${this._color(localize("edit3d.wallColor"), room.wall_color, (v) => set({ wall_color: v }))}
+      <div class="divider"></div>
+      ${this._num(localize("edit3d.floorLevel"), (room.floor_offset_m ?? 0) * 100, (v) => set({ floor_offset_m: v ? v / 100 : null }), { unit: "cm", step: 1 })}
+      <span class="hint">${localize("edit3d.roomHint")}</span>`;
+  }
+
   // --- rendering ----------------------------------------------------------------
 
   override render() {
@@ -1128,9 +2213,24 @@ export class Floorplan3dView extends LitElement {
           ${
             this.editable
               ? html`<button
+                  class=${this._editing ? "active" : ""}
+                  title=${localize("edit3d.editHint")}
+                  @click=${() => this._toggleEditing()}
+                >
+                  <ha-icon icon="mdi:pencil-ruler"></ha-icon>
+                  ${localize("edit3d.edit")}
+                </button>`
+              : nothing
+          }
+          ${
+            this.editable
+              ? html`<button
                   class=${this._sheetOpen ? "active" : ""}
                   title=${localize("view3d.scansHint")}
-                  @click=${() => (this._sheetOpen = !this._sheetOpen)}
+                  @click=${() => {
+                    if (this._editing) this._toggleEditing();
+                    this._sheetOpen = !this._sheetOpen;
+                  }}
                 >
                   <ha-icon icon="mdi:cube-scan"></ha-icon>
                   ${localize("view3d.scans")}
@@ -1139,7 +2239,8 @@ export class Floorplan3dView extends LitElement {
           }
         </div>
       </div>
-      ${this.editable && this._sheetOpen ? this._renderSheet() : nothing}
+      ${this.editable && this._sheetOpen && !this._editing ? this._renderSheet() : nothing}
+      ${this.editable && this._editing ? this._renderEditor() : nothing}
       <input
         type="file"
         accept=".glb,.gltf,model/gltf-binary,model/gltf+json"

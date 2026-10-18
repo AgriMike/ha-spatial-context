@@ -55,24 +55,39 @@ export class HaClient {
     floorId: string,
     layout: FloorLayout,
   ): Promise<{ success: boolean }> {
-    return this.hass.connection.sendMessagePromise({
-      type: "spatial_context/save_layout",
-      floor_id: floorId,
-      background_image_id: layout.background_image_id,
-      background_opacity: layout.background_opacity,
-      background_offset_x: layout.background_offset_x,
-      background_offset_y: layout.background_offset_y,
-      background_scale: layout.background_scale,
-      building_id: layout.building_id,
-      view_box: layout.view_box,
-      rooms: layout.rooms,
-      pins: layout.pins,
-      walls: layout.walls,
-      openings: layout.openings,
-      furniture: layout.furniture,
-      north_deg: layout.north_deg,
-      scale: layout.scale,
-    });
+    const send = (l: FloorLayout) =>
+      this.hass.connection.sendMessagePromise<{ success: boolean }>({
+        type: "spatial_context/save_layout",
+        floor_id: floorId,
+        background_image_id: l.background_image_id,
+        background_opacity: l.background_opacity,
+        background_offset_x: l.background_offset_x,
+        background_offset_y: l.background_offset_y,
+        background_scale: l.background_scale,
+        building_id: l.building_id,
+        view_box: l.view_box,
+        rooms: l.rooms,
+        pins: l.pins,
+        walls: l.walls,
+        openings: l.openings,
+        furniture: l.furniture,
+        north_deg: l.north_deg,
+        scale: l.scale,
+      });
+    try {
+      const result = await send(layout);
+      layoutFinishesUnsaved = false;
+      return result;
+    } catch (err) {
+      // A backend from before the 3D editor's finishes (not restarted
+      // since updating) refuses those fields: save the rest, and say so.
+      const message = (err as { message?: string })?.message ?? "";
+      if (!/extra keys not allowed/i.test(message) || !hasFinishes(layout))
+        throw err;
+      const result = await send(withoutFinishes(layout));
+      layoutFinishesUnsaved = true;
+      return result;
+    }
   }
 
   /** Tags a floor as sharing a building/coordinate-system with another
@@ -369,6 +384,42 @@ export function backgroundImageUrl(imageId: string | null): string | null {
  * covers the (effectively never happens) case where crypto itself is
  * entirely absent — these ids only need to be unique within one floor's
  * layout, never security-sensitive. */
+/** The 3D editor's finish fields (see types.ts's Room and FurnitureItem):
+ * newer than a backend that hasn't been restarted since updating. */
+const ROOM_FINISH_KEYS = [
+  "floor_finish",
+  "floor_color",
+  "wall_finish",
+  "wall_color",
+] as const;
+const ITEM_FINISH_KEYS = ["height_cm", "elevation_cm"] as const;
+
+/** The last layout save had to leave the finishes out (restart needed). */
+export let layoutFinishesUnsaved = false;
+
+function hasFinishes(layout: FloorLayout): boolean {
+  return (
+    layout.rooms.some((r) => ROOM_FINISH_KEYS.some((k) => k in r)) ||
+    layout.furniture.some((f) => ITEM_FINISH_KEYS.some((k) => k in f))
+  );
+}
+
+function withoutFinishes(layout: FloorLayout): FloorLayout {
+  return {
+    ...layout,
+    rooms: layout.rooms.map((r) => {
+      const copy = { ...r } as Record<string, unknown>;
+      for (const k of ROOM_FINISH_KEYS) delete copy[k];
+      return copy as unknown as typeof r;
+    }),
+    furniture: layout.furniture.map((f) => {
+      const copy = { ...f } as Record<string, unknown>;
+      for (const k of ITEM_FINISH_KEYS) delete copy[k];
+      return copy as unknown as typeof f;
+    }),
+  };
+}
+
 export function newId(prefix: string): string {
   return `${prefix}-${uuidV4()}`;
 }

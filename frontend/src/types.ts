@@ -29,6 +29,13 @@ export interface Room {
   label_size?: number;
   label_rotation?: number;
   label_color?: string | null;
+  /** The 3D view's finishes: the floor's material and colour (unset: from
+   * the room's name and fill), and the covering and colour of the walls
+   * facing into the room (unset: plain paint). */
+  floor_finish?: FloorFinishKind | null;
+  floor_color?: string | null;
+  wall_finish?: WallFinishKind | null;
+  wall_color?: string | null;
   /** What this room's live light shading follows, besides its own
    * `area_id`: other HA areas (an open-plan space spanning two), other
    * rooms on this floor (whose lights it shows too), and specific light
@@ -71,6 +78,22 @@ export interface Pin {
    * mmWave sensor's detection cone. Null when not specified. */
   height_m: number | null;
 }
+
+export type FloorFinishKind =
+  | "wood"
+  | "tile"
+  | "carpet"
+  | "concrete"
+  | "stone"
+  | "plain";
+export type WallFinishKind =
+  | "paint"
+  | "tile"
+  | "brick"
+  | "wood"
+  | "wallpaper"
+  | "stone"
+  | "shiplap";
 
 export interface Wall {
   id: string;
@@ -244,6 +267,10 @@ export interface FurnitureItem {
   /** A drawn shape's corner rounding, one 0–100 % per corner (0 square);
    * absent or null = the usual soft corners. */
   corners?: number[] | null;
+  /** The 3D view's height for the item, and how far above its floor it
+   * stands (a wall shelf, a hung TV), centimetres; unset = the catalog's. */
+  height_cm?: number | null;
+  elevation_cm?: number | null;
 }
 
 /** A phone room scan (glTF/GLB) laid over a floor in the 3D view — see
