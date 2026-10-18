@@ -514,6 +514,23 @@ export class Floorplan3dView extends LitElement {
       .map((f) => f.floor_id);
   }
 
+  /** The shown floors and the rest of their building (with layouts). */
+  private get _contextFloorIds(): string[] {
+    const shown = this._shownFloorIds;
+    const own = this.floors.find((f) => f.floor_id === this.floorId);
+    const building = own?.building_id;
+    if (!building) return shown;
+    const rest = this.floors
+      .filter(
+        (f) =>
+          f.building_id === building &&
+          f.has_layout &&
+          !shown.includes(f.floor_id),
+      )
+      .map((f) => f.floor_id);
+    return [...shown, ...rest];
+  }
+
   /** Some shown floor has a visible scan. */
   private get _hasScans(): boolean {
     return this._shownFloorIds.some((id) =>
@@ -613,7 +630,7 @@ export class Floorplan3dView extends LitElement {
   private _ensureData(): void {
     const client = this._client;
     if (!client) return;
-    for (const floorId of this._shownFloorIds) {
+    for (const floorId of this._contextFloorIds) {
       if (!this._view3d.has(floorId) && !this._loadingView3d.has(floorId)) {
         this._loadingView3d.add(floorId);
         client
@@ -669,7 +686,7 @@ export class Floorplan3dView extends LitElement {
       level: number | null;
       elevation: number | null;
     })[] = [];
-    for (const floorId of this._shownFloorIds) {
+    for (const floorId of this._contextFloorIds) {
       const layout = this._layoutOf(floorId);
       if (!layout) continue;
       const meta = this.floors.find((f) => f.floor_id === floorId);
@@ -686,7 +703,12 @@ export class Floorplan3dView extends LitElement {
     if (!inputs.length) return;
     // Even a floor shown alone stands at its height above the ground, so
     // a main floor above a walk-out isn't drawn sitting on the grass.
-    const floors = stackFloors(inputs);
+    // The building's other floors stack the shown ones and say what's
+    // above them (a staircase climbs to it), drawn or not.
+    const context = stackFloors(inputs);
+    const shownIds = this._shownFloorIds;
+    const floors = context.filter((f) => shownIds.includes(f.floorId));
+    if (!floors.length) return;
     const ground = this._ground;
     const date = this._date;
     const live = floors
@@ -702,6 +724,7 @@ export class Floorplan3dView extends LitElement {
     const minute = Math.floor(date.getTime() / 60_000);
     const sig = [
       floors.map((f) => `${f.floorId}:${f.wallHeight}:${f.baseY}`).join(","),
+      context.map((f) => f.floorId).join(","),
       live,
       minute,
       this.dark,
@@ -711,15 +734,16 @@ export class Floorplan3dView extends LitElement {
       JSON.stringify(this._roofPlan),
     ].join("|");
     // Layout objects are replaced on every edit, so identity is enough.
-    const layoutsChanged = floors.some(
-      (f, i) => this._lastLayouts[i] !== f.layout,
-    );
+    const layoutsChanged =
+      this._lastLayouts.length !== context.length ||
+      context.some((f, i) => this._lastLayouts[i] !== f.layout);
     if (sig !== this._sceneSig || layoutsChanged) {
       this._sceneSig = sig;
-      this._lastLayouts = floors.map((f) => f.layout);
+      this._lastLayouts = context.map((f) => f.layout);
       handle.setScene(
         buildScene({
           floors,
+          context,
           hass: this.hass,
           dark: this.dark,
           date,

@@ -2121,6 +2121,13 @@ const T: Record<string, Template> = {
     ell(w / 2, d / 2, min(w, d) * 0.2, min(w, d) / 2),
     line(0, d / 2, w, d / 2),
   ],
+  /** A straight flight: its treads across, every ~27 cm. */
+  stairs: (w, d) => {
+    const out: Prim[] = [rect(0, 0, w, d)];
+    const n = max(2, Math.round(d / 27));
+    for (const y of dividers(0, d, n - 1)) out.push(line(0, y, w, y));
+    return out;
+  },
   rug: (w, d, o) => {
     if (flag(o, "round"))
       return [

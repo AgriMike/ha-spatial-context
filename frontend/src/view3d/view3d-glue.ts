@@ -395,6 +395,105 @@ function modelMaterial(
 
 /** A low-poly model for a plant, tree or lamp, standing at the origin and
  * filling the item's footprint and height. */
+/** A straight flight in the item's frame (y up from its lower end's
+ * level): stacked steps with wood treads and painted risers, and a
+ * banister (newel posts, spindles, a sloped handrail) on each railed
+ * side. */
+function stairsModel(
+  item: Item3d,
+  st: NonNullable<Item3d["stairs"]>,
+  add: (
+    geom: THREE.BufferGeometry,
+    mat: THREE.Material,
+    y: number,
+  ) => THREE.Mesh,
+): void {
+  const W = item.width;
+  const D = item.depth;
+  const rise = Math.abs(st.back - st.front);
+  if (rise < 0.05) {
+    add(new THREE.BoxGeometry(W, 0.04, D), modelMaterial("#a07a55"), 0.02);
+    return;
+  }
+  // The low end: front (+z) when the front's level is lower.
+  const dir = st.front < st.back ? -1 : 1;
+  const z0 = (-dir * D) / 2;
+  const n = Math.max(1, Math.round(rise / 0.18));
+  const h = rise / n;
+  const run = D / n;
+  const tread = modelMaterial("#a5774f");
+  const paint = modelMaterial("#efebe4");
+  const white = modelMaterial("#f4f1eb");
+  const wood = modelMaterial("#7d5536");
+  const box = (
+    w: number,
+    hh: number,
+    d: number,
+    x: number,
+    y: number,
+    z: number,
+    mat: THREE.Material,
+  ) => {
+    const mesh = add(new THREE.BoxGeometry(w, hh, d), mat, y);
+    mesh.position.x = x;
+    mesh.position.z = z;
+    return mesh;
+  };
+  for (let k = 1; k <= n; k++) {
+    // Step k: solid from its riser to the high end, its tread on top.
+    const zs = z0 + dir * (k - 1) * run;
+    const zEnd = z0 + dir * D;
+    const len = Math.abs(zEnd - zs);
+    box(W, h, len, 0, (k - 1) * h + h / 2, (zs + zEnd) / 2, paint);
+    // The tread sits on it, its nosing a little proud of the riser.
+    box(
+      W + 0.02,
+      0.035,
+      Math.min(len, run) + 0.025,
+      0,
+      k * h + 0.0155,
+      zs + dir * (Math.min(len, run) / 2 - 0.0125),
+      tread,
+    );
+  }
+  // Banisters: the handrail 0.9 m above the treads' nosing line.
+  const railH = 0.9;
+  const zLow = z0 + dir * 0.06;
+  const zHigh = z0 + dir * (D - 0.06);
+  const yLow = h + railH;
+  const yHigh = rise + railH;
+  st.rails.forEach((on, i) => {
+    if (!on) return;
+    const x = (i === 0 ? -1 : 1) * (W / 2 - 0.05);
+    for (const [z, y] of [
+      [zLow, 0],
+      [zHigh, rise],
+    ] as const)
+      box(0.09, railH + 0.12, 0.09, x, y + (railH + 0.12) / 2, z, white);
+    const len = Math.hypot(zHigh - zLow, yHigh - yLow);
+    const rail = box(
+      0.07,
+      0.05,
+      len,
+      x,
+      (yLow + yHigh) / 2,
+      (zLow + zHigh) / 2,
+      wood,
+    );
+    rail.rotation.x = -Math.atan2(yHigh - yLow, Math.abs(zHigh - zLow)) * dir;
+    // Two spindles a step, from the tread up to the handrail.
+    for (let k = 1; k <= n; k++)
+      for (const f of [0.25, 0.75]) {
+        const z = z0 + dir * (k - 1 + f) * run;
+        if (Math.abs(z - zLow) < 0.08 || Math.abs(z - zHigh) < 0.08) continue;
+        const t = Math.abs(z - zLow) / Math.abs(zHigh - zLow);
+        const top = yLow + (yHigh - yLow) * t - 0.03;
+        const bottom = k * h;
+        box(0.025, top - bottom, 0.025, x, (top + bottom) / 2, z, white);
+      }
+  });
+}
+
 function modelItem(item: Item3d): THREE.Group {
   const g = new THREE.Group();
   const r = Math.max(0.08, Math.min(item.width, item.depth) / 2);
@@ -412,7 +511,9 @@ function modelItem(item: Item3d): THREE.Group {
     g.add(mesh);
     return mesh;
   };
-  if (item.shape === "shower") {
+  if (item.shape === "stairs" && item.stairs) {
+    stairsModel(item, item.stairs, add);
+  } else if (item.shape === "shower") {
     // A shower: its tray, and a glass enclosure you can see into.
     const tray = add(
       new THREE.BoxGeometry(item.width, 0.08, item.depth),
@@ -1318,7 +1419,10 @@ function createView3d(options: View3dOptions): View3dHandle {
         mesh.visible =
           part !== "ceiling" &&
           part !== "floor" &&
-          (scanMode === "scan" || (part === "stairs" && !roof?.visible));
+          (scanMode === "scan" ||
+            (part === "stairs" &&
+              !roof?.visible &&
+              !floors.get(s.placement.floorId)?.spec.hasStairs));
       });
     }
   }

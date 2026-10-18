@@ -131,6 +131,7 @@ function itemShape(
   kind: string,
   entry: CatalogItem | undefined,
 ): Item3d["shape"] {
+  if (kind === STAIRS_KIND) return "stairs";
   if (/stand|pedestal|basket/.test(kind)) return "block";
   if (/shower(?!_bench)/.test(kind)) return "shower";
   if (/tree|olive/.test(kind) && entry?.category === "outdoor") return "tree";
@@ -148,6 +149,18 @@ function itemShape(
     return "lamp";
   return "block";
 }
+/** The staircase item (see furniture-catalog.ts). */
+const STAIRS_KIND = "stairs_straight";
+/** A banister: its newel posts, spindles (and their spacing), handrail,
+ * and colours. */
+const NEWEL_M = 0.09;
+const SPINDLE_M = 0.025;
+const SPINDLE_GAP_M = 0.11;
+const HANDRAIL_W_M = 0.07;
+const HANDRAIL_H_M = 0.05;
+const BANISTER_WHITE = "#f1eee8";
+const HANDRAIL_WOOD = "#8b5e3c";
+
 /** Door head, window sill and default window head heights, metres. */
 const DOOR_HEAD_M = 2.1;
 const WINDOW_SILL_M = 0.9;
@@ -511,6 +524,9 @@ export interface FloorInput {
 
 export interface SceneInput {
   floors: FloorInput[];
+  /** The whole building's floors, stacked, of which `floors` are the ones
+   * drawn: what stands above a drawn floor comes from these. */
+  context?: FloorInput[];
   hass: HomeAssistant | undefined;
   dark: boolean;
   date: Date;
@@ -678,6 +694,98 @@ function buildFloor(
   const offsetAt = (x: number, y: number): number =>
     offsetRooms.find((r) => pointInPolygon(x, y, r.points))?.floor_offset_m ??
     0;
+
+  // Staircases: each one's two long sides (metres, back to front) and
+  // the floor level at either end.
+  const stairs = layout.furniture
+    .filter((f) => f.kind === STAIRS_KIND)
+    .map((f) => {
+      const a = (-f.rotation_deg * Math.PI) / 180;
+      const c = Math.cos(a);
+      const sn = Math.sin(a);
+      const w = f.width_cm / 100;
+      const d = f.depth_cm / 100;
+      // The item's frame: local (lx, lz) → world, as three's rotation.y.
+      const P = (lx: number, lz: number): Vec2 => [
+        f.x * m + lx * c + lz * sn,
+        f.y * m - lx * sn + lz * c,
+      ];
+      /** The floor at a spot: a room of this floor's level, else the floor
+       * above's (the flight climbs to it), else this floor's. */
+      const levelAt = ([x, z]: Vec2): number => {
+        const room = layout.rooms.find(
+          (r) =>
+            !r.outdoor &&
+            r.points.length >= 3 &&
+            pointInPolygon(x / m, z / m, r.points),
+        );
+        if (room) return room.floor_offset_m ?? 0;
+        return floorAbove(x, z) ?? 0;
+      };
+      const front = levelAt(P(0, d / 2 + 0.3));
+      const back = levelAt(P(0, -d / 2 - 0.3));
+      return {
+        item: f,
+        front,
+        back,
+        top: Math.max(front, back),
+        sides: [
+          [P(-w / 2, -d / 2), P(-w / 2, d / 2)],
+          [P(w / 2, -d / 2), P(w / 2, d / 2)],
+        ] as [Vec2, Vec2][],
+      };
+    });
+  /** How much of segment [a, b] (metres) runs within `reach` of [p, q]. */
+  const alongShare = (
+    [a, b]: [Vec2, Vec2],
+    [p, q]: [Vec2, Vec2],
+    reach: number,
+  ) => {
+    let near = 0;
+    for (let k = 0; k <= 4; k++) {
+      const x = a[0] + ((b[0] - a[0]) * k) / 4;
+      const z = a[1] + ((b[1] - a[1]) * k) / 4;
+      if (pointToSegmentDistance(x, z, p[0], p[1], q[0], q[1]) < reach) near++;
+    }
+    return near / 5;
+  };
+  const wallSegs = layout.walls.flatMap((w) =>
+    w.points.slice(1).map((q, k): [[Vec2, Vec2], number] => {
+      const p = w.points[k]!;
+      return [
+        [
+          [p[0] * m, p[1] * m],
+          [q[0] * m, q[1] * m],
+        ],
+        wallThicknessCm(w) / 100,
+      ];
+    }),
+  );
+  /** Whether a staircase's side gets a railing: not where a wall runs
+   * along it, and where two flights share a side only on the higher. */
+  const railed = (si: number, side: 0 | 1): boolean => {
+    const st = stairs[si]!;
+    const seg = st.sides[side]!;
+    if (
+      wallSegs.some(
+        ([w, t]) =>
+          t > RAIL_THICKNESS_M && alongShare(seg, w, t / 2 + 0.12) >= 0.6,
+      )
+    )
+      return false;
+    return !stairs.some(
+      (o, oi) =>
+        oi !== si &&
+        o.sides.some((os) => alongShare(seg, os, 0.15) >= 0.6) &&
+        (o.top > st.top || (o.top === st.top && oi < si)),
+    );
+  };
+  /** A thin rail along a staircase's side: the staircase's own railing
+   * stands in for it. */
+  const alongStairs = (a: Vec2, b: Vec2) =>
+    stairs.some((st) =>
+      st.sides.some((sd) => alongShare([a, b], sd, 0.2) >= 0.4),
+    );
 
   for (const wall of layout.walls) {
     const pts = wall.points;
@@ -911,7 +1019,38 @@ function buildFloor(
         normal: [dz, -dx],
       });
       if (rail) {
-        walls.push(box(-ext0, L + ext1, base, base + RAIL_HEIGHT_M));
+        if (alongStairs(at(0), at(L))) continue;
+        // A banister: newel posts at its ends, spindles between, and a
+        // handrail on top.
+        const top = base + RAIL_HEIGHT_M;
+        const white = dark ? TRIM_WHITE_DARK : BANISTER_WHITE;
+        for (const s of [0, L])
+          walls.push({
+            ...box(s - NEWEL_M / 2, s + NEWEL_M / 2, base, top + 0.06, NEWEL_M),
+            color: white,
+          });
+        walls.push({
+          ...box(0, L, top - HANDRAIL_H_M, top, HANDRAIL_W_M),
+          color: HANDRAIL_WOOD,
+        });
+        walls.push({
+          ...box(0, L, base + 0.06, base + 0.1, 0.05),
+          color: white,
+        });
+        const count = Math.floor(L / SPINDLE_GAP_M);
+        for (let k = 1; k < count; k++) {
+          const sk = (L * k) / count;
+          walls.push({
+            ...box(
+              sk - SPINDLE_M / 2,
+              sk + SPINDLE_M / 2,
+              base + 0.1,
+              top - HANDRAIL_H_M,
+              SPINDLE_M,
+            ),
+            color: white,
+          });
+        }
         continue;
       }
       // An outside wall standing above a falling grade (a garage on a
@@ -1233,6 +1372,8 @@ function buildFloor(
     const isLight = item.entity_id?.startsWith("light.") === true;
     const on = !!live && live.active && isLight && showLights;
     const shape = itemShape(item.kind, entry);
+    const si = stairs.findIndex((st) => st.item === item);
+    const flight = si >= 0 ? stairs[si]! : null;
     items.push({
       id: item.id,
       name: item.label || entry?.name || item.kind,
@@ -1242,8 +1383,17 @@ function buildFloor(
       x: item.x * m,
       z: item.y * m,
       angle: (-item.rotation_deg * Math.PI) / 180,
-      y0,
-      height,
+      y0: flight ? Math.min(flight.front, flight.back) : y0,
+      height: flight ? Math.abs(flight.front - flight.back) : height,
+      ...(flight
+        ? {
+            stairs: {
+              front: flight.front,
+              back: flight.back,
+              rails: [railed(si, 0), railed(si, 1)] as [boolean, boolean],
+            },
+          }
+        : {}),
       color: side,
       topImage: topImage(item, prims, flip, line, base, !!live?.active),
       opacity: (item.opacity ?? 1) * (live?.unavailable ? 0.6 : 1),
@@ -1269,6 +1419,7 @@ function buildFloor(
     baseY: input.baseY,
     wallHeight: H,
     walls,
+    hasStairs: stairs.length > 0,
     wallColor: dark ? "#8a8580" : "#f4f1ec",
     sidingColor: dark ? SIDING_DARK : SIDING,
     stoneColor: dark ? STONE_DARK : STONE,
@@ -1326,8 +1477,8 @@ export function buildScene(input: SceneInput): Scene3d {
       dark,
       input.showLights,
       1 - 0.75 * day,
-      floorAboveOf(f, input.floors),
-      upperWallsOf(f, input.floors),
+      floorAboveOf(f, input.context ?? input.floors),
+      upperWallsOf(f, input.context ?? input.floors),
       {
         front,
         stoneTop: grade + STONE_M - f.baseY,
@@ -1335,7 +1486,7 @@ export function buildScene(input: SceneInput): Scene3d {
           ? (x: number, z: number) => groundHeight(site, x, z) - f.baseY
           : null,
         lowerRoomNear: (x, z, reach) =>
-          input.floors.some((g) => {
+          (input.context ?? input.floors).some((g) => {
             if (g.baseY >= f.baseY - 0.3) return false;
             const m = metersPerUnit(g.layout.scale);
             const px = x / m;

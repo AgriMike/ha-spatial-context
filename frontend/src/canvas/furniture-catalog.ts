@@ -1576,6 +1576,9 @@ const ENTRY: Row[] = [
   ["coat_closet", "Coat closet", 120, 60, "closetRod"],
   ["mirror_entry", "Entry mirror", 80, 5, "mirror"],
   ["package_box", "Parcel drop box", 60, 45, "chest"],
+  // In 3D it climbs between the floor levels at its two ends (front and
+  // back), with railings on any side no wall runs along.
+  ["stairs_straight", "Staircase (straight)", 90, 250, "stairs"],
 ];
 
 const OUTDOOR: Row[] = [

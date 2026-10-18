@@ -94,7 +94,11 @@ export interface Item3d {
   light: { color: string; level: number; y: number } | null;
   /** Drawn as an extruded block with its 2D drawing on top ("block"), or
    * modelled: a potted plant, a tree, a lamp. */
-  shape: "block" | "plant" | "tree" | "lamp" | "shower";
+  shape: "block" | "plant" | "tree" | "lamp" | "shower" | "stairs";
+  /** A staircase: the floor levels (metres above the floor's level) at its
+   * front (local +z) and back ends, and whether its left (local -x) and
+   * right sides get a railing. */
+  stairs?: { front: number; back: number; rails: [boolean, boolean] };
 }
 
 export interface Floor3d {
@@ -113,6 +117,8 @@ export interface Floor3d {
   panes: Pane3d[];
   slabs: Slab3d[];
   items: Item3d[];
+  /** The plan has staircases of its own (a scan's are then left out). */
+  hasStairs: boolean;
   /** Wall faces (each wall segment's two long sides) and the way each
    * looks, for snapping scans — a scan only sees the faces toward it. */
   wallFaces: { a: Vec2; b: Vec2; normal: Vec2 }[];
