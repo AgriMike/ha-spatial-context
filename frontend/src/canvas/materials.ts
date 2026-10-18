@@ -72,6 +72,15 @@ export const WALL_MATERIALS: WallMaterial[] = [
     attenuationDbPerCm: 1,
     defaultThicknessCm: 10,
   },
+  {
+    // A knee wall about a metre high (a stair landing's guard): it blocks
+    // roughly half what a full wall would.
+    id: "half_wall",
+    label: "Half wall",
+    color: "#616161",
+    attenuationDbPerCm: 0.15,
+    defaultThicknessCm: 10,
+  },
 ];
 
 /** The material's name in the current language (the catalog's own `label`

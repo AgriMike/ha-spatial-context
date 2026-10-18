@@ -15,7 +15,12 @@ import type {
   RoofPlan,
   Scale,
 } from "../types";
-import { partSection, porchSection, sectionFaces } from "./roof-planes";
+import {
+  partSection,
+  porchSection,
+  sectionFaces,
+  sectionHeightAt,
+} from "./roof-planes";
 import type {
   Box3d,
   FloorFinish,
@@ -151,6 +156,9 @@ function itemShape(
 }
 /** The staircase item (see furniture-catalog.ts). */
 const STAIRS_KIND = "stairs_straight";
+/** The half wall material (see materials.ts) and its height. */
+const HALF_WALL_MATERIAL = "half_wall";
+const HALF_WALL_M = 1.0;
 /** A banister: its newel posts, spindles (and their spacing), handrail,
  * and colours. */
 const NEWEL_M = 0.09;
@@ -560,6 +568,9 @@ function buildFloor(
     /** Whether a lower floor has a room within `reach` metres of a spot on
      * the floor plane (the wall there stands on it). */
     lowerRoomNear: (x: number, z: number, reach: number) => boolean;
+    /** The planned roof's height (metres above this floor's level) over a
+     * spot, null where it has none (or there's no planned roof). */
+    roofOver: (x: number, z: number) => number | null;
   },
 ): Floor3d {
   const { layout, wallHeight: H } = input;
@@ -576,6 +587,12 @@ function buildFloor(
    * of the rooms either side of a wall, a little way out from it along its
    * length, and which side is outdoors (1 toward the segment's left-hand
    * normal, -1 the other) when only one side has indoor rooms. */
+  const sheltered = (x: number, z: number) => {
+    const roof = exterior.roofOver(x, z);
+    return (
+      roof !== null && roof > H + 0.3 && exterior.lowerRoomNear(x, z, 0.01)
+    );
+  };
   const wallSides = (a: Vec2, b: Vec2, t: number) => {
     const len = distance(a[0], a[1], b[0], b[1]);
     const nx = -(b[1] - a[1]) / len;
@@ -592,6 +609,10 @@ function buildFloor(
         );
         if (room) offsets.add(room.floor_offset_m ?? 0);
         if (room && !room.outdoor) indoors[side]++;
+        // No room of its own here, but a room below and the roof well
+        // above this storey: inside the house (a stairwell, the space
+        // beside a closet), not out under the sky.
+        else if (!room && sheltered(x * m, y * m)) indoors[side]++;
       }
     }
     const outside: 1 | -1 | undefined =
@@ -773,6 +794,14 @@ function buildFloor(
       )
     )
       return false;
+    // A wall of the floor above standing over it (a closet beside the
+    // flight, open below): the flight's side is closed by that.
+    if (
+      upperWalls.some(
+        (w) => w.y <= st.top + 0.3 && alongShare(seg, [w.a, w.b], 0.2) >= 0.6,
+      )
+    )
+      return false;
     return !stairs.some(
       (o, oi) =>
         oi !== si &&
@@ -799,6 +828,8 @@ function buildFloor(
     if (run * m < STUB_M) continue;
     // A thin one is a stair rail or balustrade: waist high.
     const rail = t <= RAIL_THICKNESS_M;
+    // A half wall (a landing's guard) stops about a metre up, capped.
+    const half = wall.material === HALF_WALL_MATERIAL;
     const closed =
       pts.length > 2 &&
       distance(
@@ -1018,6 +1049,15 @@ function buildFloor(
         b: [a1[0] - nx, a1[1] - nz],
         normal: [dz, -dx],
       });
+      if (half) {
+        const top = base + HALF_WALL_M;
+        walls.push(box(-ext0, L + ext1, base, top));
+        walls.push({
+          ...box(-ext0, L + ext1, top, top + 0.04, t + 0.04),
+          color: dark ? TRIM_WHITE_DARK : BANISTER_WHITE,
+        });
+        continue;
+      }
       if (rail) {
         if (alongStairs(at(0), at(L))) continue;
         // A banister: newel posts at its ends, spindles between, and a
@@ -1470,6 +1510,23 @@ export function buildScene(input: SceneInput): Scene3d {
     : [0, 1];
   const grade = input.ground?.uphill_m ?? 0;
   const site = input.ground ? terrain(input, input.ground, northDeg) : null;
+  // The planned roof's sections, to tell walls under it from walls out in
+  // the open.
+  const planM = metersPerUnit(
+    [...(input.context ?? input.floors)].sort((a, b) => a.baseY - b.baseY)[0]
+      ?.layout.scale ?? null,
+  );
+  const sections = (input.roofPlan?.parts ?? []).map((p) =>
+    partSection(p, planM),
+  );
+  const roofOver = (x: number, z: number): number | null => {
+    let best: number | null = null;
+    for (const s of sections) {
+      const h = sectionHeightAt(s, x, z);
+      if (h !== null && (best === null || h > best)) best = h;
+    }
+    return best;
+  };
   const floors = input.floors.map((f) =>
     buildFloor(
       f,
@@ -1485,6 +1542,10 @@ export function buildScene(input: SceneInput): Scene3d {
         groundAt: site
           ? (x: number, z: number) => groundHeight(site, x, z) - f.baseY
           : null,
+        roofOver: (x, z) => {
+          const h = roofOver(x, z);
+          return h === null ? null : h - f.baseY;
+        },
         lowerRoomNear: (x, z, reach) =>
           (input.context ?? input.floors).some((g) => {
             if (g.baseY >= f.baseY - 0.3) return false;

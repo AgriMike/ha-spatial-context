@@ -421,7 +421,8 @@
     "aerated_concrete_block": "Porenbeton / Schaumbeton (verputzt)",
     "ceramic_poroton_block": "Keramik- / Poroton-Stein",
     "glass": "Glas",
-    "steel_frame": "Stahlrahmen"
+    "steel_frame": "Stahlrahmen",
+    "half_wall": "Halbhohe Wand"
   },
   "colors": {
     "primary": "Primär",

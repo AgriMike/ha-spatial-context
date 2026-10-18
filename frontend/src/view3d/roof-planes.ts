@@ -104,6 +104,21 @@ function surface(ps: Plane[], a: number, c: number): number {
   return Math.min(...ps.map((p) => heightOf(p, a, c)));
 }
 
+/** The roof's height (world Y) over a spot on the floor plane, or null
+ * where the section doesn't cover it (outside its walls). */
+export function sectionHeightAt(
+  s: RoofSection,
+  x: number,
+  z: number,
+): number | null {
+  const rx = x - s.origin[0];
+  const rz = z - s.origin[1];
+  const a = rx * s.along[0] + rz * s.along[1];
+  const c = rx * s.across[0] + rz * s.across[1];
+  if (a < s.a0 || a > s.a1 || c < s.c0 || c > s.c1) return null;
+  return surface(planes(s), a, c);
+}
+
 /** The faces of one section, in world space. */
 export function sectionFaces(s: RoofSection): RoofFace3d[] {
   const ps = planes(s);

@@ -421,7 +421,8 @@
     "aerated_concrete_block": "Aerated/foam concrete block (plastered)",
     "ceramic_poroton_block": "Ceramic / Poroton block",
     "glass": "Glass",
-    "steel_frame": "Steel frame"
+    "steel_frame": "Steel frame",
+    "half_wall": "Half wall"
   },
   "colors": {
     "primary": "Primary",

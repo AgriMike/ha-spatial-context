@@ -61,6 +61,11 @@ _WALL_MATERIALS = {
         "attenuation_db_per_cm": 1,
         "default_thickness_cm": 10,
     },
+    "half_wall": {
+        "label": "Half wall",
+        "attenuation_db_per_cm": 0.15,
+        "default_thickness_cm": 10,
+    },
 }
 _DEFAULT_WALL_MATERIAL = "timber_frame"
 
