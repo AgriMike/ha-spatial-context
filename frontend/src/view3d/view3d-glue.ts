@@ -674,7 +674,8 @@ function gridLines(lo: number, hi: number, step: number, reach: number) {
 }
 
 /** A hillside under the building (see Terrain3d): level at `uphill`
- * before the building's high face, falling linearly across it to
+ * before the building's high face and across its first `level` share,
+ * falling linearly across the rest to
  * `downhill` past its low face, with the given rooms cut out. */
 function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
   const [dx, dz] = t.dir;
@@ -683,7 +684,9 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
   const height = (x: number, z: number) => {
     const s = x * dx + z * dz;
     const k = hi > lo ? Math.min(1, Math.max(0, (s - lo) / (hi - lo))) : 0;
-    return t.uphill + (t.downhill - t.uphill) * k - 0.06;
+    // As scene3d's gradeFall: level for the first `level` share.
+    const fall = t.level >= 1 ? 0 : Math.max(0, (k - t.level) / (1 - t.level));
+    return t.uphill + (t.downhill - t.uphill) * fall - 0.06;
   };
   const margin = 6;
   const xs = gridLines(box.min.x - margin, box.max.x + margin, 0.2, 250);

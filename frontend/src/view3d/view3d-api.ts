@@ -204,6 +204,9 @@ export interface Terrain3d {
   /** The building's extent along `dir` (x * dir[0] + z * dir[1]): the
    * grade falls from uphill to downhill between the two. */
   range: [number, number];
+  /** How much of that extent, from the high side, stays level at `uphill`
+   * (a yard level with the street) before the grade falls. */
+  level: number;
   /** The footprints of floors that reach below the ground, cut out of it
    * so their rooms show. */
   holes: Vec2[][];

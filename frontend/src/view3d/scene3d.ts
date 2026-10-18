@@ -180,6 +180,13 @@ const HANDRAIL_H_M = 0.05;
 const BANISTER_WHITE = "#f1eee8";
 const HANDRAIL_WOOD = "#8b5e3c";
 
+/** The share of a sloping site's depth, from its high side, that stays
+ * level with the street before the grade falls toward the low side. */
+const GRADE_LEVEL = 0.45;
+/** The terrain is drawn this far under the stated grade (see glue). */
+const GROUND_DRAWN_M = 0.06;
+/** A window this close to a door is its sidelight. */
+const SIDELIGHT_GAP_M = 0.35;
 /** Door head, window sill and default window head heights, metres. */
 const DOOR_HEAD_M = 2.1;
 const WINDOW_SILL_M = 0.9;
@@ -652,6 +659,21 @@ function buildFloor(
     // up to it rather than leave a gap below it.
     const upper = upperWallLevel(a, b);
     if (upper !== null && upper <= top + 0.8) top = upper;
+    // Under a planned roof whose eave sits a little above it (a garage a
+    // step down from the house, under the house's eave line), it stands
+    // up to meet the roof rather than leave a gap under it.
+    else {
+      const roof = [0.1, 0.3, 0.5, 0.7, 0.9].map((f) =>
+        exterior.roofOver(
+          (a[0] + (b[0] - a[0]) * f) * m,
+          (a[1] + (b[1] - a[1]) * f) * m,
+        ),
+      );
+      if (roof.every((r) => r !== null)) {
+        const low = Math.min(...(roof as number[]));
+        if (low > top + 0.005 && low < top + 0.6) top = low;
+      }
+    }
     return { base, top, level, outside };
   };
   /** A wall's top along its length (s in metres from `a`), in runs: it
@@ -1200,11 +1222,21 @@ function buildFloor(
             abutted,
           });
           const mid = out(at((s0 + s1) / 2), t / 2 + PORCH_DEPTH_M / 2);
+          // Its slab lies on the ground (a hair proud) when that's about a
+          // step below the door, so it's one step up into the house; else
+          // it stands a step below the door.
+          const grade = exterior.groundAt?.(mid[0], mid[1]);
+          const ground =
+            grade === undefined ? undefined : grade - GROUND_DRAWN_M;
+          const pad =
+            ground !== undefined && off - ground > 0.05 && off - ground < 0.25
+              ? ground + 0.02
+              : off - 0.12;
           walls.push({
             x: mid[0],
             z: mid[1],
-            y0: off - 0.5,
-            y1: off - 0.12,
+            y0: Math.min(pad, off - 0.12) - 0.38,
+            y1: pad,
             length: s1 - s0,
             depth: PORCH_DEPTH_M,
             angle,
@@ -1220,7 +1252,7 @@ function buildFloor(
             walls.push({
               x: corner[0] + dx * along * inset - outward[0] * inset,
               z: corner[1] + dz * along * inset - outward[1] * inset,
-              y0: off - 0.12,
+              y0: pad,
               y1: off + PORCH_EAVE_M,
               length: POST_M,
               depth: POST_M,
@@ -1396,14 +1428,29 @@ function buildFloor(
         // A window's kind sets its glass: a transom is a ~45 cm strip just
         // under the ceiling, floor-to-ceiling runs the full wall height.
         const style = isDoor ? undefined : opening.window_style;
-        const defaultHead =
-          style === "transom" ? H - 0.15 : style === "full" ? H : WINDOW_HEAD_M;
+        // A window right beside a door is its sidelight: no taller than it.
+        const beside = isDoor
+          ? undefined
+          : holes.find(
+              (h) =>
+                h.opening.type === "door" &&
+                Math.max(h.s0 - hole.s1, hole.s0 - h.s1) < SIDELIGHT_GAP_M,
+            );
+        const defaultHead = beside
+          ? DOOR_HEAD_M
+          : style === "transom"
+            ? H - 0.15
+            : style === "full"
+              ? H
+              : WINDOW_HEAD_M;
         const head =
           Math.min(
             top - off,
-            isDoor ? DOOR_HEAD_M : (opening.daylight?.head_m ?? defaultHead),
+            isDoor || beside
+              ? DOOR_HEAD_M
+              : (opening.daylight?.head_m ?? defaultHead),
           ) + off;
-        const sill =
+        let sill =
           (isDoor
             ? 0
             : style === "transom"
@@ -1411,6 +1458,12 @@ function buildFloor(
               : style === "full"
                 ? 0
                 : Math.min(WINDOW_SILL_M, head - off - 0.1)) + off;
+        // A window in an outside wall stays clear of the ground.
+        if (!isDoor && outside && exterior.groundAt) {
+          const [gx, gz] = at(hole.s);
+          const clear = exterior.groundAt(gx, gz) - GROUND_DRAWN_M + 0.15;
+          if (sill < clear) sill = Math.min(clear, head - 0.3);
+        }
         if (sill > base) solid(hole.s0, hole.s1, foot, sill);
         if (head < top - 0.005) walls.push(box(hole.s0, hole.s1, head, top));
         // An outside door: a patio door (wide) glazed like a window, any
@@ -2688,6 +2741,7 @@ function terrain(
     downhill: ground.downhill_m,
     dir: [dx, dz],
     range: lo < hi ? [lo, hi] : [0, 0],
+    level: GRADE_LEVEL,
     holes,
   };
 }
@@ -2697,7 +2751,14 @@ export function groundHeight(t: Terrain3d, x: number, z: number): number {
   const [lo, hi] = t.range;
   const s = x * t.dir[0] + z * t.dir[1];
   const k = hi > lo ? Math.min(1, Math.max(0, (s - lo) / (hi - lo))) : 0;
-  return t.uphill + (t.downhill - t.uphill) * k;
+  return t.uphill + (t.downhill - t.uphill) * gradeFall(k, t.level);
+}
+
+/** How far the grade has fallen (0 at the high side, 1 at the low) a
+ * fraction `k` of the way across the building, level for the first
+ * `level` of it. */
+export function gradeFall(k: number, level: number): number {
+  return level >= 1 ? 0 : Math.max(0, (k - level) / (1 - level));
 }
 
 /** Each floor of a building stacked by level (lowest first), with its
