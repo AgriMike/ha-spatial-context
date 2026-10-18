@@ -20,6 +20,7 @@ export type FurnitureCategory =
   | "kids"
   | "entry"
   | "outdoor"
+  | "site"
   | "garage"
   | "fitness"
   | "pets"
@@ -40,6 +41,7 @@ export const FURNITURE_CATEGORIES: { id: FurnitureCategory; icon: string }[] = [
   { id: "lighting", icon: "mdi:floor-lamp" },
   { id: "kids", icon: "mdi:baby-carriage" },
   { id: "entry", icon: "mdi:door-open" },
+  { id: "site", icon: "mdi:road-variant" },
   { id: "outdoor", icon: "mdi:pine-tree" },
   { id: "garage", icon: "mdi:garage" },
   { id: "fitness", icon: "mdi:dumbbell" },
@@ -2108,6 +2110,195 @@ const ICONS: Row[] = Object.entries(UI_ICONS).map(([name, icon]) => [
   { icon: name },
 ]);
 
+/** The site: driveways, paths, patios, lawn and beds (outlines drawn
+ * like the free-form shape, corner by corner, their corners roundable
+ * into curves), and fences, walls and hedges (lines drawn the same way,
+ * finished open). Their `site` / `fence` option says what the 3D view
+ * builds. */
+const SITE: Row[] = [
+  [
+    "site_driveway_concrete",
+    "Driveway (concrete)",
+    400,
+    600,
+    "shapeFreeform",
+    { site: "concrete", color: "#bdbdbd", fill: true },
+  ],
+  [
+    "site_driveway_asphalt",
+    "Driveway (asphalt)",
+    400,
+    600,
+    "shapeFreeform",
+    { site: "asphalt", color: "#5a5a5a", fill: true },
+  ],
+  [
+    "site_driveway_pavers",
+    "Driveway (pavers)",
+    400,
+    600,
+    "shapeFreeform",
+    { site: "pavers", color: "#b5835a", fill: true },
+  ],
+  [
+    "site_sidewalk",
+    "Sidewalk / path (concrete)",
+    120,
+    400,
+    "shapeFreeform",
+    { site: "concrete", color: "#c7c7c7", fill: true },
+  ],
+  [
+    "site_path_pavers",
+    "Paver path or patio",
+    120,
+    400,
+    "shapeFreeform",
+    { site: "pavers", color: "#b5835a", fill: true },
+  ],
+  [
+    "site_path_stepping",
+    "Stepping-stone path",
+    80,
+    400,
+    "shapeFreeform",
+    { site: "stepping", color: "#a8a39a", fill: true },
+  ],
+  [
+    "site_path_gravel",
+    "Gravel path",
+    100,
+    400,
+    "shapeFreeform",
+    { site: "gravel", color: "#c9bfa9", fill: true },
+  ],
+  [
+    "site_patio_stone",
+    "Stone patio",
+    400,
+    300,
+    "shapeFreeform",
+    { site: "flagstone", color: "#a39e93", fill: true },
+  ],
+  [
+    "site_lawn",
+    "Lawn",
+    600,
+    400,
+    "shapeFreeform",
+    { site: "lawn", color: "#7cb342", fill: true },
+  ],
+  [
+    "site_garden_bed",
+    "Garden bed (mulch)",
+    300,
+    100,
+    "shapeFreeform",
+    { site: "mulch", color: "#6d4c41", fill: true },
+  ],
+  [
+    "site_flower_bed",
+    "Flower bed",
+    300,
+    100,
+    "shapeFreeform",
+    { site: "flowers", color: "#8d6e63", fill: true },
+  ],
+  [
+    "site_shrub_bed",
+    "Shrub bed",
+    300,
+    120,
+    "shapeFreeform",
+    { site: "shrubs", color: "#5d7b3a", fill: true },
+  ],
+  [
+    "site_rock_bed",
+    "Rock bed",
+    300,
+    100,
+    "shapeFreeform",
+    { site: "rock", color: "#9e9e9e", fill: true },
+  ],
+  [
+    "site_fence_privacy",
+    "Privacy fence (wood)",
+    400,
+    10,
+    "shapeFreeform",
+    { fence: "privacy", height: 180, color: "#8d6e63" },
+  ],
+  [
+    "site_fence_picket",
+    "Picket fence",
+    400,
+    10,
+    "shapeFreeform",
+    { fence: "picket", height: 100, color: "#90a4ae" },
+  ],
+  [
+    "site_fence_vinyl",
+    "Vinyl privacy fence",
+    400,
+    10,
+    "shapeFreeform",
+    { fence: "vinyl", height: 180, color: "#b0bec5" },
+  ],
+  [
+    "site_fence_chainlink",
+    "Chain-link fence",
+    400,
+    10,
+    "shapeFreeform",
+    { fence: "chainlink", height: 120, color: "#78909c" },
+  ],
+  [
+    "site_fence_split_rail",
+    "Split-rail fence",
+    400,
+    10,
+    "shapeFreeform",
+    { fence: "rail", height: 110, color: "#8d6e63" },
+  ],
+  [
+    "site_fence_metal",
+    "Metal fence",
+    400,
+    10,
+    "shapeFreeform",
+    { fence: "metal", height: 120, color: "#37474f" },
+  ],
+  [
+    "site_retaining_wall",
+    "Retaining wall",
+    400,
+    30,
+    "shapeFreeform",
+    { fence: "retaining", height: 60, color: "#8d8a84" },
+  ],
+  [
+    "site_hedge",
+    "Hedge row",
+    400,
+    80,
+    "shapeFreeform",
+    { fence: "hedge", height: 120, color: "#558b2f" },
+  ],
+  [
+    "site_edging",
+    "Bed edging",
+    400,
+    10,
+    "shapeFreeform",
+    { fence: "edging", height: 10, color: "#5d4037" },
+  ],
+];
+
+/** Kinds drawn corner by corner: the free-form shape, and the site's. */
+export function isOutlineKind(kind: string | null | undefined): boolean {
+  return !!kind && (kind === "shape_freeform" || kind.startsWith("site_"));
+}
+
 /** The free-form shape: armed, each click on the plan adds a corner
  * (see floorplan-canvas.ts); the outline is kept on the item. */
 export const FREEFORM_KIND = "shape_freeform";
@@ -2137,7 +2328,7 @@ const SHAPES: Row[] = [
 ];
 
 export function isShapeKind(kind: string | null | undefined): boolean {
-  return !!kind && kind.startsWith("shape_");
+  return !!kind && (kind.startsWith("shape_") || kind.startsWith("site_"));
 }
 
 const ROWS: [FurnitureCategory, Row[]][] = [
@@ -2152,6 +2343,7 @@ const ROWS: [FurnitureCategory, Row[]][] = [
   ["lighting", LIGHTING],
   ["kids", KIDS],
   ["entry", ENTRY],
+  ["site", SITE],
   ["outdoor", OUTDOOR],
   ["garage", GARAGE],
   ["fitness", FITNESS],

@@ -4,6 +4,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { counterModel, furnitureModel } from "./furniture-models";
+import { siteModel } from "./site-models";
 import type {
   Box3d,
   EditHit,
@@ -871,6 +872,18 @@ function gridLines(lo: number, hi: number, step: number, reach: number) {
   return out;
 }
 
+/** The drawn ground's height (world Y) at a spot: the terrain's (see
+ * terrainGeometry), else the flat ground's. */
+function groundAt(t: Terrain3d | null, x: number, z: number): number {
+  if (!t) return -0.06;
+  const [dx, dz] = t.dir;
+  const [lo, hi] = t.range;
+  const s = x * dx + z * dz;
+  const k = hi > lo ? Math.min(1, Math.max(0, (s - lo) / (hi - lo))) : 0;
+  const fall = t.level >= 1 ? 0 : Math.max(0, (k - t.level) / (1 - t.level));
+  return t.uphill + (t.downhill - t.uphill) * fall - 0.06;
+}
+
 /** A hillside under the building (see Terrain3d): level at `uphill`
  * before the building's high face and across its first `level` share,
  * falling linearly across the rest to
@@ -1227,6 +1240,8 @@ function createView3d(options: View3dOptions): View3dHandle {
   scene.add(ground);
   /** The sloping ground of a hillside site, in place of `ground`. */
   let terrain: THREE.Mesh | null = null;
+  /** The site's ground, for laying driveways and fences on it. */
+  let siteTerrain: Terrain3d | null = null;
   /** The building's roof, shown while the floors stand together. */
   let roof: THREE.Mesh | null = null;
   let roofSpec: Roof3d | null = null;
@@ -1322,9 +1337,15 @@ function createView3d(options: View3dOptions): View3dHandle {
 
   // --- the building ---------------------------------------------------------
 
-  function buildItem(item: Item3d): THREE.Object3D {
-    const furniture =
-      item.shape !== "block"
+  function buildItem(item: Item3d, baseY = 0): THREE.Object3D {
+    // On the ground: the terrain's height (or the flat ground's), in the
+    // item's floor's frame.
+    const site = item.site
+      ? siteModel(item, (x, z) => groundAt(siteTerrain, x, z) - baseY)
+      : null;
+    const furniture = site
+      ? site
+      : item.shape !== "block"
         ? null
         : item.counter
           ? counterModel(item.footprint, item.height, item.tint ?? null)
@@ -1456,7 +1477,7 @@ function createView3d(options: View3dOptions): View3dHandle {
     lights.name = "Lights";
     group.add(lights);
     for (const item of spec.items) {
-      furniture.add(buildItem(item));
+      furniture.add(buildItem(item, spec.baseY));
       if (item.light && pointLights.has(item.id)) {
         const light = new THREE.PointLight(
           item.light.color,
@@ -1522,6 +1543,7 @@ function createView3d(options: View3dOptions): View3dHandle {
 
   function setScene(spec: Scene3d): void {
     dark = spec.dark;
+    siteTerrain = spec.terrain;
     // Keep scans: they're re-parented into the rebuilt floors below.
     for (const s of scans.values()) s.group.removeFromParent();
     for (const f of floors.values()) {

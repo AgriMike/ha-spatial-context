@@ -97,7 +97,7 @@ import { roomLabelPoint } from "./canvas/geometry";
 import { mergeDuplicateGeometry } from "./canvas/dedupe";
 import {
   catalogItem,
-  FREEFORM_KIND,
+  isOutlineKind,
   isShapeKind,
   setCustomIcons,
 } from "./canvas/furniture-catalog";
@@ -2980,7 +2980,7 @@ export class SpatialContextPanel extends LitElement {
     if (
       e.key === "Enter" &&
       this._mode === "furniture" &&
-      this._armedFurnitureKind === FREEFORM_KIND
+      isOutlineKind(this._armedFurnitureKind)
     ) {
       e.preventDefault();
       this._canvas?.finishPendingShape();
@@ -3448,6 +3448,10 @@ export class SpatialContextPanel extends LitElement {
       stroke_width: 1.5,
       ...(e.detail.points
         ? { points: e.detail.points, closed: e.detail.closed !== false }
+        : {}),
+      // A site outline starts in its own colour, filled.
+      ...(typeof entry.opts["color"] === "string"
+        ? { color: entry.opts["color"], fill: !!entry.opts["fill"] }
         : {}),
     };
     this._updateLayout({ furniture: [...this._layout.furniture, item] });
@@ -4997,14 +5001,14 @@ export class SpatialContextPanel extends LitElement {
                     .furnitureHint=${
                       this._mode !== "furniture"
                         ? "place"
-                        : this._armedFurnitureKind === FREEFORM_KIND
+                        : isOutlineKind(this._armedFurnitureKind)
                           ? "freeform"
                           : isShapeKind(this._armedFurnitureKind)
                             ? "shape"
                             : "place"
                     }
                     .freeformPoints=${
-                      this._armedFurnitureKind === FREEFORM_KIND
+                      isOutlineKind(this._armedFurnitureKind)
                         ? this._pendingCount
                         : 0
                     }

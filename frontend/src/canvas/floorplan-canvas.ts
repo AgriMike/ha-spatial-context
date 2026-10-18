@@ -58,6 +58,7 @@ import { scaleStyles, sharedStyles, zoomControlsStyles } from "../styles";
 import {
   catalogItem,
   FREEFORM_KIND,
+  isOutlineKind,
   isShapeKind,
   setCustomIcons,
 } from "./furniture-catalog";
@@ -2036,7 +2037,7 @@ export class FloorplanCanvas extends LitElement {
     if (
       this.mode === "furniture" &&
       isShapeKind(this.armedFurnitureKind) &&
-      this.armedFurnitureKind !== FREEFORM_KIND &&
+      !isOutlineKind(this.armedFurnitureKind) &&
       this._lastImage
     ) {
       return {
@@ -2554,9 +2555,7 @@ export class FloorplanCanvas extends LitElement {
 
   /** Drawing a free-form shape: the free-form item is armed. */
   private get _drawingFreeform(): boolean {
-    return (
-      this.mode === "furniture" && this.armedFurnitureKind === FREEFORM_KIND
-    );
+    return this.mode === "furniture" && isOutlineKind(this.armedFurnitureKind);
   }
 
   /** Where a free-form corner lands: onto a wall or room edge when it's
@@ -3738,7 +3737,7 @@ export class FloorplanCanvas extends LitElement {
     const entry = catalogItem(this.armedFurnitureKind);
     if (!entry) return nothing;
     // The free-form shape shows its trace instead.
-    if (entry.id === FREEFORM_KIND) return nothing;
+    if (isOutlineKind(entry.id)) return nothing;
     const box = this._drawBox;
     if (box) {
       const k = this.unitsPerCm;

@@ -65,8 +65,10 @@ import {
   type CatalogItem,
 } from "../canvas/furniture-catalog";
 import {
+  cornerRadii,
   drawItem,
   freeformPrims,
+  roundedPolyPoints,
   FURNITURE_STYLES,
   renderPrims,
   shapeCornerFractions,
@@ -1959,7 +1961,12 @@ function buildFloor(
   for (const item of layout.furniture) {
     // An open free-form line is a mark on the plan, not a thing in the
     // room: left out.
-    if (item.points && item.points.length >= 2 && item.closed === false)
+    if (
+      item.points &&
+      item.points.length >= 2 &&
+      item.closed === false &&
+      !item.kind.startsWith("site_")
+    )
       continue;
     const entry = catalogItem(item.kind);
     const flip = !!item.mirrored !== !!entry?.flip;
@@ -2017,13 +2024,17 @@ function buildFloor(
             },
           }
         : {}),
-      ...(item.points &&
-      item.points.length >= 3 &&
-      item.closed !== false &&
-      height >= 0.7 &&
-      height <= 1.2
-        ? { counter: true, tint: own }
-        : {}),
+      ...(entry?.id.startsWith("site_") &&
+      item.points &&
+      item.points.length >= 2
+        ? { site: siteSpec(item, entry, flip, own) }
+        : item.points &&
+            item.points.length >= 3 &&
+            item.closed !== false &&
+            height >= 0.7 &&
+            height <= 1.2
+          ? { counter: true, tint: own }
+          : {}),
       ...(flight
         ? {
             stairs: {
@@ -2073,6 +2084,53 @@ function buildFloor(
     items,
     wallFaces,
     metersPerUnit: m,
+  };
+}
+
+/** A site item's outline in its own frame (metres, corners rounded as
+ * the plan draws them) and what it is. */
+function siteSpec(
+  item: FurnitureItem,
+  entry: CatalogItem,
+  flip: boolean,
+  own: string | null,
+): NonNullable<Item3d["site"]> {
+  const w = item.width_cm;
+  const d = item.depth_cm;
+  const surface =
+    typeof entry.opts["site"] === "string" ? entry.opts["site"] : undefined;
+  const fence =
+    typeof entry.opts["fence"] === "string" ? entry.opts["fence"] : undefined;
+  const closed = !!surface || item.closed !== false;
+  const raw = (item.points ?? []).map(([fx, fy]): [number, number] => [
+    fx * w,
+    fy * d,
+  ]);
+  const radii = cornerRadii(
+    item.corners?.length ? { corners: item.corners.join(",") } : {},
+    w,
+    d,
+    raw.length,
+    6,
+  );
+  const pts = roundedPolyPoints(raw, closed, radii, 8).map(([x, y]): Vec2 => [
+    (flip ? w - x : x) / 100 - w / 200,
+    y / 100 - d / 200,
+  ]);
+  const own_ =
+    own && own.toLowerCase() !== String(entry.opts["color"] ?? "").toLowerCase()
+      ? own
+      : null;
+  return {
+    ...(surface ? { surface } : {}),
+    ...(fence ? { fence } : {}),
+    points: pts,
+    closed,
+    height: item.height_cm
+      ? item.height_cm / 100
+      : Number(entry.opts["height"] ?? 100) / 100,
+    thick: entry.d / 100,
+    tint: own_,
   };
 }
 

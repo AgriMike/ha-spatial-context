@@ -2805,6 +2805,53 @@ export function softRadius(w: number, d: number): number {
 /** A path through `points` with each corner rounded by up to `r` (never
  * more than half of either side meeting there) — shapes and free-form
  * outlines get the same soft corners as the boxes. */
+/** The same soft-cornered outline as roundedPolyPath, as points: each
+ * corner's curve sampled in `seg` steps. */
+export function roundedPolyPoints(
+  points: Pt[],
+  closed: boolean,
+  r: number | number[],
+  seg = 8,
+): Pt[] {
+  const n = points.length;
+  if (n < 3 && closed) return points;
+  const out: Pt[] = [];
+  for (let i = 0; i < n; i++) {
+    const p = points[i]!;
+    if (!closed && (i === 0 || i === n - 1)) {
+      out.push(p);
+      continue;
+    }
+    const a = points[(i - 1 + n) % n]!;
+    const b = points[(i + 1) % n]!;
+    const la = Math.hypot(a[0] - p[0], a[1] - p[1]) || 1;
+    const lb = Math.hypot(b[0] - p[0], b[1] - p[1]) || 1;
+    const ri = typeof r === "number" ? r : (r[i] ?? 0);
+    const k = Math.max(0, Math.min(ri, la / 2, lb / 2));
+    if (k <= 1e-9) {
+      out.push(p);
+      continue;
+    }
+    const inn: Pt = [
+      p[0] + ((a[0] - p[0]) / la) * k,
+      p[1] + ((a[1] - p[1]) / la) * k,
+    ];
+    const outP: Pt = [
+      p[0] + ((b[0] - p[0]) / lb) * k,
+      p[1] + ((b[1] - p[1]) / lb) * k,
+    ];
+    for (let s = 0; s <= seg; s++) {
+      const t = s / seg;
+      const u = 1 - t;
+      out.push([
+        u * u * inn[0] + 2 * u * t * p[0] + t * t * outP[0],
+        u * u * inn[1] + 2 * u * t * p[1] + t * t * outP[1],
+      ]);
+    }
+  }
+  return out;
+}
+
 export function roundedPolyPath(
   points: Pt[],
   closed: boolean,
@@ -2848,7 +2895,7 @@ export function roundedPolyPath(
 /** Each corner's rounding: from the item's own per-corner percentages
  * (opts.corners, "0,50,100…": 0 square, 100 as round as the shorter side
  * allows), else the usual soft corners. */
-function cornerRadii(
+export function cornerRadii(
   o: Opts,
   w: number,
   d: number,

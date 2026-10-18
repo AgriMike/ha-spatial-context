@@ -137,6 +137,21 @@ export interface Item3d {
     flip: boolean;
     tint: string | null;
   };
+  /** A site feature (see site-models.ts): a surface laid on the ground
+   * (concrete, asphalt, pavers, lawn, a planting bed…) or a fence, wall
+   * or hedge along a line; its outline in the item's frame (curves
+   * sampled), whether it's closed, its height (metres) and the colour
+   * picked for it (null: its own). */
+  site?: {
+    surface?: string;
+    fence?: string;
+    points: Vec2[];
+    closed: boolean;
+    height: number;
+    /** How thick a hedge or wall stands (metres). */
+    thick: number;
+    tint: string | null;
+  };
   /** A free-form outline tall enough to be a counter: drawn as one. */
   counter?: boolean;
   /** The colour picked for the item (null: its model's own). */
