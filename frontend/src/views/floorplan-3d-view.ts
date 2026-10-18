@@ -46,11 +46,14 @@ import {
   patchOpening,
   patchRoom,
   patchWall,
-  snapAngle,
+  smartSnap,
+  snapOffset,
   snapPoint,
   spotOnWall,
   type LayoutPatch,
   type Pt,
+  type SnapGuide,
+  type SnapWall,
 } from "./editor3d";
 import "./furniture-library-sidebar";
 import { COMPASS_POINTS, type Sky } from "../canvas/sun";
@@ -537,7 +540,11 @@ export class Floorplan3dView extends LitElement {
   private _draft: Pt[] = [];
   private _ghost: Box3d[] = [];
   private _lines: [number, number, number][][] = [];
+  private _guides: SnapGuide[] = [];
   private _drag: EditDrag | null = null;
+  /** Each floor's level (metres, world), from the last rebuild. */
+  private _floorBases = new Map<string, number>();
+  private _snapCache: { key: unknown[]; walls: SnapWall[] } | null = null;
 
   @query(".stage") private _stage!: HTMLElement;
   @query("input[type=file]") private _fileInput!: HTMLInputElement;
@@ -839,6 +846,7 @@ export class Floorplan3dView extends LitElement {
     // The building's other floors stack the shown ones and say what's
     // above them (a staircase climbs to it), drawn or not.
     const context = stackFloors(inputs);
+    this._floorBases = new Map(context.map((f) => [f.floorId, f.baseY]));
     const shownIds = this._shownFloorIds;
     const floors = context.filter((f) => shownIds.includes(f.floorId));
     if (!floors.length) return;
@@ -1150,6 +1158,7 @@ export class Floorplan3dView extends LitElement {
     this._draft = [];
     this._ghost = [];
     this._lines = [];
+    this._guides = [];
     if (tool !== "object") this._armedKind = null;
     this._pushOverlay();
   }
@@ -1208,6 +1217,29 @@ export class Floorplan3dView extends LitElement {
         H + 0.05,
         p[1] * m,
       ]);
+    // Guides at the top of this floor's walls, and down (or up) to the
+    // floor they came from: orange for this floor, magenta for another.
+    const top = H + 0.04;
+    const guides: { points: [number, number, number][]; color: string }[] = [];
+    for (const g of this._guides) {
+      const color = g.own ? "#fb8c00" : "#d81b60";
+      const at = (q: Pt, y: number): [number, number, number] => [
+        q[0] * m,
+        y,
+        q[1] * m,
+      ];
+      const other = g.own ? null : g.level + 0.04;
+      if (g.kind === "wall") {
+        guides.push({ points: [at(g.a, top), at(g.b, top)], color });
+        if (other !== null)
+          guides.push({ points: [at(g.a, other), at(g.b, other)], color });
+      } else {
+        if (g.kind === "align")
+          guides.push({ points: [at(g.a, top), at(g.b, top)], color });
+        if (other !== null)
+          guides.push({ points: [at(g.a, other), at(g.a, top)], color });
+      }
+    }
     handle.setEditOverlay({
       select: this._sel,
       hover: this._hover,
@@ -1215,7 +1247,55 @@ export class Floorplan3dView extends LitElement {
       activeHandle: this._drag?.kind === "corner" ? this._drag.index : null,
       lines: this._lines,
       ghost: this._ghost,
+      guides,
     });
+  }
+
+  /** The building's walls to snap to: this floor's and every other
+   * floor's (in this floor's plan units, with their levels relative to
+   * it). */
+  private _snapWalls(): SnapWall[] {
+    const layout = this.layout;
+    const own = this.floorId;
+    if (!layout || !own) return [];
+    const ids = this._contextFloorIds;
+    const layouts = ids.map((id) => this._layoutOf(id));
+    const key = [
+      layout,
+      ...layouts,
+      ...ids.map((id) => this._floorBases.get(id)),
+    ];
+    const cached = this._snapCache;
+    if (
+      cached &&
+      cached.key.length === key.length &&
+      cached.key.every((k, i) => k === key[i])
+    )
+      return cached.walls;
+    const m = metersPerUnit(layout.scale);
+    const base = this._floorBases.get(own) ?? 0;
+    const walls: SnapWall[] = [];
+    ids.forEach((id, i) => {
+      const l = layouts[i];
+      if (!l) return;
+      const k = metersPerUnit(l.scale) / m;
+      const level = (this._floorBases.get(id) ?? base) - base;
+      for (const w of l.walls) {
+        if (wallThicknessCm(w) <= 6) continue;
+        for (let j = 0; j + 1 < w.points.length; j++) {
+          const a = w.points[j]!;
+          const b = w.points[j + 1]!;
+          walls.push({
+            own: id === own,
+            a: [a[0] * k, a[1] * k],
+            b: [b[0] * k, b[1] * k],
+            level,
+          });
+        }
+      }
+    });
+    this._snapCache = { key, walls };
+    return walls;
   }
 
   /** A wall's corners, without a closed outline's repeated last point. */
@@ -1248,9 +1328,18 @@ export class Floorplan3dView extends LitElement {
     // --- drawing a wall ---
     if (tool === "wall") {
       if (!floorPt) return false;
-      let p = snapPoint(layout, floorPt, grid, reach);
       const last = this._draft[this._draft.length - 1];
-      if (last && !e.alt) p = snapAngle(last, p);
+      // Shift places it freely; else it snaps to every floor's walls.
+      const snapped = e.shift
+        ? { p: floorPt, guides: [] }
+        : smartSnap(floorPt, this._snapWalls(), {
+            reach,
+            grid,
+            from: last ?? null,
+            angle: !e.alt,
+          });
+      const p = snapped.p;
+      this._guides = snapped.guides;
       if (e.type === "move" || e.type === "click") {
         if (e.type === "click") {
           const first = this._draft[0];
@@ -1455,16 +1544,29 @@ export class Floorplan3dView extends LitElement {
         let d = offsetFrom(a, b, floorPt) - offsetFrom(a, b, drag.start);
         const step = e.shift ? 0 : 1 * this._perCm;
         if (step > 0) d = Math.round(d / step) * step;
+        // Onto a parallel wall's line: this floor's, or one above or below.
+        this._guides = [];
+        if (!e.shift) {
+          const snapped = snapOffset(a, b, d, this._snapWalls(), reach);
+          d = snapped.d;
+          if (snapped.guide) this._guides = [snapped.guide];
+        }
         drag.d = d;
         this._ghostFor(
           moveSegment(layout, wall.id, drag.seg, d, 1.5 * this._perCm),
           H,
         );
       } else if (drag.kind === "corner") {
-        const p = snapPoint(layout, floorPt, grid, reach, {
-          wallId: drag.wallId,
-          index: drag.index,
-        });
+        const snapped = e.shift
+          ? { p: floorPt, guides: [] }
+          : smartSnap(floorPt, this._snapWalls(), {
+              reach,
+              grid,
+              angle: false,
+              except: drag.from,
+            });
+        const p = snapped.p;
+        this._guides = snapped.guides;
         drag.to = p;
         this._ghostFor(
           moveCorners(layout, [{ from: drag.from, to: p }], 1.5 * this._perCm),
@@ -1503,6 +1605,7 @@ export class Floorplan3dView extends LitElement {
       const drag = this._drag;
       this._drag = null;
       this._ghost = [];
+      this._guides = [];
       if (drag.kind === "item") {
         const item = layout.furniture.find((f) => f.id === drag.id);
         if (item && (item.x !== drag.at[0] || item.y !== drag.at[1]))
@@ -1588,6 +1691,7 @@ export class Floorplan3dView extends LitElement {
     this._draft = [];
     this._ghost = [];
     this._lines = [];
+    this._guides = [];
     if (layout && pts.length >= 2) {
       const { patch, id } = addWall(layout, pts);
       this._edit(patch);

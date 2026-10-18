@@ -2469,6 +2469,24 @@ function createView3d(options: View3dOptions): View3dHandle {
       }
       outlineBoxes(o.ghost, "#2e7d32", 0);
     }
+    for (const guide of o.guides ?? []) {
+      if (guide.points.length < 2) continue;
+      const l = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(
+          guide.points.map(([x, y, z]) => new THREE.Vector3(x, y, z)),
+        ),
+        new THREE.LineDashedMaterial({
+          color: guide.color,
+          dashSize: 0.12,
+          gapSize: 0.08,
+          depthTest: false,
+          transparent: true,
+        }),
+      );
+      l.computeLineDistances();
+      l.renderOrder = 1001;
+      overlayGroup.add(l);
+    }
     for (const line of o.lines ?? []) {
       if (line.length < 2) continue;
       const l = new THREE.Line(

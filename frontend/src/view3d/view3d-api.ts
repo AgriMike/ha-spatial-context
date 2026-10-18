@@ -315,6 +315,8 @@ export interface EditOverlay {
   activeHandle?: number | null;
   /** Guide lines (polylines, edit-floor frame). */
   lines?: [number, number, number][][];
+  /** Snapping guides (edit-floor frame): drawn dashed in their colour. */
+  guides?: { points: [number, number, number][]; color: string }[];
   /** Boxes to preview (a wall being drawn, a door about to be placed). */
   ghost?: Box3d[];
 }
