@@ -59,11 +59,17 @@ export interface Slab3d {
   /** Outline on the floor plane (x, z). */
   points: Vec2[];
   color: string;
+  /** The floor's finish, drawn as a texture tinted by `color` when the
+   * room has a fill of its own (`tinted`). */
+  finish: FloorFinish;
+  tinted: boolean;
   /** Glow from the room's lights while on, else null. */
   emissive: string | null;
   emissiveIntensity: number;
   outdoor: boolean;
 }
+
+export type FloorFinish = "wood" | "tile" | "carpet" | "concrete" | "deck";
 
 export interface Item3d {
   id: string;
@@ -176,6 +182,9 @@ export interface Terrain3d {
   downhill: number;
   /** Downhill direction on the floor plane (x, z), unit length. */
   dir: Vec2;
+  /** The building's extent along `dir` (x * dir[0] + z * dir[1]): the
+   * grade falls from uphill to downhill between the two. */
+  range: [number, number];
   /** The footprints of floors that reach below the ground, cut out of it
    * so their rooms show. */
   holes: Vec2[][];

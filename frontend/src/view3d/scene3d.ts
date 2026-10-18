@@ -18,6 +18,7 @@ import type {
 import { partSection, porchSection, sectionFaces } from "./roof-planes";
 import type {
   Box3d,
+  FloorFinish,
   Floor3d,
   Item3d,
   Pane3d,
@@ -98,8 +99,20 @@ const POST_M = 0.15;
 const WINDOW_TRIM_M = 0.08;
 const TRIM_WHITE = "#f3f1ec";
 const TRIM_WHITE_DARK = "#9a968f";
+/** An outside door's leaf. */
+const DOOR = "#f6f4ef";
+const DOOR_DARK = "#8f8b84";
 const CEDAR = "#a8693a";
 const CONCRETE = "#cbc8c1";
+/** A raised deck: its posts (and their spacing), wood, and the railing's
+ * height. */
+const DECK_POST_M = 0.14;
+const DECK_POST_SPAN_M = 2.2;
+const DECK_WOOD = "#8a6c52";
+const DECK_WOOD_DARK = "#4f4033";
+const RAIL_TOP_M = 0.95;
+/** A foundation wall showing above grade. */
+const FOUNDATION = "#a9a59d";
 /** The front's stone wainscot: its top above the high side's grade. */
 const STONE_M = 1.1;
 const STONE = "#aaa49a";
@@ -522,7 +535,16 @@ function buildFloor(
   upperWalls: { a: Vec2; b: Vec2; y: number }[],
   /** Which way the street is (unit, floor plane), and the stone
    * wainscot's top above this floor's level. */
-  exterior: { front: Vec2; stoneTop: number },
+  exterior: {
+    front: Vec2;
+    stoneTop: number;
+    /** The ground's height (metres above this floor's level) at a spot on
+     * the floor plane, null on a flat site. */
+    groundAt: ((x: number, z: number) => number) | null;
+    /** Whether a lower floor has a room within `reach` metres of a spot on
+     * the floor plane (the wall there stands on it). */
+    lowerRoomNear: (x: number, z: number, reach: number) => boolean;
+  },
 ): Floor3d {
   const { layout, wallHeight: H } = input;
   const m = metersPerUnit(layout.scale);
@@ -647,7 +669,9 @@ function buildFloor(
       const s2 = (w.b[0] - ax) * ux + (w.b[1] - az) * uz;
       const overlap =
         Math.min(L, Math.max(s1, s2)) - Math.max(0, Math.min(s1, s2));
-      if (overlap > 0.5 * L) best = w.y;
+      // Along nearly all of it: a wall only partly under the floor above
+      // is trimmed (or raised) run by run in wallRuns instead.
+      if (overlap > 0.9 * L) best = w.y;
     }
     return best;
   };
@@ -890,6 +914,27 @@ function buildFloor(
         walls.push(box(-ext0, L + ext1, base, base + RAIL_HEIGHT_M));
         continue;
       }
+      // An outside wall standing above a falling grade (a garage on a
+      // slope) carries on down to the ground as its foundation: stone
+      // along the front, concrete elsewhere.
+      // A wall over a lower floor stands on that floor's walls, and one
+      // overhanging it a little (a bay) is cantilevered.
+      const [mx, mz] = at(L / 2);
+      if (
+        outside &&
+        exterior.groundAt &&
+        !exterior.lowerRoomNear(mx, mz, t / 2 + 0.6)
+      ) {
+        const [x0, z0] = at(-ext0);
+        const [x1, z1] = at(L + ext1);
+        const ground =
+          Math.min(exterior.groundAt(x0, z0), exterior.groundAt(x1, z1)) - 0.1;
+        if (base - ground > 0.02)
+          walls.push({
+            ...box(-ext0, L + ext1, ground, base),
+            ...(facesFront ? { stone: true } : { color: FOUNDATION }),
+          });
+      }
 
       const holes = (bySeg.get(i) ?? [])
         .map((o) => ({
@@ -925,27 +970,42 @@ function buildFloor(
                 : Math.min(WINDOW_SILL_M, head - off - 0.1)) + off;
         if (sill > base) solid(hole.s0, hole.s1, base, sill);
         if (head < top - 0.005) walls.push(box(hole.s0, hole.s1, head, top));
-        if (!isDoor) {
+        // An outside door: a patio door (wide) glazed like a window, any
+        // other shut with a door leaf; doors between rooms stand open.
+        const outdoorDoor = isDoor && !!outside;
+        const patio = outdoorDoor && !opening.garage && hole.s1 - hole.s0 > 1.2;
+        if (!isDoor || patio) {
           panes.push({
             box: box(hole.s0, hole.s1, sill, head, 0.02),
             kind: "glass",
             color: "#86a6bd",
             opacity: 0.38,
           });
-          // White casing round a window in an outside wall, standing a
-          // little proud of the siding so it reads from the street.
-          if (outside) {
-            const w = WINDOW_TRIM_M;
-            const d = t + 0.04;
-            const trim = dark ? TRIM_WHITE_DARK : TRIM_WHITE;
-            for (const [s0, s1, y0, y1] of [
-              [hole.s0 - w, hole.s0, sill - w, head + w],
-              [hole.s1, hole.s1 + w, sill - w, head + w],
-              [hole.s0, hole.s1, head, head + w],
-              [hole.s0, hole.s1, sill - w, sill],
-            ] as const)
-              walls.push({ ...box(s0, s1, y0, y1, d), color: trim });
+        } else if (outdoorDoor && !opening.garage) {
+          walls.push({
+            ...box(hole.s0, hole.s1, sill, head, 0.05),
+            color: dark ? DOOR_DARK : DOOR,
+          });
+        }
+        // White casing round a window or door in an outside wall, standing
+        // a little proud of the siding so it reads from the street; a
+        // patio door's frame splits it in two.
+        if (outside && (!isDoor || outdoorDoor)) {
+          const w = WINDOW_TRIM_M;
+          const d = t + 0.04;
+          const trim = dark ? TRIM_WHITE_DARK : TRIM_WHITE;
+          const pieces: [number, number, number, number][] = [
+            [hole.s0 - w, hole.s0, isDoor ? sill : sill - w, head + w],
+            [hole.s1, hole.s1 + w, isDoor ? sill : sill - w, head + w],
+            [hole.s0, hole.s1, head, head + w],
+          ];
+          if (!isDoor) pieces.push([hole.s0, hole.s1, sill - w, sill]);
+          if (patio) {
+            const mid = (hole.s0 + hole.s1) / 2;
+            pieces.push([mid - w / 2, mid + w / 2, sill, head]);
           }
+          for (const [s0, s1, y0, y1] of pieces)
+            walls.push({ ...box(s0, s1, y0, y1, d), color: trim });
         }
         // Covers: blinds over a window, an overhead garage door. Each
         // drops from the head by how closed it is; two covers split the
@@ -999,6 +1059,114 @@ function buildFloor(
     }
   }
 
+  // A deck standing above the ground: posts down to it, a rim board round
+  // its edge and a railing along the sides no wall meets.
+  if (exterior.groundAt) {
+    const groundAt = exterior.groundAt;
+    const along = (a: Vec2, b: Vec2, y0: number, y1: number, depth: number) => {
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      return {
+        x: (a[0] + b[0]) / 2,
+        z: (a[1] + b[1]) / 2,
+        y0,
+        y1,
+        length: len,
+        depth,
+        angle: Math.atan2(-(b[1] - a[1]), b[0] - a[0]),
+      };
+    };
+    const nearWall = (x: number, y: number) =>
+      layout.walls.some((w) =>
+        w.points.some((p, k) => {
+          const q = w.points[k + 1];
+          return (
+            !!q &&
+            pointToSegmentDistance(x, y, p[0], p[1], q[0], q[1]) * m <
+              wallThicknessCm(w) / 200 + 0.15
+          );
+        }),
+      );
+    for (const room of layout.rooms) {
+      if (!room.outdoor || room.points.length < 3) continue;
+      const level = room.floor_offset_m ?? 0;
+      const pts = room.points.map(([x, y]): Vec2 => [x * m, y * m]);
+      const lowest = Math.min(...pts.map(([x, z]) => groundAt(x, z)));
+      if (level - lowest < 0.5) continue;
+      const wood = dark ? DECK_WOOD_DARK : DECK_WOOD;
+      const rail = dark ? TRIM_DARK : TRIM;
+      // Which way is inside: the polygon's winding.
+      let area2 = 0;
+      pts.forEach(([x, z], k) => {
+        const [x2, z2] = pts[(k + 1) % pts.length]!;
+        area2 += x * z2 - x2 * z;
+      });
+      const inward = area2 > 0 ? 1 : -1;
+      const post = (x: number, z: number, top: number) =>
+        walls.push({
+          x,
+          z,
+          y0: groundAt(x, z) - 0.1,
+          y1: top,
+          length: DECK_POST_M,
+          depth: DECK_POST_M,
+          angle: 0,
+          color: wood,
+        });
+      pts.forEach((a, k) => {
+        const b = pts[(k + 1) % pts.length]!;
+        const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (len < 0.05) return;
+        const ux = (b[0] - a[0]) / len;
+        const uz = (b[1] - a[1]) / len;
+        // Inward normal, and the edge pulled in to the posts' line.
+        const nx = -uz * inward;
+        const nz = ux * inward;
+        const inset = DECK_POST_M / 2;
+        const pa: Vec2 = [a[0] + nx * inset, a[1] + nz * inset];
+        const pb: Vec2 = [b[0] + nx * inset, b[1] + nz * inset];
+        const mid = [(a[0] + b[0]) / 2 / m, (a[1] + b[1]) / 2 / m] as const;
+        const open = !nearWall(mid[0], mid[1]);
+        // Rim board under the deck's edge.
+        walls.push({
+          ...along(a, b, level - 0.3, level - 0.02, 0.05),
+          color: wood,
+        });
+        const n = Math.max(1, Math.ceil(len / DECK_POST_SPAN_M));
+        for (let i = 0; i <= n; i++) {
+          if (i === n && n > 0 && open) continue; // the next edge's first
+          const x = pa[0] + (pb[0] - pa[0]) * (i / n);
+          const z = pa[1] + (pb[1] - pa[1]) * (i / n);
+          // Under a wall side only the corners need posts.
+          if (!open && i > 0 && i < n) continue;
+          post(x, z, open ? level + RAIL_TOP_M : level - 0.02);
+        }
+        if (!open) return;
+        walls.push({
+          ...along(pa, pb, level + RAIL_TOP_M - 0.06, level + RAIL_TOP_M, 0.09),
+          color: wood,
+        });
+        walls.push({
+          ...along(pa, pb, level + 0.08, level + 0.12, 0.05),
+          color: rail,
+        });
+        const count = Math.floor(len / 0.12);
+        for (let i = 1; i < count; i++) {
+          const f = i / count;
+          walls.push({
+            x: pa[0] + (pb[0] - pa[0]) * f,
+            z: pa[1] + (pb[1] - pa[1]) * f,
+            y0: level + 0.12,
+            y1: level + RAIL_TOP_M - 0.06,
+            length: 0.025,
+            depth: 0.025,
+            angle: Math.atan2(-uz, ux),
+            color: rail,
+          });
+        }
+      });
+    }
+  }
+
   // Room slabs, tinted like the plan's room fills.
   const lights = computeRoomLights(layout.rooms, hass);
   const floorBase = dark ? "#3b3936" : "#ece7df";
@@ -1024,6 +1192,8 @@ function buildFloor(
         fill.color,
         Math.min(1, fill.opacity * 1.6),
       ),
+      finish: floorFinish(room.name, !!room.outdoor),
+      tinted: fill.opacity > 0.05,
       emissive: lit ? light.color : null,
       // A lit room's glow shows at night; daylight drowns it out.
       emissiveIntensity: lit
@@ -1111,6 +1281,20 @@ function buildFloor(
   };
 }
 
+/** A floor finish to suit a room, by its name: tile where it gets wet or
+ * walked in from outside, carpet in bedrooms, concrete in a garage or an
+ * unfinished space, wood elsewhere; decks are boards. */
+function floorFinish(name: string, outdoor: boolean): FloorFinish {
+  if (outdoor) return "deck";
+  const n = name.toLowerCase();
+  if (/garage|crawl|mech|furnace|utility|storage|unfinished|gym/.test(n))
+    return "concrete";
+  if (/bath|laundry|entry|foyer|mud|powder|shower|toilet|dog|wc/.test(n))
+    return "tile";
+  if (/bed|guest|nursery|kid|room$/.test(n)) return "carpet";
+  return "wood";
+}
+
 export function buildScene(input: SceneInput): Scene3d {
   const { hass, dark } = input;
   // The sun: from HA's home location when known, else a pleasant
@@ -1134,6 +1318,7 @@ export function buildScene(input: SceneInput): Scene3d {
       })()
     : [0, 1];
   const grade = input.ground?.uphill_m ?? 0;
+  const site = input.ground ? terrain(input, input.ground, northDeg) : null;
   const floors = input.floors.map((f) =>
     buildFloor(
       f,
@@ -1143,7 +1328,34 @@ export function buildScene(input: SceneInput): Scene3d {
       1 - 0.75 * day,
       floorAboveOf(f, input.floors),
       upperWallsOf(f, input.floors),
-      { front, stoneTop: grade + STONE_M - f.baseY },
+      {
+        front,
+        stoneTop: grade + STONE_M - f.baseY,
+        groundAt: site
+          ? (x: number, z: number) => groundHeight(site, x, z) - f.baseY
+          : null,
+        lowerRoomNear: (x, z, reach) =>
+          input.floors.some((g) => {
+            if (g.baseY >= f.baseY - 0.3) return false;
+            const m = metersPerUnit(g.layout.scale);
+            const px = x / m;
+            const py = z / m;
+            return g.layout.rooms.some(
+              (r) =>
+                !r.outdoor &&
+                r.points.length >= 3 &&
+                (pointInPolygon(px, py, r.points) ||
+                  r.points.some((a, k) => {
+                    const b = r.points[(k + 1) % r.points.length]!;
+                    return (
+                      pointToSegmentDistance(px, py, a[0], a[1], b[0], b[1]) *
+                        m <
+                      reach
+                    );
+                  })),
+            );
+          }),
+      },
     ),
   );
   let sun: Scene3d["sun"] = null;
@@ -1165,7 +1377,7 @@ export function buildScene(input: SceneInput): Scene3d {
       ground: day > 0 ? "#b9a88f" : "#2a2a35",
       intensity: 0.55 + 0.7 * day,
     },
-    terrain: input.ground ? terrain(input, input.ground, northDeg) : null,
+    terrain: site,
     roof: input.roof ? cachedRoof(input, northDeg, floors) : null,
     background: dark
       ? day > 0
@@ -1791,12 +2003,34 @@ function terrain(
       )
       .map((r) => r.points.map(([x, y]): Vec2 => [x * m, y * m]));
   });
+  // How far along the downhill direction the building reaches: the grade
+  // falls from uphill to downhill across it.
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const f of input.floors) {
+    const m = metersPerUnit(f.layout.scale);
+    for (const r of f.layout.rooms)
+      for (const [x, y] of r.points) {
+        const s = x * m * dx + y * m * dz;
+        lo = Math.min(lo, s);
+        hi = Math.max(hi, s);
+      }
+  }
   return {
     uphill: ground.uphill_m,
     downhill: ground.downhill_m,
     dir: [dx, dz],
+    range: lo < hi ? [lo, hi] : [0, 0],
     holes,
   };
+}
+
+/** The ground's height (world Y) at a spot on the floor plane. */
+export function groundHeight(t: Terrain3d, x: number, z: number): number {
+  const [lo, hi] = t.range;
+  const s = x * t.dir[0] + z * t.dir[1];
+  const k = hi > lo ? Math.min(1, Math.max(0, (s - lo) / (hi - lo))) : 0;
+  return t.uphill + (t.downhill - t.uphill) * k;
 }
 
 /** Each floor of a building stacked by level (lowest first), with its

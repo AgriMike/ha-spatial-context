@@ -5,6 +5,7 @@ import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type {
   Box3d,
+  FloorFinish,
   Floor3d,
   Item3d,
   Roof3d,
@@ -522,14 +523,7 @@ function gridLines(lo: number, hi: number, step: number, reach: number) {
  * `downhill` past its low face, with the given rooms cut out. */
 function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
   const [dx, dz] = t.dir;
-  let lo = Infinity;
-  let hi = -Infinity;
-  for (const x of [box.min.x, box.max.x])
-    for (const z of [box.min.z, box.max.z]) {
-      const s = x * dx + z * dz;
-      lo = Math.min(lo, s);
-      hi = Math.max(hi, s);
-    }
+  const [lo, hi] = t.range;
   // A hair under the stated grade: outdoor slabs sit just below 0.
   const height = (x: number, z: number) => {
     const s = x * dx + z * dz;
@@ -718,6 +712,100 @@ interface ScanEntry {
   }[];
 }
 
+/** Floor finishes, drawn once each: a tile of the texture and how many
+ * metres it spans (a floor's UVs are its plan coordinates in metres). */
+const FLOOR_TEXTURES = new Map<FloorFinish, THREE.Texture>();
+const FLOOR_TILE_M: Record<FloorFinish, number> = {
+  wood: 1.6,
+  tile: 1.2,
+  carpet: 1.5,
+  concrete: 3,
+  deck: 1.4,
+};
+
+function floorTexture(finish: FloorFinish): THREE.Texture {
+  const known = FLOOR_TEXTURES.get(finish);
+  if (known) return known;
+  const size = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const g = canvas.getContext("2d")!;
+  let seed = 11;
+  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const shade = (base: [number, number, number], spread: number) => {
+    const k = 1 + (rand() - 0.5) * spread;
+    return `rgb(${base.map((c) => Math.round(Math.min(255, c * k))).join(",")})`;
+  };
+  const noise = (base: [number, number, number], spread: number, n: number) => {
+    g.fillStyle = `rgb(${base.join(",")})`;
+    g.fillRect(0, 0, size, size);
+    for (let i = 0; i < n; i++) {
+      g.fillStyle = shade(base, spread);
+      g.fillRect(rand() * size, rand() * size, 2, 2);
+    }
+  };
+  const boards = (
+    base: [number, number, number],
+    rows: number,
+    gap: string,
+    gapPx: number,
+  ) => {
+    const h = size / rows;
+    for (let r = 0; r < rows; r++) {
+      let x = -rand() * size * 0.5;
+      while (x < size) {
+        const len = size * (0.35 + rand() * 0.5);
+        g.fillStyle = shade(base, 0.16);
+        g.fillRect(x, r * h, len, h);
+        // Grain: a few faint streaks along the board.
+        g.globalAlpha = 0.12;
+        for (let k = 0; k < 4; k++) {
+          g.fillStyle = shade(base, 0.6);
+          g.fillRect(x, r * h + rand() * h, len, 1);
+        }
+        g.globalAlpha = 1;
+        g.fillStyle = gap;
+        g.fillRect(x, r * h, gapPx, h);
+        x += len;
+      }
+      g.fillStyle = gap;
+      g.fillRect(0, r * h, size, gapPx);
+    }
+  };
+  switch (finish) {
+    case "wood":
+      boards([196, 160, 118], 10, "rgba(70,45,25,0.55)", 2);
+      break;
+    case "deck":
+      boards([150, 112, 80], 10, "rgba(35,25,18,0.9)", 4);
+      break;
+    case "tile": {
+      noise([226, 222, 214], 0.05, 6000);
+      g.fillStyle = "rgba(120,115,108,0.6)";
+      for (let i = 0; i < 2; i++) {
+        g.fillRect(i * (size / 2), 0, 3, size);
+        g.fillRect(0, i * (size / 2), size, 3);
+      }
+      break;
+    }
+    case "carpet":
+      noise([196, 190, 180], 0.12, 40000);
+      break;
+    case "concrete":
+      noise([188, 186, 182], 0.1, 20000);
+      break;
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(1 / FLOOR_TILE_M[finish], 1 / FLOOR_TILE_M[finish]);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  FLOOR_TEXTURES.set(finish, tex);
+  return tex;
+}
+
 function createView3d(options: View3dOptions): View3dHandle {
   const { container } = options;
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -767,7 +855,7 @@ function createView3d(options: View3dOptions): View3dHandle {
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.bias = -0.0004;
-  sun.shadow.normalBias = 0.02;
+  sun.shadow.normalBias = 0.04;
   scene.add(sun, sun.target);
 
   const textureLoader = new THREE.TextureLoader();
@@ -775,6 +863,8 @@ function createView3d(options: View3dOptions): View3dHandle {
   const floors = new Map<string, FloorEntry>();
   const scans = new Map<string, ScanEntry>();
   let spread = 0;
+  /** The scene's dark theme (floor finishes are dimmed to suit). */
+  let dark = false;
   let editScanId: string | null = null;
   let scanMode: ScanMode = "plan";
   let editSnap = true;
@@ -914,17 +1004,37 @@ function createView3d(options: View3dOptions): View3dHandle {
       geom.rotateX(-Math.PI / 2);
       geom.translate(0, slab.y + (slab.outdoor ? -SLAB_M - 0.02 : -SLAB_M), 0);
       const mat = new THREE.MeshStandardMaterial({
-        color: slab.color,
-        roughness: 0.9,
+        color: slab.tinted ? slab.color : dark ? "#8a8580" : "#ffffff",
+        roughness: slab.finish === "tile" ? 0.45 : 0.85,
+        map: floorTexture(slab.finish),
       });
       if (slab.emissive) {
         mat.emissive = new THREE.Color(slab.emissive);
         mat.emissiveIntensity = slab.emissiveIntensity;
       }
-      const mesh = new THREE.Mesh(geom, mat);
+      // Its edge and underside are the outside's where they show (a bay
+      // overhanging the floor below), not the floor's finish.
+      const edge = new THREE.MeshStandardMaterial({
+        color: slab.outdoor ? slab.color : spec.sidingColor,
+        roughness: 0.9,
+      });
+      const mesh = new THREE.Mesh(geom, [mat, edge]);
       mesh.name = slab.name || `Room ${slab.id}`;
       mesh.receiveShadow = true;
       group.add(mesh);
+      // Facing down: the shape in XY (z as y) turned so +Z looks down.
+      const under = new THREE.ShapeGeometry(
+        new THREE.Shape(slab.points.map(([x, z]) => new THREE.Vector2(x, z))),
+      );
+      under.rotateX(Math.PI / 2);
+      under.translate(
+        0,
+        slab.y + (slab.outdoor ? -SLAB_M - 0.02 : -SLAB_M) - 0.01,
+        0,
+      );
+      const underside = new THREE.Mesh(under, edge);
+      underside.name = `${mesh.name} underside`;
+      group.add(underside);
     }
     const furniture = new THREE.Group();
     furniture.name = "Furniture";
@@ -999,6 +1109,7 @@ function createView3d(options: View3dOptions): View3dHandle {
   }
 
   function setScene(spec: Scene3d): void {
+    dark = spec.dark;
     // Keep scans: they're re-parented into the rebuilt floors below.
     for (const s of scans.values()) s.group.removeFromParent();
     for (const f of floors.values()) {
@@ -1061,6 +1172,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       roof.visible = spread === 0;
       root.add(roof);
     }
+    applyWallHiding();
 
     if (terrain) {
       terrain.removeFromParent();
@@ -1201,10 +1313,12 @@ function createView3d(options: View3dOptions): View3dHandle {
         const mesh = o as THREE.Mesh;
         if (!mesh.isMesh) return;
         const part = mesh.userData["scanPart"] as string;
+        // Under the roof the plan's building stands whole: a scan's stairs
+        // would only poke out through its walls and roof.
         mesh.visible =
           part !== "ceiling" &&
           part !== "floor" &&
-          (scanMode === "scan" || part === "stairs");
+          (scanMode === "scan" || (part === "stairs" && !roof?.visible));
       });
     }
   }
@@ -1669,6 +1783,7 @@ function createView3d(options: View3dOptions): View3dHandle {
     setSpread(metres) {
       spread = metres;
       if (roof) roof.visible = spread === 0;
+      applyWallHiding();
       placeFloors();
       placeSun();
       invalidate();
