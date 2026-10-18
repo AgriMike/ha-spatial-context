@@ -1450,10 +1450,12 @@ function buildFloor(
   for (const room of layout.rooms) {
     if (room.visible === false || room.points.length < 3) continue;
     const light = showLights ? lights.get(room.id) : undefined;
+    // The floor wears the room's own fill; lights only make it glow (a
+    // room with its lights off isn't shaded dark, as on the plan).
     const fill = roomFillStyle(
       room.fill_color ?? DEFAULT_ROOM_FILL_COLOR,
       room.fill_opacity ?? DEFAULT_ROOM_FILL_OPACITY,
-      light,
+      light && light.on > 0 ? light : undefined,
       dark,
     );
     const lit = !!light && light.on > 0;

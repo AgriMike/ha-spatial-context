@@ -84,13 +84,14 @@ function wallGeometry(
   const count = g.getAttribute("position").count;
   const colors = new Float32Array(count * 3);
   // BoxGeometry's faces come +X, -X, +Y, -Y, +Z, -Z, four corners each.
-  // An outside wall is sided all over but its indoor face: its top under
-  // a gable, its ends at corners and round windows and doors.
+  // An outside wall's outdoor face is sided; its other long face, ends,
+  // top and bottom are painted.
   const indoor = b.outside === 1 ? 20 : b.outside === -1 ? 16 : -1;
   for (let v = 0; v < count; v++) {
     // Its top (and bottom) is the same painted cap on every wall, so
-    // tops read as one clean cut where walls meet.
-    const cap = v >= 8 && v < 16;
+    // tops read as one clean cut where walls meet; its ends are painted
+    // too (a jamb, or a wall stopping above a half wall indoors).
+    const cap = v < 16;
     const c =
       own ??
       (!cap && indoor >= 0 && !(v >= indoor && v < indoor + 4)
@@ -830,7 +831,9 @@ function scanPart(o: THREE.Object3D): "ceiling" | "floor" | "stairs" | "other" {
       /^floor_f\d/i.test(name)
     )
       return "floor";
-    if (/stair/i.test(name)) return "stairs";
+    // A stairs object ("stairs7_F2_0"), not any node whose name merely
+    // contains the word (a scan fitted to "upstairs").
+    if (/^stairs?\d*_/i.test(name)) return "stairs";
   }
   return "other";
 }
@@ -1461,9 +1464,20 @@ function createView3d(options: View3dOptions): View3dHandle {
           (scanMode === "scan" ||
             (part === "stairs" &&
               !roof?.visible &&
-              !floors.get(s.placement.floorId)?.spec.hasStairs));
+              !planStairsAt(s.placement.floorId)));
       });
     }
+  }
+
+  /** The plan models the stairs on this floor, or the flight up to it
+   * from the floor below: a scan's own stairs there would double them. */
+  function planStairsAt(floorId: string): boolean {
+    const ordered = [...floors.values()].sort((a, b) => a.order - b.order);
+    const i = ordered.findIndex((f) => f.spec.floorId === floorId);
+    return (
+      !!ordered[i]?.spec.hasStairs ||
+      (i > 0 && !!ordered[i - 1]?.spec.hasStairs)
+    );
   }
 
   /** World-space boxes of the shown scans' room floors. */
