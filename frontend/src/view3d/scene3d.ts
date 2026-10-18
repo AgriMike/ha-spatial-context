@@ -156,6 +156,8 @@ function itemShape(
 }
 /** The staircase item (see furniture-catalog.ts). */
 const STAIRS_KIND = "stairs_straight";
+/** A ledge's lid over a closet: its thickness above the walls. */
+const SLAB_LID_M = 0.04;
 /** The half wall material (see materials.ts) and its height. */
 const HALF_WALL_MATERIAL = "half_wall";
 const HALF_WALL_M = 1.0;
@@ -1380,6 +1382,39 @@ function buildFloor(
         : 0,
       outdoor: !!room.outdoor,
     });
+    // A closet beside a stairwell, nothing over it: its top is a ledge
+    // seen from the stairs, so it gets a lid at its walls' height.
+    if (
+      !room.outdoor &&
+      /closet|pantry|storage/i.test(room.name) &&
+      stairs.some((st) =>
+        st.sides.some(([a, b]) =>
+          room.points.some(
+            ([x, y]) =>
+              pointToSegmentDistance(x * m, y * m, a[0], a[1], b[0], b[1]) <
+              0.6,
+          ),
+        ),
+      )
+    ) {
+      const pts = room.points.map(([x, y]): Vec2 => [x * m, y * m]);
+      const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+      const cz = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+      if (floorAbove(cx, cz) === null)
+        slabs.push({
+          id: `${room.id}:ledge`,
+          name: `${room.name} ledge`,
+          y: (room.floor_offset_m ?? 0) + H + SLAB_LID_M,
+          points: pts,
+          color: dark ? "#8a8580" : "#f4f1ec",
+          finish: "plain",
+          tinted: true,
+          emissive: null,
+          emissiveIntensity: 0,
+          outdoor: false,
+          lid: true,
+        });
+    }
   }
 
   // Furniture.

@@ -817,6 +817,7 @@ interface ScanEntry {
  * metres it spans (a floor's UVs are its plan coordinates in metres). */
 const FLOOR_TEXTURES = new Map<FloorFinish, THREE.Texture>();
 const FLOOR_TILE_M: Record<FloorFinish, number> = {
+  plain: 1,
   wood: 1.6,
   tile: 1.2,
   carpet: 1.5,
@@ -1107,7 +1108,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       const mat = new THREE.MeshStandardMaterial({
         color: slab.tinted ? slab.color : dark ? "#8a8580" : "#ffffff",
         roughness: slab.finish === "tile" ? 0.45 : 0.85,
-        map: floorTexture(slab.finish),
+        map: slab.finish === "plain" ? null : floorTexture(slab.finish),
       });
       if (slab.emissive) {
         mat.emissive = new THREE.Color(slab.emissive);
@@ -1116,7 +1117,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       // Its edge and underside are the outside's where they show (a bay
       // overhanging the floor below), not the floor's finish.
       const edge = new THREE.MeshStandardMaterial({
-        color: slab.outdoor ? slab.color : spec.sidingColor,
+        color: slab.outdoor || slab.lid ? slab.color : spec.sidingColor,
         roughness: 0.9,
       });
       const mesh = new THREE.Mesh(geom, [mat, edge]);

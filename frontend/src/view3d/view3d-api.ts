@@ -67,9 +67,12 @@ export interface Slab3d {
   emissive: string | null;
   emissiveIntensity: number;
   outdoor: boolean;
+  /** A lid over a room (a closet's top, a ledge): painted all round. */
+  lid?: boolean;
 }
 
-export type FloorFinish = "wood" | "tile" | "carpet" | "concrete" | "deck";
+export type FloorFinish =
+  "wood" | "tile" | "carpet" | "concrete" | "deck" | "plain";
 
 export interface Item3d {
   id: string;
