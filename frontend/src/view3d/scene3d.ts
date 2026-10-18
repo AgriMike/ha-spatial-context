@@ -17,6 +17,7 @@ import type {
 } from "../types";
 import {
   partSection,
+  ROOF_HEEL_M,
   porchSection,
   sectionFaces,
   sectionHeightAt,
@@ -659,23 +660,86 @@ function buildFloor(
     // up to it rather than leave a gap below it.
     const upper = upperWallLevel(a, b);
     if (upper !== null && upper <= top + 0.8) top = upper;
-    // Under a planned roof whose eave sits a little above it (a garage a
-    // step down from the house, under the house's eave line), it stands
-    // up to meet the roof rather than leave a gap under it.
+    // Under a planned roof whose lowest point along it sits a little
+    // above it (a garage a step down from the house, under the house's
+    // eave line), it stands up to that point rather than leave a gap.
     else {
-      const roof = [0.1, 0.3, 0.5, 0.7, 0.9].map((f) =>
-        exterior.roofOver(
+      const L = distance(a[0], a[1], b[0], b[1]) * m;
+      const ux = ((b[0] - a[0]) * m) / L;
+      const uz = ((b[1] - a[1]) * m) / L;
+      // Just inside its ends (a corner lies on the roof's outline).
+      const inset = Math.min(L / 2, t) / L;
+      const roof = [inset, 0.25, 0.5, 0.75, 1 - inset].map((f) =>
+        roofAcross(
           (a[0] + (b[0] - a[0]) * f) * m,
           (a[1] + (b[1] - a[1]) * f) * m,
+          ux,
+          uz,
+          t,
         ),
       );
+      // Up to its eave: the roof crosses a wall's centre line a rafter's
+      // depth above it.
       if (roof.every((r) => r !== null)) {
-        const low = Math.min(...(roof as number[]));
+        const c = roof.map((r) => r![0]);
+        // Carried on out to its ends (under a gable the roof rises along
+        // it from each corner).
+        const run = 0.25 - inset;
+        const end0 =
+          run > 0.01 ? c[0]! - ((c[1]! - c[0]!) * inset) / run : c[0]!;
+        const end1 =
+          run > 0.01 ? c[4]! - ((c[3]! - c[4]!) * inset) / run : c[4]!;
+        const low = Math.min(...c, end0, end1) - ROOF_HEEL_M;
         if (low > top + 0.005 && low < top + 0.6) top = low;
       }
     }
     return { base, top, level, outside };
   };
+  /** The planned roof's surface over a wall at a spot: at its centre
+   * line and at the lower of its two faces (a roof falls across a wall's
+   * thickness), else null. */
+  const roofAcross = (
+    x: number,
+    z: number,
+    ux: number,
+    uz: number,
+    t: number,
+  ): [number, number] | null => {
+    // The roof's outline runs along the walls' centre lines (an outside
+    // face is past it): sample across the wall and a little either side,
+    // and carry the roof's plane over both faces.
+    const all: [number, number][] = [];
+    for (const o of [-t, -t / 2, 0, t / 2, t]) {
+      const r = exterior.roofOver(x - uz * o, z + ux * o);
+      if (r !== null) all.push([o, r]);
+    }
+    // Only the roof over it (the higher one where it stands on the edge
+    // between two): a sample that jumps to another (a lower roof just past
+    // an upper one's edge) is left out.
+    const near = all.filter((p) => Math.abs(p[0]) <= t / 2 + 1e-9);
+    const ref = (near.length ? near : all).reduce<[number, number] | null>(
+      (best, p) => (!best || p[1] > best[1] ? p : best),
+      null,
+    );
+    const pts = all.filter(
+      (p) =>
+        !ref || Math.abs(p[1] - ref[1]) <= Math.abs(p[0] - ref[0]) * 1.2 + 0.02,
+    );
+    if (pts.length < 2) return pts.length ? [pts[0]![1], pts[0]![1]] : null;
+    const n = pts.length;
+    const mo = pts.reduce((acc, p) => acc + p[0], 0) / n;
+    const mr = pts.reduce((acc, p) => acc + p[1], 0) / n;
+    const den = pts.reduce((acc, p) => acc + (p[0] - mo) ** 2, 0);
+    const k =
+      den > 0
+        ? pts.reduce((acc, p) => acc + (p[0] - mo) * (p[1] - mr), 0) / den
+        : 0;
+    return [
+      mr - k * mo,
+      Math.min(mr + k * (t / 2 - mo), mr + k * (-t / 2 - mo)),
+    ];
+  };
+
   /** A wall's top along its length (s in metres from `a`), in runs: it
    * stops under a floor above that covers either side of it, and reaches
    * up to meet one just above it rather than leave a gap. A wall only
@@ -726,6 +790,9 @@ function buildFloor(
         });
         if (c <= top + 0.8) v = carries ? c : c - JOINT_INSET_M;
       }
+      // Never up through the roof over it.
+      const roof = roofAcross(x, z, ux, uz, t);
+      if (roof !== null && v > roof[1]) v = roof[1];
       v = Math.max(v, base + 0.3);
       const last = runs[runs.length - 1];
       if (last && Math.abs(last.top - v) < 0.001) last.s1 = ((k + 1) * L) / n;
@@ -1146,7 +1213,10 @@ function buildFloor(
           y0,
           y1,
           length: s1 - s0,
-          depth,
+          // An inside wall a hair thinner than drawn, so where it carries
+          // straight on from an outside wall their faces never share a
+          // plane (the sided and the painted would fight).
+          depth: depth === t && !outside ? t - 2 * JOINT_INSET_M : depth,
           angle,
           ...(outside && depth === t ? { outside } : {}),
         };
@@ -1222,15 +1292,15 @@ function buildFloor(
             abutted,
           });
           const mid = out(at((s0 + s1) / 2), t / 2 + PORCH_DEPTH_M / 2);
-          // Its slab lies on the ground (a hair proud) when that's about a
-          // step below the door, so it's one step up into the house; else
-          // it stands a step below the door.
+          // A raised slab: level with the door when the ground is about a
+          // step below it (one step up from the ground, as from a garage a
+          // step down), else a step below the door.
           const grade = exterior.groundAt?.(mid[0], mid[1]);
           const ground =
             grade === undefined ? undefined : grade - GROUND_DRAWN_M;
           const pad =
             ground !== undefined && off - ground > 0.05 && off - ground < 0.25
-              ? ground + 0.02
+              ? off - 0.01
               : off - 0.12;
           walls.push({
             x: mid[0],
@@ -1464,7 +1534,10 @@ function buildFloor(
           const clear = exterior.groundAt(gx, gz) - GROUND_DRAWN_M + 0.15;
           if (sill < clear) sill = Math.min(clear, head - 0.3);
         }
-        if (sill > base) solid(hole.s0, hole.s1, foot, sill);
+        // Under a door (a step up from a lower room) it stops a hair under
+        // the floor it leads onto.
+        if (sill > base)
+          solid(hole.s0, hole.s1, foot, isDoor ? sill - JOINT_INSET_M : sill);
         if (head < top - 0.005) walls.push(box(hole.s0, hole.s1, head, top));
         // An outside door: a patio door (wide) glazed like a window, any
         // other shut with a door leaf; doors between rooms stand open.
@@ -1519,8 +1592,14 @@ function buildFloor(
             const mid = (hole.s0 + hole.s1) / 2;
             pieces.push([mid - w / 2, mid + w / 2, sill, head]);
           }
-          for (const [s0, s1, y0, y1] of pieces)
-            walls.push({ ...box(s0, s1, y0, y1, d), color: trim });
+          // Never past the wall's own ends (a door hard by a corner): the
+          // wall beyond belongs to the next one.
+          for (const [s0, s1, y0, y1] of pieces) {
+            const p0 = Math.max(s0, 0);
+            const p1 = Math.min(s1, L);
+            if (p1 - p0 > 0.005)
+              walls.push({ ...box(p0, p1, y0, y1, d), color: trim });
+          }
         }
         // Covers: blinds over a window, an overhead garage door. Each
         // drops from the head by how closed it is; two covers split the
@@ -2508,15 +2587,56 @@ function plannedRoof(
 ): Roof3d {
   const lowest = [...input.floors].sort((a, b) => a.baseY - b.baseY)[0];
   const m = metersPerUnit(lowest?.layout.scale ?? null);
-  const faces = plan.parts.flatMap((part) =>
-    sectionFaces(partSection(part, m)),
-  );
+  const sections = plan.parts.map((part) => partSection(part, m));
+  const faces = sections.flatMap((s) => sectionFaces(s));
   for (const f of built)
     for (const p of f.porches) {
+      // A side running into a roof's eave (a garage beside the door): the
+      // porch takes that roof's eave and pitch, so the two slopes meet in
+      // a valley at the corner.
+      const [wa, wb, ob, oa] = p.corners;
+      const own = f.baseY + p.eave;
+      const meets = sections
+        .filter((s) =>
+          (
+            [
+              [wa, oa, 0],
+              [wb, ob, 1],
+            ] as const
+          ).some(([w, o, side]) => {
+            if (!p.abutted?.[side]) return false;
+            const local = ([x, z]: Vec2) => {
+              const rx = x - s.origin[0];
+              const rz = z - s.origin[1];
+              return [
+                rx * s.along[0] + rz * s.along[1],
+                rx * s.across[0] + rz * s.across[1],
+              ] as const;
+            };
+            const [a1, c1] = local(w);
+            const [a2, c2] = local(o);
+            const onEave = (c: number) =>
+              Math.abs(c - s.c0) < 0.15 || Math.abs(c - s.c1) < 0.15;
+            return (
+              onEave(c1) &&
+              onEave(c2) &&
+              Math.min(a1, a2) > s.a0 - 1 &&
+              Math.max(a1, a2) < s.a1 + 1
+            );
+          }),
+        )
+        // The one at its own height (not an upper storey's roof above).
+        .sort(
+          (x, y) =>
+            Math.abs(Math.min(x.eave0, x.eave1) - own) -
+            Math.abs(Math.min(y.eave0, y.eave1) - own),
+        )
+        .find((s) => Math.abs(Math.min(s.eave0, s.eave1) - own) < 0.6);
+      const eave = meets ? Math.min(meets.eave0, meets.eave1) : own;
       const s = porchSection(
         p.corners,
-        f.baseY + p.eave,
-        PORCH_PITCH,
+        eave,
+        meets ? meets.pitch : PORCH_PITCH,
         PORCH_OVERHANG_M,
         p.abutted,
       );

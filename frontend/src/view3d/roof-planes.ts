@@ -14,7 +14,8 @@ const FASCIA_M = 0.17;
 /** The roof sits this far above its eave height (the wall tops) where it
  * crosses the walls' centre lines — the rafters' depth — so a wall's outer
  * edge never shows through it. */
-const HEEL_M = 0.15;
+export const ROOF_HEEL_M = 0.15;
+const HEEL_M = ROOF_HEEL_M;
 export const ROOF_OVERHANG_M = 0.35;
 /** Gable ends stand this far out from their wall line (a part's edges are
  * the walls' centre lines): flush with an outside wall's face, so the wall
