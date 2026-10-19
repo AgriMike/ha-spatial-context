@@ -1529,7 +1529,7 @@ export class Floorplan3dView extends LitElement {
       const prev = pts[k - 1];
       if (prev) {
         const len = Math.hypot(q[0] - prev[0], q[1] - prev[1]) * m;
-        const n = Math.min(40, Math.floor(len / 0.5));
+        const n = Math.min(400, Math.ceil(len / 0.25));
         for (let s = 1; s < n; s++) {
           const t = s / n;
           const r: Pt = [

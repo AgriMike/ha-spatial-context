@@ -2492,14 +2492,30 @@ function createView3d(options: View3dOptions): View3dHandle {
       const a = siteObj.rotation.y;
       const ox = siteObj.position.x;
       const oz = siteObj.position.z;
-      const pts = siteItem.site.points.map(([lx, lz]) => {
-        const x = ox + lx * Math.cos(a) + lz * Math.sin(a);
-        const z = oz - lx * Math.sin(a) + lz * Math.cos(a);
-        return new THREE.Vector3(
+      const corners = siteItem.site.points.map(([lx, lz]): [number, number] => [
+        ox + lx * Math.cos(a) + lz * Math.sin(a),
+        oz - lx * Math.sin(a) + lz * Math.cos(a),
+      ]);
+      if (siteItem.site.closed && corners.length > 2) corners.push(corners[0]!);
+      // Each edge sampled every 25 cm, so the line rides the ground's
+      // rise and fall rather than cutting through it.
+      const at = (x: number, z: number) =>
+        new THREE.Vector3(
           x,
           groundAt(siteTerrain, x, z) - entry.spec.baseY + 0.08,
           z,
         );
+      const pts: THREE.Vector3[] = [];
+      corners.forEach(([x, z], k) => {
+        const prev = corners[k - 1];
+        if (prev) {
+          const n = Math.min(400, Math.ceil(Math.hypot(x - prev[0], z - prev[1]) / 0.25));
+          for (let s = 1; s < n; s++) {
+            const t = s / n;
+            pts.push(at(prev[0] + (x - prev[0]) * t, prev[1] + (z - prev[1]) * t));
+          }
+        }
+        pts.push(at(x, z));
       });
       const geom = new THREE.BufferGeometry().setFromPoints(pts);
       const lineMat = new THREE.LineBasicMaterial({
@@ -2507,9 +2523,7 @@ function createView3d(options: View3dOptions): View3dHandle {
         depthTest: false,
         transparent: true,
       });
-      const line = siteItem.site.closed
-        ? new THREE.LineLoop(geom, lineMat)
-        : new THREE.Line(geom, lineMat);
+      const line = new THREE.Line(geom, lineMat);
       line.renderOrder = 1000;
       overlayGroup.add(line);
       return;
