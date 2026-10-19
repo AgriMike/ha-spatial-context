@@ -802,7 +802,11 @@ export class Floorplan3dView extends LitElement {
     }
     this._view3d = map;
     if (!this.editable) return;
-    void this._client?.saveGround(ids, next).catch((err: unknown) => {
+    void this._client
+      ?.saveGround(ids, next)
+      // It may have had to leave the grading out: say so.
+      .then(() => this.requestUpdate())
+      .catch((err: unknown) => {
       this._error = localize("view3d.saveFailed", {
         error: (err as { message?: string })?.message ?? String(err),
       });
