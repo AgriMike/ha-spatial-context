@@ -2617,12 +2617,14 @@ function createView3d(options: View3dOptions): View3dHandle {
     }
     (o.handles ?? []).forEach(([x, y, z], k) => {
       const active = o.activeHandle === k;
+      const minor = o.minorFrom != null && k >= o.minorFrom;
       const dot = new THREE.Mesh(
-        new THREE.SphereGeometry(0.075, 16, 12),
+        new THREE.SphereGeometry(minor ? 0.05 : 0.075, 16, 12),
         new THREE.MeshBasicMaterial({
-          color: active ? "#ff7043" : "#ffffff",
+          color: active ? "#ff7043" : minor ? SELECT_COLOR : "#ffffff",
           depthTest: false,
           transparent: true,
+          opacity: minor ? 0.75 : 1,
         }),
       );
       dot.position.set(x, y, z);

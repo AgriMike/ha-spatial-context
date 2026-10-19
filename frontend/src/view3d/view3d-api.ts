@@ -354,6 +354,9 @@ export interface EditOverlay {
   /** Grab handles (edit-floor frame); `activeHandle` drawn picked. */
   handles?: [number, number, number][];
   activeHandle?: number | null;
+  /** Handles from this index on are drawn smaller and fainter (an
+   * outline's edge middles, to add a corner by). */
+  minorFrom?: number | null;
   /** Guide lines (polylines, edit-floor frame). */
   lines?: [number, number, number][][];
   /** Polylines in their own colours (edit-floor frame). */

@@ -132,7 +132,16 @@ type EditDrag =
   | { kind: "seg"; wallId: string; seg: number; start: Pt; d: number }
   | { kind: "corner"; wallId: string; index: number; from: Pt; to: Pt }
   | { kind: "opening"; id: string; wallId: string; at: Pt }
-  | { kind: "outline"; id: string; index: number; pts: Pt[]; moved: boolean }
+  | {
+      kind: "outline";
+      id: string;
+      index: number;
+      pts: Pt[];
+      moved: boolean;
+      /** A corner added (from an edge's middle dot): the corners' curves
+       * with one for it. */
+      corners?: number[] | null;
+    }
   | {
       kind: "grade";
       grid: GroundGrid;
@@ -1348,6 +1357,7 @@ export class Floorplan3dView extends LitElement {
     const item = this._tool === "select" ? this._outlineItem() : undefined;
     let activeHandle: number | null =
       this._drag?.kind === "corner" ? this._drag.index : null;
+    let minorFrom: number | null = null;
     const paths: { points: [number, number, number][]; color: string }[] = [];
     if (item) {
       const drag = this._drag?.kind === "outline" ? this._drag : null;
@@ -1358,6 +1368,14 @@ export class Floorplan3dView extends LitElement {
           : (item.elevation_cm ?? 0) / 100 + 0.05;
       handles = pts.map((q) => [q[0] * m, yAt(q), q[1] * m]);
       activeHandle = drag ? drag.index : this._outlineCorner;
+      // Each edge's middle: drag (or click) it for a new corner there.
+      if (!drag && !item.locked) {
+        minorFrom = handles.length;
+        for (const [a, b] of this._outlineEdges(item, pts)) {
+          const q: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+          handles.push([q[0] * m, yAt(q), q[1] * m]);
+        }
+      }
       if (drag) {
         const ring = this._closedOutline(item) ? [...pts, pts[0]!] : pts;
         paths.push({
@@ -1471,6 +1489,7 @@ export class Floorplan3dView extends LitElement {
       hover: this._hover,
       handles,
       activeHandle,
+      minorFrom,
       paths,
       lines: this._lines,
       ghost: this._ghost,
@@ -2035,6 +2054,36 @@ export class Floorplan3dView extends LitElement {
       const outline = this._outlineItem();
       if (e.hit.handle !== null && outline && !outline.locked) {
         const pts = outlinePoints(outline, this._perCm);
+        // An edge's middle dot: a new corner there, dragged from there.
+        const edge = e.hit.handle - pts.length;
+        if (edge >= 0 && edge < this._outlineEdges(outline, pts).length) {
+          const a = pts[edge]!;
+          const b = pts[(edge + 1) % pts.length]!;
+          const index = edge + 1;
+          const next = [
+            ...pts.slice(0, index),
+            [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] as Pt,
+            ...pts.slice(index),
+          ];
+          const corners = outline.corners?.length
+            ? [
+                ...outline.corners.slice(0, index),
+                outline.corners[edge] ?? 0,
+                ...outline.corners.slice(index),
+              ]
+            : null;
+          this._outlineCorner = index;
+          this._drag = {
+            kind: "outline",
+            id: outline.id,
+            index,
+            pts: next,
+            moved: true,
+            corners,
+          };
+          this._pushOverlay();
+          return true;
+        }
         if (pts[e.hit.handle]) {
           this._outlineCorner = e.hit.handle;
           this._drag = {
@@ -2222,7 +2271,10 @@ export class Floorplan3dView extends LitElement {
         const item = layout.furniture.find((f) => f.id === drag.id);
         if (item && drag.moved)
           this._edit(
-            patchItem(layout, item.id, fitOutline(item, drag.pts, this._perCm)),
+            patchItem(layout, item.id, {
+              ...fitOutline(item, drag.pts, this._perCm),
+              ...(drag.corners ? { corners: drag.corners } : {}),
+            }),
           );
       } else if (drag.kind === "item") {
         const item = layout.furniture.find((f) => f.id === drag.id);
@@ -2259,8 +2311,11 @@ export class Floorplan3dView extends LitElement {
     }
     if (e.type === "click") {
       // A corner's dot: that corner picked (its curve, Delete).
-      if (e.hit.handle !== null && this._outlineItem()) {
-        this._outlineCorner = e.hit.handle;
+      const picked = this._outlineItem();
+      if (e.hit.handle !== null && picked) {
+        // A corner's own dot (an edge's was picked when it was pressed).
+        if (e.hit.handle < (picked.points?.length ?? 0))
+          this._outlineCorner = e.hit.handle;
         this._pushOverlay();
         return false;
       }
@@ -2297,6 +2352,17 @@ export class Floorplan3dView extends LitElement {
     }
     return false;
   };
+
+  /** An outline's edges (corner to corner, round to the first when it's
+   * closed). */
+  private _outlineEdges(item: FurnitureItem, pts: Pt[]): [Pt, Pt][] {
+    const n = pts.length;
+    const count = this._closedOutline(item) ? n : n - 1;
+    return Array.from({ length: Math.max(0, count) }, (_, k): [Pt, Pt] => [
+      pts[k]!,
+      pts[(k + 1) % n]!,
+    ]);
+  }
 
   /** A corner added to an outline on its edge nearest a spot. */
   private _insertOutlineCorner(item: FurnitureItem, at: Pt): void {
