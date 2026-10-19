@@ -700,6 +700,7 @@
     "curveAll": "Curve (all corners)",
     "curveCorner": "Curve (corner {n})",
     "deleteCorner": "Remove corner",
-    "outlineHint": "Drag it to move it over the ground, or drag a corner's dot. Double-click an edge to add a corner; click a dot, then Delete to remove it."
+    "outlineHint": "Drag it to move it over the ground, or drag a corner's dot. Double-click an edge to add a corner; click a dot, then Delete to remove it.",
+    "totalLength": "{length} in all"
   }
 }

@@ -369,6 +369,9 @@ export interface View3dHandle {
    * onEditPointer and the overlay is drawn on it. */
   setEditFloor(floorId: string | null): void;
   setEditOverlay(overlay: EditOverlay): void;
+  /** Where a point (edit-floor frame, metres) shows on the view, CSS
+   * pixels from its top left; null when it's behind the camera. */
+  toScreen(x: number, y: number, z: number): [number, number] | null;
   /** The ground's height (edit-floor frame, metres) at a spot. */
   groundHeight(x: number, z: number): number;
   /** Shows the ground graded by a grid while it's being shaped, before

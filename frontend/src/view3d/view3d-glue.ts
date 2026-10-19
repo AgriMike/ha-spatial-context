@@ -2692,6 +2692,17 @@ function createView3d(options: View3dOptions): View3dHandle {
       canvasEl.style.cursor = floorId ? "default" : "";
       applyOverlay();
     },
+    toScreen(x, y, z) {
+      const entry = editEntry();
+      const v = new THREE.Vector3(x, y + (entry?.group.position.y ?? 0), z);
+      v.project(camera);
+      if (v.z > 1) return null;
+      const el = renderer.domElement;
+      return [
+        ((v.x + 1) / 2) * el.clientWidth,
+        ((1 - v.y) / 2) * el.clientHeight,
+      ];
+    },
     groundHeight(x, z) {
       const entry = editEntry();
       return groundAt(siteTerrain, x, z) - (entry?.spec.baseY ?? 0);

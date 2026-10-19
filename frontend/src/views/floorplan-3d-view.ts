@@ -115,6 +115,12 @@ type EditTool =
 /** The site's kinds the yard tool draws: surfaces, then lines. */
 const SITE_KINDS = FURNITURE_CATALOG.filter((c) => c.category === "site");
 
+/** A length (metres) in feet and inches, to the nearest inch. */
+function feetInches(meters: number): string {
+  const inches = Math.round(meters / 0.0254);
+  return `${Math.floor(inches / 12)}' ${inches % 12}"`;
+}
+
 /** A site kind laid as a surface (closed), not along a line. */
 function isSurfaceKind(kind: string): boolean {
   return typeof catalogItem(kind)?.opts["site"] === "string";
@@ -297,6 +303,27 @@ export class Floorplan3dView extends LitElement {
       .stage {
         position: absolute;
         inset: 0;
+      }
+      .measure {
+        position: absolute;
+        transform: translate(-50%, calc(-100% - 10px));
+        pointer-events: none;
+        background: rgba(33, 33, 33, 0.85);
+        color: #fff;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 6px;
+        white-space: nowrap;
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .measure span {
+        font-size: 11px;
+        font-weight: 400;
+        opacity: 0.8;
       }
       .toolbar {
         position: absolute;
@@ -602,6 +629,14 @@ export class Floorplan3dView extends LitElement {
   @state() private _gradeStep = 1;
   @state() private _gradeNode: { i: number; j: number } | null = null;
   private _gradeCursor: [number, number] | null = null;
+  /** The length of the edge being drawn (and the whole line so far),
+   * shown beside it. */
+  @state() private _measure: {
+    x: number;
+    y: number;
+    seg: string;
+    total: string | null;
+  } | null = null;
   /** A wall being drawn, its corners so far (plan units). */
   private _draft: Pt[] = [];
   private _ghost: Box3d[] = [];
@@ -1230,6 +1265,7 @@ export class Floorplan3dView extends LitElement {
   private _toggleEditing(): void {
     this._editing = !this._editing;
     this._tool = "select";
+    this._measure = null;
     this._sel = null;
     this._hover = null;
     this._draft = [];
@@ -1248,6 +1284,7 @@ export class Floorplan3dView extends LitElement {
     this._guides = [];
     this._gradeCursor = null;
     this._gradeNode = null;
+    this._measure = null;
     if (tool !== "object") this._armedKind = null;
     this._pushOverlay();
   }
@@ -1546,6 +1583,38 @@ export class Floorplan3dView extends LitElement {
     this._saveGrade(next);
   }
 
+  /** Shows the length of the edge from `a` to `b` (plan units) beside
+   * its middle, `y` metres up (edit-floor frame), with the whole line's
+   * when there's more than that edge; feet and inches. */
+  private _showMeasure(
+    pts: Pt[],
+    yAt: (q: Pt) => number,
+  ): void {
+    const a = pts[pts.length - 2];
+    const b = pts[pts.length - 1];
+    const handle = this._handle;
+    if (!a || !b || !handle) {
+      this._measure = null;
+      return;
+    }
+    const m = metersPerUnit(this.layout?.scale ?? null);
+    const len = (p: Pt, q: Pt) => Math.hypot(q[0] - p[0], q[1] - p[1]) * m;
+    const mid: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const at = handle.toScreen(mid[0] * m, yAt(mid), mid[1] * m);
+    if (!at) {
+      this._measure = null;
+      return;
+    }
+    let total = 0;
+    for (let k = 1; k < pts.length; k++) total += len(pts[k - 1]!, pts[k]!);
+    this._measure = {
+      x: at[0],
+      y: at[1],
+      seg: feetInches(len(a, b)),
+      total: pts.length > 2 ? feetInches(total) : null,
+    };
+  }
+
   /** The yard tool's outline finished: a new site item through it. */
   private _finishYard(closedByClick: boolean): void {
     const layout = this.layout;
@@ -1557,6 +1626,7 @@ export class Floorplan3dView extends LitElement {
     this._draft = [];
     this._gradeCursor = null;
     this._guides = [];
+    this._measure = null;
     const surface = isSurfaceKind(this._yardKind);
     const closed = surface || (closedByClick && pts.length >= 3);
     if (layout && pts.length >= (surface ? 3 : 2)) {
@@ -1713,6 +1783,9 @@ export class Floorplan3dView extends LitElement {
         this._finishYard(false);
         return false;
       }
+      this._showMeasure([...this._draft, p], (q) =>
+        this._handle ? this._handle.groundHeight(q[0] * m, q[1] * m) : 0,
+      );
       this._pushOverlay();
       return false;
     }
@@ -1863,6 +1936,7 @@ export class Floorplan3dView extends LitElement {
           .slice(1)
           .map((b, k) => this._segBox(pts[k]!, b, NEW_WALL_CM, 0, H));
         this._lines = [pts.map((q) => [q[0] * m, H + 0.02, q[1] * m])];
+        this._showMeasure(pts, () => H + 0.02);
         this._pushOverlay();
       } else if (e.type === "dblclick") {
         this._finishWall(this._draft);
@@ -2323,6 +2397,7 @@ export class Floorplan3dView extends LitElement {
     this._ghost = [];
     this._lines = [];
     this._guides = [];
+    this._measure = null;
     if (layout && pts.length >= 2) {
       const { patch, id } = addWall(layout, pts);
       this._edit(patch);
@@ -3072,6 +3147,20 @@ export class Floorplan3dView extends LitElement {
           ).padStart(2, "0")}`;
     return html`
       <div class="stage"></div>
+      ${
+        this._measure && this._editing
+          ? html`<div
+              class="measure"
+              style="left:${this._measure.x}px;top:${this._measure.y}px"
+            >
+              ${this._measure.seg}${
+                this._measure.total
+                  ? html`<span>${localize("edit3d.totalLength", { length: this._measure.total })}</span>`
+                  : nothing
+              }
+            </div>`
+          : nothing
+      }
       ${
         this._status === "error"
           ? html`<div class="notice error">${this._error}</div>`
