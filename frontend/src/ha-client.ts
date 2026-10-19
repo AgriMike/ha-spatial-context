@@ -295,11 +295,25 @@ export class HaClient {
     floorIds: string[],
     ground: GroundSetting | null,
   ): Promise<void> {
-    await this.hass.connection.sendMessagePromise({
-      type: "spatial_context/save_ground",
-      floor_ids: floorIds,
-      ground,
-    });
+    const send = (g: GroundSetting | null) =>
+      this.hass.connection.sendMessagePromise({
+        type: "spatial_context/save_ground",
+        floor_ids: floorIds,
+        ground: g,
+      });
+    try {
+      await send(ground);
+      groundGridUnsaved = false;
+    } catch (err) {
+      // A backend from before grading (not restarted since updating)
+      // refuses the grid: save the rest, and say so.
+      const message = (err as { message?: string })?.message ?? "";
+      if (!ground || !("grid" in ground) || !/extra keys|grid/i.test(message))
+        throw err;
+      const { grid, ...rest } = ground;
+      await send(rest);
+      groundGridUnsaved = !!grid;
+    }
   }
 
   /** Sets a building's roof on each of its floors (see scans.py's
@@ -397,6 +411,9 @@ const ROOM_FINISH_KEYS = [
   "wall_color",
 ] as const;
 const ITEM_FINISH_KEYS = ["height_cm", "elevation_cm"] as const;
+
+/** The last ground save had to leave the grading out (restart needed). */
+export let groundGridUnsaved = false;
 
 /** The last layout save had to leave the finishes out (restart needed). */
 export let layoutFinishesUnsaved = false;

@@ -3,12 +3,18 @@ import { property, query, state } from "lit/decorators.js";
 import { safeCustomElement } from "../define";
 import { sharedStyles, switchStyles } from "../styles";
 import { localize } from "../i18n";
-import { HaClient, fetchScan, layoutFinishesUnsaved } from "../ha-client";
+import {
+  HaClient,
+  fetchScan,
+  groundGridUnsaved,
+  layoutFinishesUnsaved,
+} from "../ha-client";
 import type {
   FloorFinishKind,
   FloorLayout,
   FloorMeta,
   FurnitureItem,
+  GroundGrid,
   GroundSetting,
   HomeAssistant,
   Opening,
@@ -21,7 +27,11 @@ import type {
   Wall,
   WallFinishKind,
 } from "../types";
-import { catalogItem } from "../canvas/furniture-catalog";
+import {
+  FURNITURE_CATALOG,
+  catalogItem,
+  isOutlineKind,
+} from "../canvas/furniture-catalog";
 import {
   WALL_MATERIALS,
   materialLabel,
@@ -33,15 +43,18 @@ import {
   WINDOW_WIDTH_CM,
   addItem,
   addOpening,
+  addOutlineItem,
   addWall,
   deleteItem,
   deleteOpening,
   deleteWall,
   duplicateItem,
+  fitOutline,
   insertCorner,
   moveCorners,
   moveSegment,
   offsetFrom,
+  outlinePoints,
   patchItem,
   patchOpening,
   patchRoom,
@@ -56,6 +69,14 @@ import {
   type SnapWall,
 } from "./editor3d";
 import "./furniture-library-sidebar";
+import {
+  brushGrid,
+  gridIsLevel,
+  gridOffset,
+  growGrid,
+  nearestNode,
+  type GradeMode,
+} from "../view3d/ground-grid";
 import { COMPASS_POINTS, type Sky } from "../canvas/sun";
 import {
   computeCoverOpenness,
@@ -82,14 +103,45 @@ import type {
 } from "../view3d/view3d-api";
 
 /** The 3D editor's tools. */
-type EditTool = "select" | "wall" | "door" | "window" | "object";
+type EditTool =
+  | "select"
+  | "wall"
+  | "door"
+  | "window"
+  | "object"
+  | "yard"
+  | "grade";
+
+/** The site's kinds the yard tool draws: surfaces, then lines. */
+const SITE_KINDS = FURNITURE_CATALOG.filter((c) => c.category === "site");
+
+/** A site kind laid as a surface (closed), not along a line. */
+function isSurfaceKind(kind: string): boolean {
+  return typeof catalogItem(kind)?.opts["site"] === "string";
+}
 
 /** A drag under way in the 3D editor (plan units). */
 type EditDrag =
   | { kind: "item"; id: string; offset: Pt; at: Pt }
   | { kind: "seg"; wallId: string; seg: number; start: Pt; d: number }
   | { kind: "corner"; wallId: string; index: number; from: Pt; to: Pt }
-  | { kind: "opening"; id: string; wallId: string; at: Pt };
+  | { kind: "opening"; id: string; wallId: string; at: Pt }
+  | { kind: "outline"; id: string; index: number; pts: Pt[]; moved: boolean }
+  | {
+      kind: "grade";
+      grid: GroundGrid;
+      /** Where the last dab went (metres), and the raise to level to. */
+      last: [number, number];
+      level: number;
+    }
+  | {
+      kind: "gradePoint";
+      grid: GroundGrid;
+      i: number;
+      j: number;
+      /** The ground there without the point's own raise. */
+      base: number;
+    };
 
 /** Where the lazily loaded three.js module is served (see rollup's
  * view3dModule and frontend.py's static path). */
@@ -536,6 +588,20 @@ export class Floorplan3dView extends LitElement {
   @state() private _hover: EditRef | null = null;
   @state() private _armedKind: string | null = null;
   private _armedRot = 0;
+  /** The yard tool's kind, and a free-form outline's picked corner. */
+  @state() private _yardKind = "site_sidewalk";
+  @state() private _outlineCorner: number | null = null;
+  /** Another floor's thing clicked in the dollhouse: selected once the
+   * panel has switched to that floor. */
+  private _pendingSel: EditRef | null = null;
+  /** The grading tool: how it shapes, its brush (metres across the
+   * middle, metres a dab) and grid spacing, the picked point. */
+  @state() private _gradeMode: GradeMode | "point" = "raise";
+  @state() private _gradeRadius = 2.5;
+  @state() private _gradeStrength = 0.1;
+  @state() private _gradeStep = 1;
+  @state() private _gradeNode: { i: number; j: number } | null = null;
+  private _gradeCursor: [number, number] | null = null;
   /** A wall being drawn, its corners so far (plan units). */
   private _draft: Pt[] = [];
   private _ghost: Box3d[] = [];
@@ -590,6 +656,18 @@ export class Floorplan3dView extends LitElement {
   override willUpdate(changed: PropertyValues): void {
     if (changed.has("dollhouse") || changed.has("floorId")) {
       this._otherLayouts = new Map();
+    }
+    if (changed.has("floorId") && changed.get("floorId") !== undefined) {
+      this._sel = this._pendingSel;
+      this._pendingSel = null;
+      this._hover = null;
+      this._drag = null;
+      this._draft = [];
+      this._ghost = [];
+      this._lines = [];
+      this._guides = [];
+      this._outlineCorner = null;
+      this._snapCache = null;
     }
     this._ensureData();
   }
@@ -1159,6 +1237,8 @@ export class Floorplan3dView extends LitElement {
     this._ghost = [];
     this._lines = [];
     this._guides = [];
+    this._gradeCursor = null;
+    this._gradeNode = null;
     if (tool !== "object") this._armedKind = null;
     this._pushOverlay();
   }
@@ -1217,6 +1297,106 @@ export class Floorplan3dView extends LitElement {
         H + 0.05,
         p[1] * m,
       ]);
+    // A free-form outline's corners (a driveway's, a fence's), on the
+    // ground for the site's.
+    const item = this._outlineItem();
+    let activeHandle: number | null =
+      this._drag?.kind === "corner" ? this._drag.index : null;
+    const paths: { points: [number, number, number][]; color: string }[] = [];
+    if (item) {
+      const drag = this._drag?.kind === "outline" ? this._drag : null;
+      const pts = drag ? drag.pts : outlinePoints(item, this._perCm);
+      const yAt = (q: Pt) =>
+        this._onGround(item)
+          ? handle.groundHeight(q[0] * m, q[1] * m) + 0.08
+          : (item.elevation_cm ?? 0) / 100 + 0.05;
+      handles = pts.map((q) => [q[0] * m, yAt(q), q[1] * m]);
+      activeHandle = drag ? drag.index : this._outlineCorner;
+      if (drag) {
+        const ring = this._closedOutline(item) ? [...pts, pts[0]!] : pts;
+        paths.push({
+          points: this._drape(ring, yAt),
+          color: "#ff7043",
+        });
+      }
+    }
+    // The yard tool's outline so far.
+    if (this._tool === "yard" && this._draft.length) {
+      const yAt = (q: Pt) => handle.groundHeight(q[0] * m, q[1] * m) + 0.08;
+      const cursor = this._gradeCursor;
+      const pts = cursor
+        ? [...this._draft, [cursor[0] / m, cursor[1] / m] as Pt]
+        : this._draft;
+      paths.push({ points: this._drape(pts, yAt), color: "#ff7043" });
+      handles = this._draft.map((q) => [q[0] * m, yAt(q), q[1] * m]);
+    }
+    // The grading brush, and the grid's points round it.
+    if (this._tool === "grade" && this._gradeCursor) {
+      const [cx, cz] = this._gradeCursor;
+      const gy = (x: number, z: number) => handle.groundHeight(x, z) + 0.04;
+      const grid = this._gradeGrid();
+      const step = grid?.step ?? this._gradeStep;
+      if (this._gradeMode === "point") {
+        const reach = 2.5 * step;
+        const x0 = (grid?.x0 ?? 0) % step;
+        const z0 = (grid?.z0 ?? 0) % step;
+        const nodes: [number, number, number][] = [];
+        for (
+          let x = Math.ceil((cx - reach - x0) / step) * step + x0;
+          x <= cx + reach;
+          x += step
+        )
+          for (
+            let z = Math.ceil((cz - reach - z0) / step) * step + z0;
+            z <= cz + reach;
+            z += step
+          )
+            nodes.push([x, gy(x, z) + 0.04, z]);
+        handles = nodes;
+        const node = this._gradeNode;
+        if (grid && node) {
+          const nx = grid.x0 + node.i * step;
+          const nz = grid.z0 + node.j * step;
+          handles = [...handles, [nx, gy(nx, nz) + 0.04, nz]];
+          activeHandle = handles.length - 1;
+        }
+      } else {
+        const r = this._gradeRadius;
+        const ring: [number, number, number][] = [];
+        for (let k = 0; k <= 48; k++) {
+          const a = (k / 48) * Math.PI * 2;
+          const x = cx + Math.cos(a) * r;
+          const z = cz + Math.sin(a) * r;
+          ring.push([x, gy(x, z), z]);
+        }
+        paths.push({ points: ring, color: "#ff7043" });
+        // The grid's lines within the brush, draped over the ground.
+        const x0 = (grid?.x0 ?? 0) % step;
+        const z0 = (grid?.z0 ?? 0) % step;
+        for (
+          let x = Math.ceil((cx - r - x0) / step) * step + x0;
+          x <= cx + r;
+          x += step
+        ) {
+          const half = Math.sqrt(Math.max(0, r * r - (x - cx) ** 2));
+          const line: [number, number, number][] = [];
+          for (let z = cz - half; z <= cz + half + 1e-6; z += 0.2)
+            line.push([x, gy(x, z), z]);
+          if (line.length > 1) paths.push({ points: line, color: "#ffffff" });
+        }
+        for (
+          let z = Math.ceil((cz - r - z0) / step) * step + z0;
+          z <= cz + r;
+          z += step
+        ) {
+          const half = Math.sqrt(Math.max(0, r * r - (z - cz) ** 2));
+          const line: [number, number, number][] = [];
+          for (let x = cx - half; x <= cx + half + 1e-6; x += 0.2)
+            line.push([x, gy(x, z), z]);
+          if (line.length > 1) paths.push({ points: line, color: "#ffffff" });
+        }
+      }
+    }
     // Guides at the top of this floor's walls, and down (or up) to the
     // floor they came from: orange for this floor, magenta for another.
     const top = H + 0.04;
@@ -1244,11 +1424,148 @@ export class Floorplan3dView extends LitElement {
       select: this._sel,
       hover: this._hover,
       handles,
-      activeHandle: this._drag?.kind === "corner" ? this._drag.index : null,
+      activeHandle,
+      paths,
       lines: this._lines,
       ghost: this._ghost,
       guides,
     });
+  }
+
+  /** The selected item, if it's drawn corner by corner (a site outline,
+   * a free-form shape). */
+  private _outlineItem(): FurnitureItem | undefined {
+    const sel = this._sel;
+    if (sel?.kind !== "item") return undefined;
+    const item = this.layout?.furniture.find((f) => f.id === sel.id);
+    return item && isOutlineKind(item.kind) && (item.points?.length ?? 0) >= 2
+      ? item
+      : undefined;
+  }
+
+  /** A site item: laid on the ground, not the floor. */
+  private _onGround(item: FurnitureItem): boolean {
+    return item.kind.startsWith("site_");
+  }
+
+  private _closedOutline(item: FurnitureItem): boolean {
+    return isSurfaceKind(item.kind) || item.closed !== false;
+  }
+
+  /** Plan points as a line over the ground (or a level), each edge
+   * sampled so it follows the ground's rise and fall. */
+  private _drape(
+    pts: Pt[],
+    yAt: (q: Pt) => number,
+  ): [number, number, number][] {
+    const m = metersPerUnit(this.layout?.scale ?? null);
+    const out: [number, number, number][] = [];
+    pts.forEach((q, k) => {
+      const prev = pts[k - 1];
+      if (prev) {
+        const len = Math.hypot(q[0] - prev[0], q[1] - prev[1]) * m;
+        const n = Math.min(40, Math.floor(len / 0.5));
+        for (let s = 1; s < n; s++) {
+          const t = s / n;
+          const r: Pt = [
+            prev[0] + (q[0] - prev[0]) * t,
+            prev[1] + (q[1] - prev[1]) * t,
+          ];
+          out.push([r[0] * m, yAt(r), r[1] * m]);
+        }
+      }
+      out.push([q[0] * m, yAt(q), q[1] * m]);
+    });
+    return out;
+  }
+
+  /** Where the pointer's ray meets the ground (edit-floor frame, metres),
+   * past anything standing on it. */
+  private _groundAt(e: EditPointer): [number, number, number] | null {
+    const handle = this._handle;
+    if (!handle) return null;
+    const { o, d } = e.hit.ray;
+    const above = (t: number) =>
+      o[1] + d[1] * t - handle.groundHeight(o[0] + d[0] * t, o[2] + d[2] * t);
+    let t0 = 0;
+    if (above(0) <= 0) return null;
+    // March out, then halve the step that crossed it.
+    for (let t = 0.5; t < 600; t *= 1.08) {
+      if (above(t) <= 0) {
+        let lo = t0;
+        let hi = t;
+        for (let k = 0; k < 24; k++) {
+          const mid = (lo + hi) / 2;
+          if (above(mid) > 0) lo = mid;
+          else hi = mid;
+        }
+        const x = o[0] + d[0] * hi;
+        const z = o[2] + d[2] * hi;
+        return [x, handle.groundHeight(x, z), z];
+      }
+      t0 = t;
+    }
+    return null;
+  }
+
+  /** The site's grading grid, as saved (or shown). */
+  private _gradeGrid(): GroundGrid | null {
+    if (this._drag?.kind === "grade" || this._drag?.kind === "gradePoint")
+      return this._drag.grid;
+    return this._ground?.grid ?? null;
+  }
+
+  /** Saves the grading (none when it's all level). */
+  private _saveGrade(grid: GroundGrid | null): void {
+    this._setGround({ grid: grid && !gridIsLevel(grid) ? grid : null });
+  }
+
+  /** The grid re-laid at a new spacing, the ground shaped as it was. */
+  private _respaceGrade(step: number): void {
+    this._gradeStep = step;
+    const old = this._ground?.grid;
+    if (!old || old.step === step) return;
+    const x1 = old.x0 + (old.cols - 1) * old.step;
+    const z1 = old.z0 + (old.rows - 1) * old.step;
+    const next = growGrid(null, old.x0, old.z0, x1, z1, step);
+    next.h = next.h.map((_, k) => {
+      const x = next.x0 + (k % next.cols) * step;
+      const z = next.z0 + Math.floor(k / next.cols) * step;
+      return Math.round(gridOffset(old, x, z) * 1000) / 1000;
+    });
+    this._gradeNode = null;
+    this._saveGrade(next);
+  }
+
+  /** The yard tool's outline finished: a new site item through it. */
+  private _finishYard(closedByClick: boolean): void {
+    const layout = this.layout;
+    const pts = this._draft.filter(
+      (q, k, all) =>
+        k === 0 ||
+        Math.hypot(q[0] - all[k - 1]![0], q[1] - all[k - 1]![1]) > 1e-6,
+    );
+    this._draft = [];
+    this._gradeCursor = null;
+    this._guides = [];
+    const surface = isSurfaceKind(this._yardKind);
+    const closed = surface || (closedByClick && pts.length >= 3);
+    if (layout && pts.length >= (surface ? 3 : 2)) {
+      const added = addOutlineItem(
+        layout,
+        this._yardKind,
+        pts,
+        closed,
+        this._perCm,
+      );
+      if (added) {
+        this._edit(added.patch);
+        this._sel = { kind: "item", id: added.id };
+        this._outlineCorner = null;
+        this._tool = "select";
+      }
+    }
+    this._pushOverlay();
   }
 
   /** The building's walls to snap to: this floor's and every other
@@ -1325,6 +1642,178 @@ export class Floorplan3dView extends LitElement {
     const H = this.floorId ? this._wallHeight(this.floorId) : 2.4;
     const tool = this._tool;
 
+    // --- another floor's thing, in the dollhouse: go and edit it there ---
+    if (
+      tool === "select" &&
+      !this._drag &&
+      e.hit.floorId &&
+      e.hit.floorId !== this.floorId
+    ) {
+      if (e.type === "move" && this._hover) {
+        this._hover = null;
+        this._pushOverlay();
+      } else if (e.type === "click" && e.hit.ref) {
+        this._pendingSel = e.hit.ref;
+        this.dispatchEvent(
+          new CustomEvent("select-floor", {
+            detail: { floorId: e.hit.floorId },
+            bubbles: true,
+            composed: true,
+          }),
+        );
+      }
+      return false;
+    }
+
+    // --- drawing a driveway, path, bed or fence on the ground ---
+    if (tool === "yard") {
+      const g = this._groundAt(e);
+      if (!g) return false;
+      const raw: Pt = [g[0] / m, g[2] / m];
+      const last = this._draft[this._draft.length - 1];
+      const snapped = e.shift
+        ? { p: raw, guides: [] }
+        : smartSnap(raw, this._snapWalls(), {
+            reach,
+            grid,
+            from: last ?? null,
+            angle: !e.alt,
+          });
+      const p = snapped.p;
+      this._guides = snapped.guides;
+      this._gradeCursor = [p[0] * m, p[1] * m];
+      if (e.type === "click") {
+        const first = this._draft[0];
+        if (
+          first &&
+          this._draft.length >= 3 &&
+          Math.hypot(p[0] - first[0], p[1] - first[1]) < reach * 2
+        ) {
+          this._finishYard(true);
+          return false;
+        }
+        if (!last || Math.hypot(p[0] - last[0], p[1] - last[1]) > 1e-6)
+          this._draft = [...this._draft, p];
+      } else if (e.type === "dblclick") {
+        this._finishYard(false);
+        return false;
+      }
+      this._pushOverlay();
+      return false;
+    }
+
+    // --- shaping the ground ---
+    if (tool === "grade") {
+      const g = this._groundAt(e);
+      const drag = this._drag;
+      if (e.type === "up" && drag) {
+        this._drag = null;
+        if (drag.kind === "grade" || drag.kind === "gradePoint")
+          this._saveGrade(drag.grid);
+        this._pushOverlay();
+        return false;
+      }
+      if (drag?.kind === "gradePoint" && e.type === "drag") {
+        // Up or down the point's own upright, where the pointer passes.
+        const { o, d } = e.hit.ray;
+        const nx = drag.grid.x0 + drag.i * drag.grid.step;
+        const nz = drag.grid.z0 + drag.j * drag.grid.step;
+        const hh = d[0] * d[0] + d[2] * d[2];
+        if (hh < 1e-6) return false;
+        const t = ((nx - o[0]) * d[0] + (nz - o[2]) * d[2]) / hh;
+        let v = o[1] + d[1] * t - drag.base;
+        v = e.shift ? v : Math.round(v * 20) / 20;
+        v = Math.max(-10, Math.min(10, v));
+        const h = drag.grid.h.slice();
+        h[drag.j * drag.grid.cols + drag.i] = Math.round(v * 1000) / 1000;
+        drag.grid = { ...drag.grid, h };
+        this._handle?.previewGrade(drag.grid);
+        this._pushOverlay();
+        return false;
+      }
+      if (!g) return false;
+      this._gradeCursor = [g[0], g[2]];
+      if (e.type === "move") {
+        this._pushOverlay();
+        return false;
+      }
+      const r = this._gradeRadius;
+      if (e.type === "down") {
+        if (!this._ground) this._setGround({});
+        const saved = this._ground?.grid ?? null;
+        const step = saved?.step ?? this._gradeStep;
+        const reachOut = this._gradeMode === "point" ? step : r + step;
+        const grown = growGrid(
+          saved,
+          g[0] - reachOut,
+          g[2] - reachOut,
+          g[0] + reachOut,
+          g[2] + reachOut,
+          step,
+        );
+        if (this._gradeMode === "point") {
+          const node = nearestNode(grown, g[0], g[2]);
+          if (!node) return false;
+          this._gradeNode = node;
+          const nx = grown.x0 + node.i * step;
+          const nz = grown.z0 + node.j * step;
+          // The ground there less the point's own raise (as shown).
+          const ground = this._handle?.groundHeight(nx, nz) ?? 0;
+          this._drag = {
+            kind: "gradePoint",
+            grid: grown,
+            i: node.i,
+            j: node.j,
+            base: ground - gridOffset(saved, nx, nz),
+          };
+          this._pushOverlay();
+          return true;
+        }
+        const level = gridOffset(grown, g[0], g[2]);
+        const dabbed = brushGrid(
+          grown,
+          g[0],
+          g[2],
+          r,
+          this._gradeStrength,
+          this._gradeMode,
+          level,
+        );
+        this._drag = { kind: "grade", grid: dabbed, last: [g[0], g[2]], level };
+        this._handle?.previewGrade(dabbed);
+        this._pushOverlay();
+        return true;
+      }
+      if (e.type === "drag" && drag?.kind === "grade") {
+        // A dab every quarter of the brush along the stroke.
+        if (Math.hypot(g[0] - drag.last[0], g[2] - drag.last[1]) < r / 4) {
+          this._pushOverlay();
+          return false;
+        }
+        const step = drag.grid.step;
+        const grown = growGrid(
+          drag.grid,
+          g[0] - r - step,
+          g[2] - r - step,
+          g[0] + r + step,
+          g[2] + r + step,
+          step,
+        );
+        drag.grid = brushGrid(
+          grown,
+          g[0],
+          g[2],
+          r,
+          this._gradeStrength,
+          this._gradeMode === "point" ? "raise" : this._gradeMode,
+          drag.level,
+        );
+        drag.last = [g[0], g[2]];
+        this._handle?.previewGrade(drag.grid);
+        this._pushOverlay();
+      }
+      return false;
+    }
     // --- drawing a wall ---
     if (tool === "wall") {
       if (!floorPt) return false;
@@ -1454,6 +1943,22 @@ export class Floorplan3dView extends LitElement {
       return false;
     }
     if (e.type === "down") {
+      const outline = this._outlineItem();
+      if (e.hit.handle !== null && outline && !outline.locked) {
+        const pts = outlinePoints(outline, this._perCm);
+        if (pts[e.hit.handle]) {
+          this._outlineCorner = e.hit.handle;
+          this._drag = {
+            kind: "outline",
+            id: outline.id,
+            index: e.hit.handle,
+            pts,
+            moved: false,
+          };
+          this._pushOverlay();
+          return true;
+        }
+      }
       if (e.hit.handle !== null && sel?.kind === "wall") {
         const wall = this._wallOf(sel.id);
         const corner = wall
@@ -1483,10 +1988,13 @@ export class Floorplan3dView extends LitElement {
       if (ref.kind === "item") {
         const item = layout.furniture.find((f) => f.id === ref.id);
         if (!item || item.locked) return false;
+        // A site item slides over the ground.
+        const g = this._onGround(item) ? this._groundAt(e) : null;
+        const from: Pt = g ? [g[0] / m, g[2] / m] : floorPt;
         this._drag = {
           kind: "item",
           id: item.id,
-          offset: [item.x - floorPt[0], item.y - floorPt[1]],
+          offset: [item.x - from[0], item.y - from[1]],
           at: [item.x, item.y],
         };
         return true;
@@ -1514,15 +2022,30 @@ export class Floorplan3dView extends LitElement {
       }
       return false;
     }
+    if (e.type === "drag" && this._drag?.kind === "outline") {
+      const drag = this._drag;
+      const item = layout.furniture.find((f) => f.id === drag.id);
+      if (!item) return false;
+      const g = this._onGround(item) ? this._groundAt(e) : null;
+      const raw: Pt | null = g ? [g[0] / m, g[2] / m] : floorPt;
+      if (!raw) return false;
+      const snapped = e.shift
+        ? { p: raw, guides: [] }
+        : smartSnap(raw, this._snapWalls(), { reach, grid, angle: false });
+      this._guides = snapped.guides;
+      drag.pts = drag.pts.map((q, k) => (k === drag.index ? snapped.p : q));
+      drag.moved = true;
+      this._pushOverlay();
+      return false;
+    }
     if (e.type === "drag" && this._drag && floorPt) {
       const drag = this._drag;
       if (drag.kind === "item") {
         const item = layout.furniture.find((f) => f.id === drag.id);
         if (!item) return false;
-        const raw: Pt = [
-          floorPt[0] + drag.offset[0],
-          floorPt[1] + drag.offset[1],
-        ];
+        const g = this._onGround(item) ? this._groundAt(e) : null;
+        const at: Pt = g ? [g[0] / m, g[2] / m] : floorPt;
+        const raw: Pt = [at[0] + drag.offset[0], at[1] + drag.offset[1]];
         drag.at =
           grid > 0
             ? [
@@ -1606,7 +2129,13 @@ export class Floorplan3dView extends LitElement {
       this._drag = null;
       this._ghost = [];
       this._guides = [];
-      if (drag.kind === "item") {
+      if (drag.kind === "outline") {
+        const item = layout.furniture.find((f) => f.id === drag.id);
+        if (item && drag.moved)
+          this._edit(
+            patchItem(layout, item.id, fitOutline(item, drag.pts, this._perCm)),
+          );
+      } else if (drag.kind === "item") {
         const item = layout.furniture.find((f) => f.id === drag.id);
         if (item && (item.x !== drag.at[0] || item.y !== drag.at[1]))
           this._edit(
@@ -1640,10 +2169,28 @@ export class Floorplan3dView extends LitElement {
       return false;
     }
     if (e.type === "click") {
+      // A corner's dot: that corner picked (its curve, Delete).
+      if (e.hit.handle !== null && this._outlineItem()) {
+        this._outlineCorner = e.hit.handle;
+        this._pushOverlay();
+        return false;
+      }
+      if (JSON.stringify(e.hit.ref) !== JSON.stringify(this._sel))
+        this._outlineCorner = null;
       this._sel = e.hit.ref;
       this._hover = null;
       this._pushOverlay();
       return false;
+    }
+    if (e.type === "dblclick") {
+      // A new corner on an outline's nearest edge.
+      const item = this._outlineItem();
+      if (item && e.hit.ref?.kind === "item" && e.hit.ref.id === item.id) {
+        const g = this._onGround(item) ? this._groundAt(e) : null;
+        const at: Pt | null = g ? [g[0] / m, g[2] / m] : floorPt;
+        if (at) this._insertOutlineCorner(item, at);
+        return false;
+      }
     }
     if (e.type === "dblclick" && e.hit.ref?.kind === "wall" && e.hit.point) {
       // A new corner where the wall was double-clicked.
@@ -1660,6 +2207,74 @@ export class Floorplan3dView extends LitElement {
     }
     return false;
   };
+
+  /** A corner added to an outline on its edge nearest a spot. */
+  private _insertOutlineCorner(item: FurnitureItem, at: Pt): void {
+    const layout = this.layout;
+    if (!layout) return;
+    const pts = outlinePoints(item, this._perCm);
+    const closed = this._closedOutline(item);
+    let best = -1;
+    let bestD = Infinity;
+    let bestP: Pt = at;
+    const n = pts.length;
+    for (let k = 0; k < (closed ? n : n - 1); k++) {
+      const a = pts[k]!;
+      const b = pts[(k + 1) % n]!;
+      const dx = b[0] - a[0];
+      const dy = b[1] - a[1];
+      const len2 = dx * dx + dy * dy || 1;
+      const t = Math.max(
+        0,
+        Math.min(1, ((at[0] - a[0]) * dx + (at[1] - a[1]) * dy) / len2),
+      );
+      const q: Pt = [a[0] + dx * t, a[1] + dy * t];
+      const dd = Math.hypot(at[0] - q[0], at[1] - q[1]);
+      if (dd < bestD) {
+        bestD = dd;
+        best = k;
+        bestP = q;
+      }
+    }
+    if (best < 0) return;
+    const next = [...pts.slice(0, best + 1), bestP, ...pts.slice(best + 1)];
+    const corners = item.corners?.length
+      ? [
+          ...item.corners.slice(0, best + 1),
+          item.corners[best] ?? 0,
+          ...item.corners.slice(best + 1),
+        ]
+      : item.corners;
+    this._edit(
+      patchItem(layout, item.id, {
+        ...fitOutline(item, next, this._perCm),
+        ...(corners ? { corners } : {}),
+      }),
+    );
+    this._outlineCorner = best + 1;
+  }
+
+  /** An outline's corner taken out (the item, if too few would be left). */
+  private _deleteOutlineCorner(item: FurnitureItem, index: number): void {
+    const layout = this.layout;
+    if (!layout) return;
+    const pts = outlinePoints(item, this._perCm);
+    if (pts.length - 1 < (this._closedOutline(item) ? 3 : 2)) {
+      this._deleteSelection();
+      return;
+    }
+    const next = pts.filter((_, k) => k !== index);
+    const corners = item.corners?.length
+      ? item.corners.filter((_, k) => k !== index)
+      : item.corners;
+    this._edit(
+      patchItem(layout, item.id, {
+        ...fitOutline(item, next, this._perCm),
+        ...(corners ? { corners } : {}),
+      }),
+    );
+    this._outlineCorner = null;
+  }
 
   /** Previews the walls a change would move, as boxes. */
   private _ghostFor(patch: LayoutPatch, H: number): void {
@@ -1738,7 +2353,7 @@ export class Floorplan3dView extends LitElement {
         this._ghost = [];
         this._sceneSig = "";
         this._rebuild();
-      } else if (this._draft.length) this._setTool("wall");
+      } else if (this._draft.length) this._setTool(this._tool);
       else if (this._tool !== "select") this._setTool("select");
       else {
         this._sel = null;
@@ -1751,10 +2366,26 @@ export class Floorplan3dView extends LitElement {
       this._finishWall(this._draft);
       return;
     }
+    if (key === "Enter" && this._tool === "yard") {
+      take();
+      this._finishYard(false);
+      return;
+    }
+    if (
+      (key === "Delete" || key === "Backspace") &&
+      (this._tool === "wall" || this._tool === "yard") &&
+      this._draft.length
+    ) {
+      take();
+      this._draft = this._draft.slice(0, -1);
+      this._pushOverlay();
+      return;
+    }
     if ((key === "Delete" || key === "Backspace") && this._sel) {
       take();
-      if (this._tool === "wall" && this._draft.length) {
-        this._draft = this._draft.slice(0, -1);
+      const outline = this._outlineItem();
+      if (outline && this._outlineCorner !== null) {
+        this._deleteOutlineCorner(outline, this._outlineCorner);
         return;
       }
       this._deleteSelection();
@@ -1885,6 +2516,8 @@ export class Floorplan3dView extends LitElement {
       ["door", "mdi:door", localize("edit3d.door")],
       ["window", "mdi:window-closed-variant", localize("edit3d.window")],
       ["object", "mdi:sofa-outline", localize("edit3d.object")],
+      ["yard", "mdi:road-variant", localize("edit3d.yard")],
+      ["grade", "mdi:terrain", localize("edit3d.grade")],
     ];
     const hint: Record<EditTool, string> = {
       select: localize("edit3d.selectHint"),
@@ -1892,6 +2525,12 @@ export class Floorplan3dView extends LitElement {
       door: localize("edit3d.openingHint"),
       window: localize("edit3d.openingHint"),
       object: localize("edit3d.objectHint"),
+      yard: localize("edit3d.yardHint"),
+      grade: localize(
+        this._gradeMode === "point"
+          ? "edit3d.gradePointHint"
+          : "edit3d.gradeHint",
+      ),
     };
     return html`<div class="sheet floating-panel editor">
       <div class="tools">
@@ -1945,9 +2584,250 @@ export class Floorplan3dView extends LitElement {
             ></furniture-library-sidebar>`
           : this._tool === "select"
             ? this._renderSelection(layout)
-            : nothing
+            : this._tool === "yard"
+              ? this._renderYard()
+              : this._tool === "grade"
+                ? this._renderGrade()
+                : nothing
       }
     </div>`;
+  }
+
+  /** The site's kinds, as options (surfaces, or lines). */
+  private _siteOptions(surface: boolean | null): [string, string][] {
+    return SITE_KINDS.filter(
+      (c) => surface === null || isSurfaceKind(c.id) === surface,
+    ).map((c) => [c.id, c.name]);
+  }
+
+  private _renderYard() {
+    return html`${this._select(
+        localize("edit3d.siteKind"),
+        this._yardKind,
+        this._siteOptions(null),
+        (v) => {
+          if (v) this._yardKind = v;
+        },
+      )}
+      <span class="hint"
+        >${isSurfaceKind(this._yardKind) ? localize("edit3d.yardSurfaceHint") : localize("edit3d.yardLineHint")}</span
+      >`;
+  }
+
+  private _renderGrade() {
+    const grid = this._ground?.grid ?? null;
+    const node = this._gradeNode;
+    const nodeH =
+      grid && node ? (grid.h[node.j * grid.cols + node.i] ?? 0) : null;
+    const modes: [GradeMode | "point", string, string][] = [
+      ["raise", "mdi:arrow-up-bold", localize("edit3d.gradeRaise")],
+      ["lower", "mdi:arrow-down-bold", localize("edit3d.gradeLower")],
+      ["flatten", "mdi:minus", localize("edit3d.gradeFlatten")],
+      ["smooth", "mdi:wave", localize("edit3d.gradeSmooth")],
+      ["point", "mdi:dots-grid", localize("edit3d.gradePoint")],
+    ];
+    return html`<div class="tools">
+        ${modes.map(
+          ([mode, icon, label]) =>
+            html`<button
+              class=${this._gradeMode === mode ? "active" : ""}
+              title=${label}
+              @click=${() => {
+                this._gradeMode = mode;
+                this._gradeNode = null;
+                this._pushOverlay();
+              }}
+            >
+              <ha-icon icon=${icon}></ha-icon><span>${label}</span>
+            </button>`,
+        )}
+      </div>
+      ${
+        this._gradeMode === "point"
+          ? node && grid
+            ? this._num(
+                localize("edit3d.pointRaise"),
+                (nodeH ?? 0) * 100,
+                (v) => {
+                  const h = grid.h.slice();
+                  h[node.j * grid.cols + node.i] = (v ?? 0) / 100;
+                  this._saveGrade({ ...grid, h });
+                },
+                { unit: "cm", step: 5 },
+              )
+            : nothing
+          : html`<label class="row">
+                <span>${localize("edit3d.brushSize")}</span>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="12"
+                  step="0.5"
+                  .value=${String(this._gradeRadius)}
+                  @input=${(e: Event) => {
+                    this._gradeRadius = Number(
+                      (e.target as HTMLInputElement).value,
+                    );
+                    this._pushOverlay();
+                  }}
+                />
+                <span class="unit">${this._gradeRadius} m</span>
+              </label>
+              <label class="row">
+                <span>${localize("edit3d.brushStrength")}</span>
+                <input
+                  type="range"
+                  min="0.02"
+                  max="0.5"
+                  step="0.01"
+                  .value=${String(this._gradeStrength)}
+                  @input=${(e: Event) => {
+                    this._gradeStrength = Number(
+                      (e.target as HTMLInputElement).value,
+                    );
+                  }}
+                />
+                <span class="unit"
+                  >${Math.round(this._gradeStrength * 100)} cm</span
+                >
+              </label>`
+      }
+      ${this._select(
+        localize("edit3d.gridSpacing"),
+        String(grid?.step ?? this._gradeStep),
+        [
+          ["0.5", "0.5 m"],
+          ["1", "1 m"],
+          ["2", "2 m"],
+          ["3", "3 m"],
+        ],
+        (v) => v && this._respaceGrade(Number(v)),
+      )}
+      ${
+        groundGridUnsaved
+          ? html`<span class="hint error"
+              >${localize("edit3d.gradeRestartNeeded")}</span
+            >`
+          : nothing
+      }
+      <div class="buttons">
+        <button
+          class="danger"
+          ?disabled=${!grid}
+          @click=${() => {
+            if (window.confirm(localize("edit3d.resetGradeConfirm"))) {
+              this._gradeNode = null;
+              this._saveGrade(null);
+            }
+          }}
+        >
+          ${localize("edit3d.resetGrade")}
+        </button>
+      </div>`;
+  }
+
+  /** A site item's panel: its kind, colour, curves and corners. */
+  private _renderSiteItem(layout: FloorLayout, item: FurnitureItem) {
+    const entry = catalogItem(item.kind);
+    const set = (patch: Partial<FurnitureItem>) =>
+      this._edit(patchItem(layout, item.id, patch));
+    const surface = isSurfaceKind(item.kind);
+    const n = item.points?.length ?? 0;
+    const corners = item.corners ?? [];
+    const all = corners.length
+      ? Math.round(corners.reduce((a, b) => a + b, 0) / corners.length)
+      : 0;
+    const k = this._outlineCorner;
+    const curve = (v: number, at: number | null) => {
+      const next = Array.from({ length: n }, (_, i) =>
+        at === null || i === at ? v : (corners[i] ?? 0),
+      );
+      set({ corners: next });
+    };
+    const slider = (
+      label: string,
+      value: number,
+      onChange: (v: number) => void,
+    ) =>
+      html`<label class="row">
+        <span>${label}</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          .value=${String(value)}
+          @change=${(e: Event) =>
+            onChange(Number((e.target as HTMLInputElement).value))}
+        />
+        <span class="unit">${value}%</span>
+      </label>`;
+    const height = item.height_cm ?? Number(entry?.opts["height"] ?? 0);
+    return html`<h3>${item.label || entry?.name || item.kind}</h3>
+      ${this._select(
+        localize("edit3d.siteKind"),
+        item.kind,
+        this._siteOptions(surface),
+        (v) => {
+          const next = v ? catalogItem(v) : undefined;
+          if (!next) return;
+          set({
+            kind: next.id,
+            ...(typeof next.opts["color"] === "string"
+              ? { color: next.opts["color"] }
+              : {}),
+          });
+        },
+      )}
+      ${this._color(localize("edit3d.color"), item.color, (v) => set({ color: v }))}
+      ${
+        !surface
+          ? html`${this._num(localize("edit3d.height"), height, (v) => set({ height_cm: v && v > 0 ? v : null }), { unit: "cm", min: 1 })}
+              <label class="row">
+                <span>${localize("edit3d.closedLine")}</span>
+                <input
+                  type="checkbox"
+                  .checked=${item.closed !== false}
+                  ?disabled=${n < 3}
+                  @change=${(e: Event) => set({ closed: (e.target as HTMLInputElement).checked })}
+                />
+              </label>`
+          : nothing
+      }
+      ${slider(localize("edit3d.curveAll"), all, (v) => curve(v, null))}
+      ${
+        k !== null && k < n
+          ? slider(
+              localize("edit3d.curveCorner", { n: String(k + 1) }),
+              Math.round(corners[k] ?? 0),
+              (v) => curve(v, k),
+            )
+          : nothing
+      }
+      <span class="hint">${localize("edit3d.outlineHint")}</span>
+      <div class="buttons">
+        ${
+          k !== null
+            ? html`<button @click=${() => this._deleteOutlineCorner(item, k)}>
+                ${localize("edit3d.deleteCorner")}
+              </button>`
+            : nothing
+        }
+        <button
+          @click=${() => {
+            const copy = duplicateItem(layout, item.id, 50 * this._perCm);
+            if (copy) {
+              this._edit(copy.patch);
+              this._sel = { kind: "item", id: copy.id };
+            }
+          }}
+        >
+          ${localize("edit3d.duplicate")}
+        </button>
+        <button class="danger" @click=${() => this._deleteSelection()}>
+          ${localize("edit3d.delete")}
+        </button>
+      </div>`;
   }
 
   private _renderSelection(layout: FloorLayout) {
@@ -1961,6 +2841,8 @@ export class Floorplan3dView extends LitElement {
     if (sel.kind === "item") {
       const item = layout.furniture.find((f) => f.id === sel.id);
       if (!item) return nothing;
+      if (item.kind.startsWith("site_") && (item.points?.length ?? 0) >= 2)
+        return this._renderSiteItem(layout, item);
       const entry = catalogItem(item.kind);
       const set = (patch: Partial<FurnitureItem>) =>
         this._edit(patchItem(layout, item.id, patch));

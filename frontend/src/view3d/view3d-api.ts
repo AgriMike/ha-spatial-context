@@ -8,6 +8,8 @@
  * from above reads the same way round. The panel (scene3d.ts) does all the
  * plan-units → metres work; the module only builds meshes. */
 
+import type { GroundGrid } from "../types";
+
 export type Vec2 = [number, number];
 
 /** A box standing on the floor: a wall piece, a lintel, a window pane. */
@@ -261,6 +263,10 @@ export interface Terrain3d {
   /** The footprints of floors that reach below the ground, cut out of it
    * so their rooms show. */
   holes: Vec2[][];
+  /** Grading over the site (see ground-grid.ts), and the building's
+   * footprint it leaves alone (the house stands on its foundation). */
+  grid?: GroundGrid | null;
+  cover?: Vec2[][];
 }
 
 /** One scan placed on a floor, in world terms. */
@@ -324,6 +330,12 @@ export interface EditHit {
   floor: [number, number] | null;
   /** A handle (setEditOverlay's) under the pointer: its index. */
   handle: number | null;
+  /** The floor the thing hit belongs to (another floor's in the
+   * dollhouse: `ref` is that floor's), else null. */
+  floorId: string | null;
+  /** The pointer's ray (edit-floor frame): to meet the ground or any
+   * level with. */
+  ray: { o: [number, number, number]; d: [number, number, number] };
 }
 
 export interface EditPointer {
@@ -344,6 +356,8 @@ export interface EditOverlay {
   activeHandle?: number | null;
   /** Guide lines (polylines, edit-floor frame). */
   lines?: [number, number, number][][];
+  /** Polylines in their own colours (edit-floor frame). */
+  paths?: { points: [number, number, number][]; color: string }[];
   /** Snapping guides (edit-floor frame): drawn dashed in their colour. */
   guides?: { points: [number, number, number][]; color: string }[];
   /** Boxes to preview (a wall being drawn, a door about to be placed). */
@@ -355,6 +369,11 @@ export interface View3dHandle {
    * onEditPointer and the overlay is drawn on it. */
   setEditFloor(floorId: string | null): void;
   setEditOverlay(overlay: EditOverlay): void;
+  /** The ground's height (edit-floor frame, metres) at a spot. */
+  groundHeight(x: number, z: number): number;
+  /** Shows the ground graded by a grid while it's being shaped, before
+   * it's saved (the rest of the scene follows on the next setScene). */
+  previewGrade(grid: GroundGrid | null): void;
   /** Shows a furniture item at a new spot and turn while it's dragged
    * (edit-floor frame, metres; angle as Item3d's), before it's saved. */
   previewItem(id: string, x: number, z: number, angle: number): void;

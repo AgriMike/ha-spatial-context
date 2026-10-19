@@ -52,6 +52,7 @@ import {
   pointToSegmentDistance,
 } from "../canvas/geometry";
 import { wallThicknessCm } from "../canvas/materials";
+import { gradeAt } from "./ground-grid";
 import {
   computeCoverOpenness,
   computeItemStates,
@@ -3203,6 +3204,13 @@ function terrain(
         hi = Math.max(hi, s);
       }
   }
+  // The building's footprint, which grading leaves alone.
+  const cover = input.floors.flatMap((f) => {
+    const m = metersPerUnit(f.layout.scale);
+    return f.layout.rooms
+      .filter((r) => r.points.length >= 3)
+      .map((r) => r.points.map(([x, y]): Vec2 => [x * m, y * m]));
+  });
   return {
     uphill: ground.uphill_m,
     downhill: ground.downhill_m,
@@ -3210,6 +3218,8 @@ function terrain(
     range: lo < hi ? [lo, hi] : [0, 0],
     level: GRADE_LEVEL,
     holes,
+    ...(ground.grid ? { grid: ground.grid } : {}),
+    cover,
   };
 }
 
@@ -3218,7 +3228,11 @@ export function groundHeight(t: Terrain3d, x: number, z: number): number {
   const [lo, hi] = t.range;
   const s = x * t.dir[0] + z * t.dir[1];
   const k = hi > lo ? Math.min(1, Math.max(0, (s - lo) / (hi - lo))) : 0;
-  return t.uphill + (t.downhill - t.uphill) * gradeFall(k, t.level);
+  return (
+    t.uphill +
+    (t.downhill - t.uphill) * gradeFall(k, t.level) +
+    gradeAt(t.grid, t.cover, x, z)
+  );
 }
 
 /** How far the grade has fallen (0 at the high side, 1 at the low) a

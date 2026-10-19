@@ -358,6 +358,22 @@ export interface GroundSetting {
   uphill_m: number;
   downhill_m: number;
   downhill_deg: number;
+  /** Grading on top of that grade: hills, swales, berms (see
+   * view3d/ground-grid.ts); absent or null = none. */
+  grid?: GroundGrid | null;
+}
+
+/** A grid of points over the site (the floor plane, metres, x across and
+ * z down the plan, from x0/z0 every `step`), each raising (or, below
+ * zero, lowering) the ground there by `h` metres (row by row); the ground
+ * runs smoothly between them. */
+export interface GroundGrid {
+  x0: number;
+  z0: number;
+  step: number;
+  cols: number;
+  rows: number;
+  h: number[];
 }
 
 /** The canvas's visible region in its own stored coordinate space — what

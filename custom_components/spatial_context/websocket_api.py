@@ -602,6 +602,29 @@ async def ws_save_view3d(
                 vol.Required("downhill_deg"): vol.All(
                     vol.Coerce(float), vol.Range(min=0, max=360)
                 ),
+                # Grading over the site: a grid of raised (or lowered)
+                # points, metres on the floor plane (see the frontend's
+                # view3d/ground-grid.ts).
+                vol.Optional("grid"): vol.Any(
+                    None,
+                    {
+                        vol.Required("x0"): vol.Coerce(float),
+                        vol.Required("z0"): vol.Coerce(float),
+                        vol.Required("step"): vol.All(
+                            vol.Coerce(float), vol.Range(min=0.1, max=20)
+                        ),
+                        vol.Required("cols"): vol.All(
+                            int, vol.Range(min=1, max=240)
+                        ),
+                        vol.Required("rows"): vol.All(
+                            int, vol.Range(min=1, max=240)
+                        ),
+                        vol.Required("h"): vol.All(
+                            [vol.All(vol.Coerce(float), vol.Range(min=-50, max=50))],
+                            vol.Length(max=240 * 240),
+                        ),
+                    },
+                ),
             },
         ),
     }

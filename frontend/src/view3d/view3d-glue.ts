@@ -5,6 +5,7 @@ import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { counterModel, furnitureModel } from "./furniture-models";
 import { siteModel } from "./site-models";
+import { gradeAt } from "./ground-grid";
 import type {
   Box3d,
   EditHit,
@@ -881,7 +882,12 @@ function groundAt(t: Terrain3d | null, x: number, z: number): number {
   const s = x * dx + z * dz;
   const k = hi > lo ? Math.min(1, Math.max(0, (s - lo) / (hi - lo))) : 0;
   const fall = t.level >= 1 ? 0 : Math.max(0, (k - t.level) / (1 - t.level));
-  return t.uphill + (t.downhill - t.uphill) * fall - 0.06;
+  return (
+    t.uphill +
+    (t.downhill - t.uphill) * fall -
+    0.06 +
+    gradeAt(t.grid, t.cover, x, z)
+  );
 }
 
 /** A hillside under the building (see Terrain3d): level at `uphill`
@@ -889,17 +895,22 @@ function groundAt(t: Terrain3d | null, x: number, z: number): number {
  * falling linearly across the rest to
  * `downhill` past its low face, with the given rooms cut out. */
 function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
-  const [dx, dz] = t.dir;
-  const [lo, hi] = t.range;
   // A hair under the stated grade: outdoor slabs sit just below 0.
-  const height = (x: number, z: number) => {
-    const s = x * dx + z * dz;
-    const k = hi > lo ? Math.min(1, Math.max(0, (s - lo) / (hi - lo))) : 0;
-    // As scene3d's gradeFall: level for the first `level` share.
-    const fall = t.level >= 1 ? 0 : Math.max(0, (k - t.level) / (1 - t.level));
-    return t.uphill + (t.downhill - t.uphill) * fall - 0.06;
-  };
+  const height = (x: number, z: number) => groundAt(t, x, z);
+  // Out to the grading's edge too.
+  const g = t.grid;
   const margin = 6;
+  if (g) {
+    box = box.clone();
+    box.expandByPoint(new THREE.Vector3(g.x0 - margin, 0, g.z0 - margin));
+    box.expandByPoint(
+      new THREE.Vector3(
+        g.x0 + (g.cols - 1) * g.step + margin,
+        0,
+        g.z0 + (g.rows - 1) * g.step + margin,
+      ),
+    );
+  }
   // Grid lines along the cut-out rooms' outlines too, so the ground runs
   // right up to them (a cell is cut only when it's inside one).
   const withHoles = (lines: number[], axis: 0 | 1) => {
@@ -1242,6 +1253,8 @@ function createView3d(options: View3dOptions): View3dHandle {
   let terrain: THREE.Mesh | null = null;
   /** The site's ground, for laying driveways and fences on it. */
   let siteTerrain: Terrain3d | null = null;
+  /** What the terrain was last built around. */
+  let terrainBox: THREE.Box3 | null = null;
   /** The building's roof, shown while the floors stand together. */
   let roof: THREE.Mesh | null = null;
   let roofSpec: Roof3d | null = null;
@@ -1615,8 +1628,9 @@ function createView3d(options: View3dOptions): View3dHandle {
     }
     ground.visible = !spec.terrain;
     if (spec.terrain) {
+      terrainBox = bounds();
       terrain = new THREE.Mesh(
-        terrainGeometry(spec.terrain, bounds()),
+        terrainGeometry(spec.terrain, terrainBox),
         groundMat,
       );
       terrain.name = "Ground";
@@ -2250,8 +2264,8 @@ function createView3d(options: View3dOptions): View3dHandle {
       .filter((h) => shownChain(h.object));
     const h = hits[0];
     let ref: EditRef | null = null;
+    let floorId: string | null = null;
     if (h) {
-      let floorId: string | null = null;
       for (let n: THREE.Object3D | null = h.object; n; n = n.parent) {
         const ud = n.userData;
         if (!ref && typeof ud["itemId"] === "string")
@@ -2266,7 +2280,6 @@ function createView3d(options: View3dOptions): View3dHandle {
       const boxes = h.object.userData["boxes"] as Box3d[] | undefined;
       if (!ref && boxes && h.faceIndex != null)
         ref = boxes[Math.floor(h.faceIndex / 12)]?.ref ?? null;
-      if (floorId !== editFloorId) ref = null;
     }
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -floorY);
     const at = raycaster.ray.intersectPlane(plane, new THREE.Vector3());
@@ -2279,6 +2292,19 @@ function createView3d(options: View3dOptions): View3dHandle {
       normal: n ? [n.x, n.y, n.z] : null,
       floor: at ? [at.x, at.z] : null,
       handle: handle !== null && handle >= 0 ? handle : null,
+      floorId,
+      ray: {
+        o: [
+          raycaster.ray.origin.x,
+          raycaster.ray.origin.y - floorY,
+          raycaster.ray.origin.z,
+        ],
+        d: [
+          raycaster.ray.direction.x,
+          raycaster.ray.direction.y,
+          raycaster.ray.direction.z,
+        ],
+      },
     };
   }
 
@@ -2438,6 +2464,40 @@ function createView3d(options: View3dOptions): View3dHandle {
   function drawRef(ref: EditRef, color: string, fill: number): void {
     const entry = editEntry();
     if (!entry) return;
+    // A site item: its outline traced over the ground.
+    const siteItem =
+      ref.kind === "item"
+        ? entry.spec.items.find((i) => i.id === ref.id && i.site)
+        : undefined;
+    const siteObj = siteItem
+      ? entry.furniture.children.find((c) => c.userData["itemId"] === ref.id)
+      : undefined;
+    if (siteItem?.site && siteObj) {
+      const a = siteObj.rotation.y;
+      const ox = siteObj.position.x;
+      const oz = siteObj.position.z;
+      const pts = siteItem.site.points.map(([lx, lz]) => {
+        const x = ox + lx * Math.cos(a) + lz * Math.sin(a);
+        const z = oz - lx * Math.sin(a) + lz * Math.cos(a);
+        return new THREE.Vector3(
+          x,
+          groundAt(siteTerrain, x, z) - entry.spec.baseY + 0.08,
+          z,
+        );
+      });
+      const geom = new THREE.BufferGeometry().setFromPoints(pts);
+      const lineMat = new THREE.LineBasicMaterial({
+        color,
+        depthTest: false,
+        transparent: true,
+      });
+      const line = siteItem.site.closed
+        ? new THREE.LineLoop(geom, lineMat)
+        : new THREE.Line(geom, lineMat);
+      line.renderOrder = 1000;
+      overlayGroup.add(line);
+      return;
+    }
     if (ref.kind === "room") {
       const slab = entry.spec.slabs.find((s) => s.id === ref.id);
       if (!slab) return;
@@ -2521,6 +2581,22 @@ function createView3d(options: View3dOptions): View3dHandle {
         }),
       );
       l.computeLineDistances();
+      l.renderOrder = 1001;
+      overlayGroup.add(l);
+    }
+    for (const path of o.paths ?? []) {
+      if (path.points.length < 2) continue;
+      const l = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(
+          path.points.map(([x, y, z]) => new THREE.Vector3(x, y, z)),
+        ),
+        new THREE.LineBasicMaterial({
+          color: path.color,
+          depthTest: false,
+          transparent: true,
+          opacity: 0.9,
+        }),
+      );
       l.renderOrder = 1001;
       overlayGroup.add(l);
     }
@@ -2615,6 +2691,18 @@ function createView3d(options: View3dOptions): View3dHandle {
       }
       canvasEl.style.cursor = floorId ? "default" : "";
       applyOverlay();
+    },
+    groundHeight(x, z) {
+      const entry = editEntry();
+      return groundAt(siteTerrain, x, z) - (entry?.spec.baseY ?? 0);
+    },
+    previewGrade(grid) {
+      if (!siteTerrain || !terrain || !terrainBox) return;
+      siteTerrain = { ...siteTerrain, grid };
+      const old = terrain.geometry;
+      terrain.geometry = terrainGeometry(siteTerrain, terrainBox);
+      old.dispose();
+      invalidate();
     },
     setEditOverlay(overlay) {
       editOverlay = overlay;

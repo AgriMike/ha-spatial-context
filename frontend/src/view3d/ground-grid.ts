@@ -1,0 +1,175 @@
+import type { GroundGrid } from "../types";
+
+/** The most points a grading grid keeps (each side). */
+const MAX_SIDE = 160;
+
+/** A node's raise (metres), zero off the grid. */
+function node(g: GroundGrid, i: number, j: number): number {
+  if (i < 0 || j < 0 || i >= g.cols || j >= g.rows) return 0;
+  return g.h[j * g.cols + i] ?? 0;
+}
+
+/** Catmull-Rom weights: the curve runs through every node. */
+function weights(t: number): [number, number, number, number] {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return [
+    (-t3 + 2 * t2 - t) / 2,
+    (3 * t3 - 5 * t2 + 2) / 2,
+    (-3 * t3 + 4 * t2 + t) / 2,
+    (t3 - t2) / 2,
+  ];
+}
+
+/** How far the grading raises (or lowers) the ground at a spot (x, z on
+ * the floor plane, metres): smoothed between the grid's points, easing
+ * back to nothing past its edge. */
+export function gridOffset(
+  g: GroundGrid | null | undefined,
+  x: number,
+  z: number,
+): number {
+  if (!g || !g.cols || !g.rows || g.step <= 0) return 0;
+  const fx = (x - g.x0) / g.step;
+  const fz = (z - g.z0) / g.step;
+  if (fx < -2 || fz < -2 || fx > g.cols + 1 || fz > g.rows + 1) return 0;
+  const i = Math.floor(fx);
+  const j = Math.floor(fz);
+  const wx = weights(fx - i);
+  const wz = weights(fz - j);
+  let sum = 0;
+  for (let b = 0; b < 4; b++) {
+    let row = 0;
+    for (let a = 0; a < 4; a++) row += wx[a]! * node(g, i - 1 + a, j - 1 + b);
+    sum += wz[b]! * row;
+  }
+  return sum;
+}
+
+function inside(poly: [number, number][], x: number, z: number): boolean {
+  let hit = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, zi] = poly[i]!;
+    const [xj, zj] = poly[j]!;
+    if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi)
+      hit = !hit;
+  }
+  return hit;
+}
+
+/** gridOffset, but nothing under the building (`cover`, its rooms'
+ * outlines): it stands on its foundation, the grading round it. */
+export function gradeAt(
+  g: GroundGrid | null | undefined,
+  cover: [number, number][][] | undefined,
+  x: number,
+  z: number,
+): number {
+  if (!g) return 0;
+  const v = gridOffset(g, x, z);
+  if (v === 0 || !cover) return v;
+  for (const poly of cover) if (inside(poly, x, z)) return 0;
+  return v;
+}
+
+/** The grid grown (with level points) to cover a stretch of ground, its
+ * points kept where they were. */
+export function growGrid(
+  g: GroundGrid | null | undefined,
+  minX: number,
+  minZ: number,
+  maxX: number,
+  maxZ: number,
+  step: number,
+): GroundGrid {
+  const s = g?.step ?? step;
+  const x0 = g ? g.x0 : Math.floor(minX / s) * s;
+  const z0 = g ? g.z0 : Math.floor(minZ / s) * s;
+  // Whole steps out from the old origin, so old points stay on the grid.
+  const padL = Math.max(0, Math.ceil((x0 - minX) / s));
+  const padT = Math.max(0, Math.ceil((z0 - minZ) / s));
+  const oldCols = g?.cols ?? 1;
+  const oldRows = g?.rows ?? 1;
+  const padR = Math.max(0, Math.ceil((maxX - (x0 + (oldCols - 1) * s)) / s));
+  const padB = Math.max(0, Math.ceil((maxZ - (z0 + (oldRows - 1) * s)) / s));
+  const cols = Math.min(MAX_SIDE, oldCols + padL + padR);
+  const rows = Math.min(MAX_SIDE, oldRows + padT + padB);
+  if (g && cols === g.cols && rows === g.rows && !padL && !padT) return g;
+  const h = new Array<number>(cols * rows).fill(0);
+  if (g)
+    for (let j = 0; j < g.rows; j++)
+      for (let i = 0; i < g.cols; i++) {
+        const ni = i + padL;
+        const nj = j + padT;
+        if (ni < cols && nj < rows) h[nj * cols + ni] = node(g, i, j);
+      }
+  return { x0: x0 - padL * s, z0: z0 - padT * s, step: s, cols, rows, h };
+}
+
+export type GradeMode = "raise" | "lower" | "flatten" | "smooth";
+
+/** A brush stroke's dab at a spot: raises, lowers, levels (toward
+ * `level`, a raise) or smooths the points within `radius`, most at the
+ * middle and fading to nothing at the edge. */
+export function brushGrid(
+  g: GroundGrid,
+  x: number,
+  z: number,
+  radius: number,
+  amount: number,
+  mode: GradeMode,
+  level = 0,
+): GroundGrid {
+  const h = g.h.slice();
+  const r = Math.max(radius, g.step * 0.5);
+  const i0 = Math.max(0, Math.floor((x - r - g.x0) / g.step));
+  const i1 = Math.min(g.cols - 1, Math.ceil((x + r - g.x0) / g.step));
+  const j0 = Math.max(0, Math.floor((z - r - g.z0) / g.step));
+  const j1 = Math.min(g.rows - 1, Math.ceil((z + r - g.z0) / g.step));
+  for (let j = j0; j <= j1; j++)
+    for (let i = i0; i <= i1; i++) {
+      const d = Math.hypot(g.x0 + i * g.step - x, g.z0 + j * g.step - z);
+      if (d >= r) continue;
+      // Smooth falloff (1 at the middle, 0 at the edge).
+      const f = 0.5 + 0.5 * Math.cos((Math.PI * d) / r);
+      const k = j * g.cols + i;
+      const v = g.h[k] ?? 0;
+      let next: number;
+      if (mode === "raise") next = v + amount * f;
+      else if (mode === "lower") next = v - amount * f;
+      else if (mode === "flatten")
+        next = v + (level - v) * Math.min(1, f * 0.5);
+      else {
+        let sum = 0;
+        let n = 0;
+        for (let b = -1; b <= 1; b++)
+          for (let a = -1; a <= 1; a++) {
+            if (i + a < 0 || j + b < 0 || i + a >= g.cols || j + b >= g.rows)
+              continue;
+            sum += g.h[(j + b) * g.cols + i + a] ?? 0;
+            n++;
+          }
+        next = v + (sum / n - v) * Math.min(1, f * 0.6);
+      }
+      h[k] = Math.round(Math.max(-20, Math.min(20, next)) * 1000) / 1000;
+    }
+  return { ...g, h };
+}
+
+/** The nearest grid point to a spot, if it's within half a step. */
+export function nearestNode(
+  g: GroundGrid | null | undefined,
+  x: number,
+  z: number,
+): { i: number; j: number } | null {
+  if (!g) return null;
+  const i = Math.round((x - g.x0) / g.step);
+  const j = Math.round((z - g.z0) / g.step);
+  if (i < 0 || j < 0 || i >= g.cols || j >= g.rows) return null;
+  return { i, j };
+}
+
+/** The grid with no raised or lowered points: none. */
+export function gridIsLevel(g: GroundGrid | null | undefined): boolean {
+  return !g || g.h.every((v) => Math.abs(v) < 1e-4);
+}

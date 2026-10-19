@@ -5153,6 +5153,9 @@ export class SpatialContextPanel extends LitElement {
                           @layout-edit=${(
                             e: CustomEvent<{ patch: Partial<FloorLayout> }>,
                           ) => this._updateLayout(e.detail.patch)}
+                          @select-floor=${(
+                            e: CustomEvent<{ floorId: string }>,
+                          ) => void this._selectFloor(e.detail.floorId)}
                           @layout-undo=${() => this._undoRedo("undo")}
                           @layout-redo=${() => this._undoRedo("redo")}
                         ></floorplan-3d-view>`

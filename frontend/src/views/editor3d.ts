@@ -536,3 +536,92 @@ export function snapOffset(
       }
     : { d, guide: null };
 }
+
+// --- outlines (free-form shapes, site items) ------------------------------
+
+/** An outline item's corners on the plan (plan units), as drawn: its
+ * fractions of its size, about its centre, mirrored and turned. */
+export function outlinePoints(item: FurnitureItem, perCm: number): Pt[] {
+  const w = item.width_cm;
+  const d = item.depth_cm;
+  const a = (-item.rotation_deg * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return (item.points ?? []).map(([fx, fy]) => {
+    const lx = (item.mirrored ? 1 - fx : fx) * w - w / 2;
+    const lz = fy * d - d / 2;
+    return [
+      item.x + (lx * c + lz * s) * perCm,
+      item.y + (-lx * s + lz * c) * perCm,
+    ];
+  });
+}
+
+/** The item fitted to new corners (plan units), keeping its turn: its
+ * centre, size and corner fractions. */
+export function fitOutline(
+  item: FurnitureItem,
+  pts: Pt[],
+  perCm: number,
+): Partial<FurnitureItem> {
+  const a = (-item.rotation_deg * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  // Into the item's own frame (cm, about its old centre).
+  const local = pts.map(([x, y]): Pt => {
+    const dx = (x - item.x) / perCm;
+    const dy = (y - item.y) / perCm;
+    const lx = dx * c - dy * s;
+    const lz = dx * s + dy * c;
+    return [item.mirrored ? -lx : lx, lz];
+  });
+  const xs = local.map((p) => p[0]);
+  const zs = local.map((p) => p[1]);
+  const x0 = Math.min(...xs);
+  const x1 = Math.max(...xs);
+  const z0 = Math.min(...zs);
+  const z1 = Math.max(...zs);
+  const w = Math.max(1, x1 - x0);
+  const d = Math.max(1, z1 - z0);
+  const cx = item.mirrored ? -(x0 + x1) / 2 : (x0 + x1) / 2;
+  const cz = (z0 + z1) / 2;
+  return {
+    x: item.x + (cx * c + cz * s) * perCm,
+    y: item.y + (-cx * s + cz * c) * perCm,
+    width_cm: w,
+    depth_cm: d,
+    points: local.map(([lx, lz]): [number, number] => [
+      x1 > x0 ? (lx - x0) / (x1 - x0) : 0.5,
+      z1 > z0 ? (lz - z0) / (z1 - z0) : 0.5,
+    ]),
+  };
+}
+
+/** A new outline item of a kind through plan points (unturned). */
+export function addOutlineItem(
+  layout: FloorLayout,
+  kind: string,
+  pts: Pt[],
+  closed: boolean,
+  perCm: number,
+): { patch: LayoutPatch; id: string } | null {
+  const entry = catalogItem(kind);
+  if (!entry || pts.length < 2) return null;
+  const id = newId("furniture");
+  const base: FurnitureItem = {
+    id,
+    kind: entry.id,
+    x: pts[0]![0],
+    y: pts[0]![1],
+    rotation_deg: 0,
+    width_cm: 1,
+    depth_cm: 1,
+    stroke_width: 1.5,
+    closed,
+    ...(typeof entry.opts["color"] === "string"
+      ? { color: entry.opts["color"], fill: !!entry.opts["fill"] }
+      : {}),
+  };
+  const item = { ...base, ...fitOutline(base, pts, perCm) };
+  return { patch: { furniture: [...layout.furniture, item] }, id };
+}
