@@ -658,8 +658,7 @@ export class Floorplan3dView extends LitElement {
       this._otherLayouts = new Map();
     }
     if (changed.has("floorId") && changed.get("floorId") !== undefined) {
-      this._sel = this._pendingSel;
-      this._pendingSel = null;
+      this._sel = null;
       this._hover = null;
       this._drag = null;
       this._draft = [];
@@ -668,6 +667,12 @@ export class Floorplan3dView extends LitElement {
       this._guides = [];
       this._outlineCorner = null;
       this._snapCache = null;
+    }
+    // Another floor's thing clicked: selected once its floor's layout is
+    // here (the panel loads it after switching).
+    if (changed.has("layout") && this._pendingSel && this._refExists(this._pendingSel)) {
+      this._sel = this._pendingSel;
+      this._pendingSel = null;
     }
     this._ensureData();
   }
@@ -1299,7 +1304,7 @@ export class Floorplan3dView extends LitElement {
       ]);
     // A free-form outline's corners (a driveway's, a fence's), on the
     // ground for the site's.
-    const item = this._outlineItem();
+    const item = this._tool === "select" ? this._outlineItem() : undefined;
     let activeHandle: number | null =
       this._drag?.kind === "corner" ? this._drag.index : null;
     const paths: { points: [number, number, number][]; color: string }[] = [];
@@ -1683,11 +1688,17 @@ export class Floorplan3dView extends LitElement {
       this._guides = snapped.guides;
       this._gradeCursor = [p[0] * m, p[1] * m];
       if (e.type === "click") {
+        // Back on the first corner (its dot, or near it as seen from
+        // here, before snapping) closes the outline.
         const first = this._draft[0];
+        const { o } = e.hit.ray;
+        const near =
+          Math.max(reach * 2, (0.025 * Math.hypot(g[0] - o[0], g[1] - o[1], g[2] - o[2])) / m);
         if (
           first &&
           this._draft.length >= 3 &&
-          Math.hypot(p[0] - first[0], p[1] - first[1]) < reach * 2
+          (e.hit.handle === 0 ||
+            Math.hypot(raw[0] - first[0], raw[1] - first[1]) < near)
         ) {
           this._finishYard(true);
           return false;
@@ -2175,6 +2186,7 @@ export class Floorplan3dView extends LitElement {
         this._pushOverlay();
         return false;
       }
+      this._pendingSel = null;
       if (JSON.stringify(e.hit.ref) !== JSON.stringify(this._sel))
         this._outlineCorner = null;
       this._sel = e.hit.ref;
