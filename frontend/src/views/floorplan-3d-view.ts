@@ -1659,6 +1659,8 @@ export class Floorplan3dView extends LitElement {
       if (added) {
         this._edit(added.patch);
         this._sel = { kind: "item", id: added.id };
+        // Picked again once the layout with it arrives, if it's not yet.
+        this._pendingSel = this._sel;
         this._outlineCorner = null;
         this._tool = "select";
       }

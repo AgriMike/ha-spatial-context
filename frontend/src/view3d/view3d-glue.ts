@@ -1290,6 +1290,7 @@ function createView3d(options: View3dOptions): View3dHandle {
     const moved = controls.update();
     if (moved || dirty) {
       dirty = false;
+      sizeHandles();
       renderer.render(scene, camera);
     }
     if (moved) schedule();
@@ -2224,6 +2225,20 @@ function createView3d(options: View3dOptions): View3dHandle {
   scene.add(overlayGroup);
   /** The handles' pick spheres, by index. */
   let handleMeshes: THREE.Mesh[] = [];
+  /** Every handle's meshes, kept the same size on screen. */
+  let handleDots: THREE.Mesh[] = [];
+
+  /** Scales the handles by their distance from the camera, so they stay
+   * grabbable however far out the view is. */
+  function sizeHandles(): void {
+    if (!handleDots.length) return;
+    const at = new THREE.Vector3();
+    for (const mesh of handleDots) {
+      mesh.getWorldPosition(at);
+      mesh.scale.setScalar(Math.max(1, camera.position.distanceTo(at) / 12));
+      mesh.updateMatrixWorld(true);
+    }
+  }
   let editDragId: number | null = null;
   let editDown: { x: number; y: number; id: number; moved: boolean } | null =
     null;
@@ -2386,6 +2401,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       });
     }
     handleMeshes = [];
+    handleDots = [];
   }
 
   /** Box outlines (and a faint fill) over the boxes, in a colour. */
@@ -2650,8 +2666,10 @@ function createView3d(options: View3dOptions): View3dHandle {
       overlayGroup.add(ring, dot, pick);
       pick.updateMatrixWorld(true);
       handleMeshes.push(pick);
+      handleDots.push(ring, dot, pick);
     });
     overlayGroup.updateMatrixWorld(true);
+    sizeHandles();
     invalidate();
   }
 
