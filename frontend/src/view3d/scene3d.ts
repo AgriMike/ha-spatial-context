@@ -7,6 +7,9 @@
 
 import { render, svg } from "lit";
 import type {
+  WindowGrid,
+  GarageStyle,
+  DoorStyle,
   CompassSide,
   RoofEnd,
   RoofLightStrip,
@@ -125,6 +128,24 @@ const TRIM_WHITE_DARK = "#9a968f";
 /** An outside door's leaf. */
 const DOOR = "#f6f4ef";
 const DOOR_DARK = "#8f8b84";
+/** A door's hardware (knob, handles, strap hinges): dark bronze. */
+const HARDWARE = "#3b3530";
+/** Glass in a garage door: the dark garage behind it. */
+const GARAGE_GLASS = "#33404a";
+/** A modern garage door's aluminium frame. */
+const GARAGE_FRAME = "#43484e";
+/** Shutters, unpainted: a dark green-black. */
+const SHUTTER = "#2f3a33";
+
+/** A colour (#rrggbb) lightened (k > 1) or darkened (k < 1). */
+function shadeHex(hex: string, k: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const c = (v: number) =>
+    Math.max(0, Math.min(255, Math.round(v * k)))
+      .toString(16)
+      .padStart(2, "0");
+  return `#${c((n >> 16) & 255)}${c((n >> 8) & 255)}${c(n & 255)}`;
+}
 const CEDAR = "#a8693a";
 const CONCRETE = "#cbc8c1";
 /** A raised deck: its posts (and their spacing), wood, and the railing's
@@ -1718,6 +1739,392 @@ function buildFloor(
         }))
         .filter((o) => o.s1 - o.s0 > 0.01)
         .sort((p, q) => p.s0 - q.s0);
+      // Out from the wall's centre to its outdoor face (box +Z is (-dz,
+      // dx)), for the detail on a door, window or garage door.
+      const nOut: Vec2 | null = outside ? [-dz * outside, dx * outside] : null;
+      /** A box `o` metres out from the wall's centre line. */
+      const proud = (b: Box3d, o: number): Box3d =>
+        nOut ? { ...b, x: b.x + nOut[0] * o, z: b.z + nOut[1] * o } : b;
+      /** A door leaf `depth` thick over [s0, s1] x [y0, y1], solid round
+       * its glass lites (each [s0, s1, y0, y1]): banded at the lites'
+       * edges, solid between them in each band. */
+      const leafAround = (
+        s0: number,
+        s1: number,
+        y0: number,
+        y1: number,
+        lites: [number, number, number, number][],
+        depth: number,
+        color: string,
+      ) => {
+        const ys = [
+          ...new Set([y0, y1, ...lites.flatMap((l) => [l[2], l[3]])]),
+        ].sort((p, q) => p - q);
+        for (let k = 0; k + 1 < ys.length; k++) {
+          const ya = ys[k]!;
+          const yb = ys[k + 1]!;
+          if (yb - ya < 0.002) continue;
+          const across = lites
+            .filter((l) => l[2] <= ya + 1e-6 && l[3] >= yb - 1e-6)
+            .sort((p, q) => p[0] - q[0]);
+          let c = s0;
+          for (const l of across) {
+            if (l[0] > c + 0.002)
+              walls.push({ ...box(c, l[0], ya, yb, depth), color });
+            c = Math.max(c, l[1]);
+          }
+          if (s1 > c + 0.002)
+            walls.push({ ...box(c, s1, ya, yb, depth), color });
+        }
+      };
+      /** Muntins over a pane [s0, s1] x [y0, y1]: `cols` x `rows` lites,
+       * or (prairie) a border of narrow lites round a big one. */
+      const muntins = (
+        s0: number,
+        s1: number,
+        y0: number,
+        y1: number,
+        grid: WindowGrid | "french",
+        color: string,
+        out = 0,
+      ) => {
+        const bar = 0.022;
+        const d = 0.03;
+        const w = s1 - s0;
+        const h = y1 - y0;
+        const vert = (s: number, a = y0, b = y1) =>
+          walls.push({
+            ...proud(box(s - bar / 2, s + bar / 2, a, b, d), out),
+            color,
+          });
+        const horiz = (y: number, a = s0, b = s1) =>
+          walls.push({
+            ...proud(box(a, b, y - bar / 2, y + bar / 2, d), out),
+            color,
+          });
+        if (grid === "prairie") {
+          const k = Math.min(0.1, w * 0.18, h * 0.18);
+          vert(s0 + k);
+          vert(s1 - k);
+          horiz(y0 + k);
+          horiz(y1 - k);
+          return;
+        }
+        if (grid === "craftsman") {
+          // Tall lites across the top part only.
+          const cols = Math.max(2, Math.round(w / 0.3));
+          for (let c = 1; c < cols; c++) vert(s0 + (w * c) / cols);
+          return;
+        }
+        const cols = grid === "french" ? 2 : Math.max(2, Math.round(w / 0.32));
+        const rows = grid === "french" ? 5 : Math.max(2, Math.round(h / 0.36));
+        for (let c = 1; c < cols; c++) vert(s0 + (w * c) / cols);
+        for (let r = 1; r < rows; r++) horiz(y0 + (h * r) / rows);
+      };
+      /** An outside door's leaf (or leaves) in its style. */
+      const doorLeaf = (
+        s0: number,
+        s1: number,
+        y0: number,
+        y1: number,
+        style: DoorStyle,
+        color: string,
+      ) => {
+        const D = 0.05;
+        const h = y1 - y0;
+        const glass = (l: [number, number, number, number]) =>
+          panes.push({
+            box: box(l[0], l[1], l[2], l[3], 0.02),
+            kind: "glass",
+            color: "#86a6bd",
+            opacity: 0.38,
+          });
+        const leaves: [number, number][] =
+          style === "french"
+            ? [
+                [s0, (s0 + s1) / 2],
+                [(s0 + s1) / 2, s1],
+              ]
+            : [[s0, s1]];
+        leaves.forEach(([a, b], li) => {
+          const lw = b - a;
+          const st = Math.min(0.12, lw * 0.14);
+          const X = (f: number) => a + st + (lw - 2 * st) * f;
+          const Y = (f: number) => y0 + h * f;
+          const lites: [number, number, number, number][] = [];
+          const panels: [number, number, number, number][] = [];
+          const twoCols: [number, number][] = [
+            [0, 0.45],
+            [0.55, 1],
+          ];
+          switch (style) {
+            case "six_panel":
+              for (const [c0, c1] of twoCols)
+                for (const [r0, r1] of [
+                  [0.06, 0.3],
+                  [0.36, 0.7],
+                  [0.76, 0.93],
+                ] as const)
+                  panels.push([X(c0), X(c1), Y(r0), Y(r1)]);
+              break;
+            case "craftsman":
+              for (const [c0, c1] of [
+                [0, 0.3],
+                [0.35, 0.65],
+                [0.7, 1],
+              ] as const)
+                lites.push([X(c0), X(c1), Y(0.72), Y(0.93)]);
+              for (const [c0, c1] of twoCols)
+                panels.push([X(c0), X(c1), Y(0.07), Y(0.6)]);
+              // The dentil shelf under the lites.
+              walls.push({
+                ...proud(
+                  box(a + st * 0.5, b - st * 0.5, Y(0.655), Y(0.68), 0.04),
+                  D / 2,
+                ),
+                color,
+              });
+              break;
+            case "half_lite":
+              lites.push([X(0), X(1), Y(0.5), Y(0.93)]);
+              for (const [c0, c1] of twoCols)
+                panels.push([X(c0), X(c1), Y(0.07), Y(0.42)]);
+              break;
+            case "full_lite":
+            case "french":
+              lites.push([X(0), X(1), Y(0.1), Y(0.93)]);
+              break;
+            default:
+              break;
+          }
+          leafAround(a, b, y0, y1, lites, D, color);
+          for (const l of lites) glass(l);
+          if (style === "french")
+            for (const l of lites)
+              muntins(l[0], l[1], l[2], l[3], "french", color);
+          // Raised panels: a field standing proud of the leaf in a
+          // moulded frame.
+          const mould = shadeHex(color, 0.93);
+          for (const [p0, p1, q0, q1] of panels) {
+            walls.push({
+              ...proud(box(p0, p1, q0, q1, 0.012), D / 2),
+              color: mould,
+            });
+            const k = Math.min(0.035, (p1 - p0) * 0.15, (q1 - q0) * 0.15);
+            walls.push({
+              ...proud(
+                box(p0 + k, p1 - k, q0 + k, q1 - k, 0.012),
+                D / 2 + 0.008,
+              ),
+              color,
+            });
+          }
+          // The knob (French doors: at the meeting stiles).
+          const latch =
+            style === "french"
+              ? li === 0
+                ? b - st / 2
+                : a + st / 2
+              : b - st / 2;
+          walls.push({
+            ...proud(
+              box(latch - 0.02, latch + 0.02, y0 + 0.95, y0 + 1.1, 0.03),
+              D / 2 + 0.015,
+            ),
+            color: HARDWARE,
+          });
+        });
+      };
+      /** A garage door's sections, panels, glass and hardware: the door
+       * stands over [s0, s1] from `bottom` up to `head` (higher sections
+       * rolled up out of sight), `D` thick. */
+      const garageDetail = (
+        s0: number,
+        s1: number,
+        bottom: number,
+        head: number,
+        full: number,
+        D: number,
+        style: GarageStyle,
+        color: string,
+      ) => {
+        const w = s1 - s0;
+        const sec = full / 4;
+        const groove = shadeHex(color, 0.82);
+        const add = (
+          a: number,
+          b: number,
+          y0: number,
+          y1: number,
+          c: string,
+          out: number,
+          depth = 0.012,
+          kind: "door" | "glass" = "door",
+        ) => {
+          const top = Math.min(y1, head);
+          if (top - y0 < 0.005 || y0 >= head) return;
+          panes.push({
+            box: proud(box(a, b, y0, top, depth), out),
+            kind,
+            color: c,
+            opacity: kind === "glass" ? 0.88 : 1,
+          });
+        };
+        const face = D / 2;
+        for (let k = 0; k < 4; k++) {
+          const y0 = bottom + k * sec;
+          const y1 = y0 + sec;
+          if (y0 >= head) break;
+          const top = k === 3;
+          // The joint between sections.
+          if (k > 0) add(s0, s1, y0 - 0.006, y0 + 0.006, groove, face, 0.006);
+          switch (style) {
+            case "raised_short":
+            case "raised_long":
+            case "windows": {
+              const n =
+                style === "raised_long"
+                  ? Math.max(1, Math.round(w / 1.25))
+                  : Math.max(2, Math.round(w / 0.55));
+              const m0 = 0.07;
+              const pw = (w - m0 * (n + 1)) / n;
+              for (let j = 0; j < n; j++) {
+                const a = s0 + m0 + j * (pw + m0);
+                if (style === "windows" && top)
+                  add(
+                    a,
+                    a + pw,
+                    y0 + sec * 0.2,
+                    y1 - sec * 0.2,
+                    GARAGE_GLASS,
+                    face,
+                    0.008,
+                    "glass",
+                  );
+                else {
+                  add(
+                    a,
+                    a + pw,
+                    y0 + sec * 0.16,
+                    y1 - sec * 0.16,
+                    groove,
+                    face,
+                    0.01,
+                  );
+                  add(
+                    a + 0.02,
+                    a + pw - 0.02,
+                    y0 + sec * 0.16 + 0.02,
+                    y1 - sec * 0.16 - 0.02,
+                    color,
+                    face + 0.006,
+                    0.01,
+                  );
+                }
+              }
+              break;
+            }
+            case "carriage": {
+              // Two "swing doors": boards, a centre split, glass on top.
+              const mid = (s0 + s1) / 2;
+              for (let s = s0 + 0.14; s < s1 - 0.07; s += 0.14)
+                if (Math.abs(s - mid) > 0.05)
+                  add(s - 0.004, s + 0.004, y0, y1, groove, face, 0.004);
+              add(mid - 0.012, mid + 0.012, y0, y1, groove, face, 0.006);
+              if (top)
+                for (const [a, b] of [
+                  [s0, mid],
+                  [mid, s1],
+                ] as const) {
+                  const lw = (b - a - 0.08 * 3) / 2;
+                  for (let j = 0; j < 2; j++) {
+                    const x = a + 0.08 + j * (lw + 0.08);
+                    add(
+                      x,
+                      x + lw,
+                      y0 + sec * 0.2,
+                      y1 - sec * 0.15,
+                      GARAGE_GLASS,
+                      face,
+                      0.008,
+                      "glass",
+                    );
+                  }
+                }
+              break;
+            }
+            case "modern": {
+              const n = Math.max(3, Math.round(w / 0.8));
+              const m0 = 0.05;
+              const pw = (w - m0 * (n + 1)) / n;
+              for (let j = 0; j < n; j++) {
+                const a = s0 + m0 + j * (pw + m0);
+                add(
+                  a,
+                  a + pw,
+                  y0 + 0.05,
+                  y1 - 0.05,
+                  GARAGE_GLASS,
+                  face,
+                  0.008,
+                  "glass",
+                );
+              }
+              break;
+            }
+            default:
+              break;
+          }
+        }
+        if (style === "carriage") {
+          // Handles by the split, strap hinges at the sides.
+          const mid = (s0 + s1) / 2;
+          for (const s of [mid - 0.12, mid + 0.12])
+            add(
+              s - 0.015,
+              s + 0.015,
+              bottom + 0.9,
+              bottom + 1.15,
+              HARDWARE,
+              face + 0.01,
+              0.02,
+            );
+          for (const y of [bottom + sec * 0.5, bottom + sec * 2.5])
+            for (const [a, b] of [
+              [s0 + 0.04, s0 + 0.45],
+              [s1 - 0.45, s1 - 0.04],
+            ] as const)
+              add(a, b, y - 0.025, y + 0.025, HARDWARE, face + 0.01, 0.01);
+        }
+      };
+      /** A pair of louvered shutters flanking a window. */
+      const shutterPair = (
+        s0: number,
+        s1: number,
+        y0: number,
+        y1: number,
+        color: string,
+      ) => {
+        const sw = Math.min(0.45, Math.max(0.25, (s1 - s0) * 0.4));
+        const gap = WINDOW_TRIM_M + 0.02;
+        const out = t / 2 + 0.02;
+        const slat = shadeHex(color, 1.12);
+        for (const [a, b] of [
+          [s0 - gap - sw, s0 - gap],
+          [s1 + gap, s1 + gap + sw],
+        ] as const) {
+          if (a < 0 || b > L) continue;
+          walls.push({ ...proud(box(a, b, y0, y1, 0.03), out), color });
+          for (let y = y0 + 0.07; y < y1 - 0.06; y += 0.065)
+            walls.push({
+              ...proud(
+                box(a + 0.045, b - 0.045, y, y + 0.022, 0.012),
+                out + 0.018,
+              ),
+              color: slat,
+            });
+        }
+      };
       let cursor = -ext0;
       for (const hole of holes) {
         const { opening } = hole;
@@ -1775,7 +2182,11 @@ function buildFloor(
         // An outside door: a patio door (wide) glazed like a window, any
         // other shut with a door leaf; doors between rooms stand open.
         const outdoorDoor = isDoor && !!outside;
-        const patio = outdoorDoor && !opening.garage && hole.s1 - hole.s0 > 1.2;
+        const doorStyle = opening.door_style;
+        const patio =
+          outdoorDoor &&
+          !opening.garage &&
+          (doorStyle ? doorStyle === "sliding" : hole.s1 - hole.s0 > 1.2);
         if (!isDoor || patio) {
           panes.push({
             box: box(
@@ -1790,10 +2201,76 @@ function buildFloor(
             opacity: 0.38,
           });
         } else if (outdoorDoor && !opening.garage) {
-          walls.push({
-            ...box(hole.s0, hole.s1, sill, head, 0.05),
-            color: dark ? DOOR_DARK : DOOR,
-          });
+          doorLeaf(
+            hole.s0,
+            hole.s1,
+            sill,
+            head,
+            doorStyle ?? "slab",
+            opening.paint_color ?? (dark ? DOOR_DARK : DOOR),
+          );
+        }
+        // A window's rails (how it opens) and grid, in the trim's white.
+        if (!isDoor) {
+          const trimC = dark ? TRIM_WHITE_DARK : TRIM_WHITE;
+          const a = hole.s0 + JOINT_INSET_M;
+          const b = hole.s1 - JOINT_INSET_M;
+          const y0 = sill + JOINT_INSET_M;
+          const y1 = head - JOINT_INSET_M;
+          const type = opening.window_type ?? "picture";
+          const grid = opening.window_grid ?? "none";
+          const rail = 0.05;
+          let sashes: [number, number, number, number][] = [[a, b, y0, y1]];
+          if (type === "single_hung") {
+            const mid = (y0 + y1) / 2;
+            walls.push({
+              ...box(a, b, mid - rail / 2, mid + rail / 2, 0.06),
+              color: trimC,
+            });
+            sashes = [
+              [a, b, mid + rail / 2, y1],
+              [a, b, y0, mid - rail / 2],
+            ];
+          } else if (
+            (type === "casement" && b - a > 0.8) ||
+            type === "slider"
+          ) {
+            const mid = (a + b) / 2;
+            walls.push({
+              ...box(mid - rail / 2, mid + rail / 2, y0, y1, 0.06),
+              color: trimC,
+            });
+            sashes = [
+              [a, mid - rail / 2, y0, y1],
+              [mid + rail / 2, b, y0, y1],
+            ];
+          }
+          if (grid !== "none")
+            for (const [k, sh] of sashes.entries()) {
+              // A craftsman grid divides only the top sash (or the top
+              // third of a single pane).
+              if (grid === "craftsman" && k > 0 && type === "single_hung")
+                continue;
+              const [p0, p1, q0, q1] = sh;
+              const q =
+                grid === "craftsman" && type !== "single_hung"
+                  ? q1 - (q1 - q0) / 3
+                  : q0;
+              if (grid === "craftsman" && type !== "single_hung")
+                walls.push({
+                  ...box(p0, p1, q - 0.011, q + 0.011, 0.03),
+                  color: trimC,
+                });
+              muntins(p0, p1, q, q1, grid, trimC);
+            }
+          if (opening.shutters && outside)
+            shutterPair(
+              hole.s0,
+              hole.s1,
+              sill,
+              head,
+              opening.paint_color ?? SHUTTER,
+            );
         }
         // White casing round a window or door in an outside wall, standing
         // a little proud of the siding so it reads from the street; a
@@ -1861,24 +2338,37 @@ function buildFloor(
           // A garage door without a cover shows closed.
           const covered = entityId ? coveredFraction(covers.get(key)) : 1;
           if (covered <= 0.01) continue;
+          const gStyle = opening.garage_style ?? "flush";
+          const gColor =
+            garage && gStyle === "modern"
+              ? (opening.paint_color ?? GARAGE_FRAME)
+              : garage && opening.paint_color
+                ? opening.paint_color
+                : garage
+                  ? dark
+                    ? "#90a4ae"
+                    : "#cfd8dc"
+                  : dark
+                    ? "#8d8574"
+                    : "#efe6d2";
+          const gD = garage ? Math.min(0.06, t) : 0.03;
           panes.push({
-            box: box(
+            box: box(s0, s1, head - covered * span, head, gD),
+            kind: garage ? "door" : "cover",
+            color: gColor,
+            opacity: garage ? 1 : 0.92,
+          });
+          if (garage && outside && gStyle !== "flush")
+            garageDetail(
               s0,
               s1,
               head - covered * span,
               head,
-              garage ? Math.min(0.06, t) : 0.03,
-            ),
-            kind: garage ? "door" : "cover",
-            color: garage
-              ? dark
-                ? "#90a4ae"
-                : "#cfd8dc"
-              : dark
-                ? "#8d8574"
-                : "#efe6d2",
-            opacity: garage ? 1 : 0.92,
-          });
+              span,
+              gD,
+              gStyle,
+              gColor,
+            );
         }
         const openingRef: EditRef = { kind: "opening", id: opening.id };
         for (let k = wallsBefore; k < walls.length; k++)

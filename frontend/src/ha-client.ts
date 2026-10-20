@@ -84,8 +84,8 @@ export class HaClient {
       const message = (err as { message?: string })?.message ?? "";
       const aboutFinishes =
         /extra keys not allowed/i.test(message) ||
-        [...ROOM_FINISH_KEYS, ...ITEM_FINISH_KEYS].some((k) =>
-          message.includes(k),
+        [...ROOM_FINISH_KEYS, ...ITEM_FINISH_KEYS, ...OPENING_STYLE_KEYS].some(
+          (k) => message.includes(k),
         );
       if (!aboutFinishes || !hasFinishes(layout)) throw err;
       const result = await send(withoutFinishes(layout));
@@ -429,6 +429,14 @@ const ITEM_FINISH_KEYS = [
   "beam_deg",
   "aim_m",
 ] as const;
+const OPENING_STYLE_KEYS = [
+  "door_style",
+  "window_type",
+  "window_grid",
+  "shutters",
+  "garage_style",
+  "paint_color",
+] as const;
 
 /** The last roof save had to leave the light strips out (restart needed). */
 export let roofLightsUnsaved = false;
@@ -442,7 +450,8 @@ export let layoutFinishesUnsaved = false;
 function hasFinishes(layout: FloorLayout): boolean {
   return (
     layout.rooms.some((r) => ROOM_FINISH_KEYS.some((k) => k in r)) ||
-    layout.furniture.some((f) => ITEM_FINISH_KEYS.some((k) => k in f))
+    layout.furniture.some((f) => ITEM_FINISH_KEYS.some((k) => k in f)) ||
+    layout.openings.some((o) => OPENING_STYLE_KEYS.some((k) => k in o))
   );
 }
 
@@ -458,6 +467,11 @@ function withoutFinishes(layout: FloorLayout): FloorLayout {
       const copy = { ...f } as Record<string, unknown>;
       for (const k of ITEM_FINISH_KEYS) delete copy[k];
       return copy as unknown as typeof f;
+    }),
+    openings: layout.openings.map((o) => {
+      const copy = { ...o } as Record<string, unknown>;
+      for (const k of OPENING_STYLE_KEYS) delete copy[k];
+      return copy as unknown as typeof o;
     }),
   };
 }

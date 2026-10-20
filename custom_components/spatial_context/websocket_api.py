@@ -157,6 +157,30 @@ _OPENING_SCHEMA = {
     vol.Optional("garage"): bool,
     # A window's kind: standard, transom (high strip) or full height.
     vol.Optional("window_style"): vol.In(["standard", "transom", "full"]),
+    # Its look in 3D: an outside door's style, a window's type, grid and
+    # shutters, a garage door's style, and the paint on them.
+    vol.Optional("door_style"): vol.In(
+        [
+            "slab",
+            "six_panel",
+            "craftsman",
+            "half_lite",
+            "full_lite",
+            "french",
+            "sliding",
+        ]
+    ),
+    vol.Optional("window_type"): vol.In(
+        ["picture", "single_hung", "casement", "slider"]
+    ),
+    vol.Optional("window_grid"): vol.In(["none", "colonial", "prairie", "craftsman"]),
+    vol.Optional("shutters"): bool,
+    vol.Optional("garage_style"): vol.In(
+        ["flush", "raised_short", "raised_long", "carriage", "windows", "modern"]
+    ),
+    vol.Optional("paint_color"): vol.Any(
+        None, vol.All(str, vol.Match(r"^#[0-9a-fA-F]{6}$"))
+    ),
     # Per-opening daylight fine-tuning (see types.ts's OpeningDaylight).
     vol.Optional("daylight"): {
         vol.Optional("enabled"): bool,

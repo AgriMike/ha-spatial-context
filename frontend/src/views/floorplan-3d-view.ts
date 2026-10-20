@@ -20,6 +20,10 @@ import type {
   HomeAssistant,
   Opening,
   OpeningType,
+  DoorStyle,
+  GarageStyle,
+  WindowGrid,
+  WindowType,
   CompassSide,
   RoofLightStrip,
   RoofPart,
@@ -3468,6 +3472,83 @@ export class Floorplan3dView extends LitElement {
     </div>`;
   }
 
+  /** An opening's look in 3D: a door's style, a window's type, grid and
+   * shutters, a garage door's style, and the paint on them. */
+  private _renderOpeningLook(
+    o: Opening,
+    set: (patch: Partial<Opening>) => void,
+  ) {
+    const L = (k: string) => localize(`edit3d.${k}`);
+    if (o.type === "door" && o.garage)
+      return html`${this._select<GarageStyle>(
+        L("garageStyle"),
+        o.garage_style ?? "flush",
+        [
+          ["flush", L("garageFlush")],
+          ["raised_short", L("garageRaisedShort")],
+          ["raised_long", L("garageRaisedLong")],
+          ["carriage", L("garageCarriage")],
+          ["windows", L("garageWindows")],
+          ["modern", L("garageModern")],
+        ],
+        (v) => v && set({ garage_style: v }),
+      )}
+      ${this._color(L("paint"), o.paint_color, (v) => set({ paint_color: v }))}`;
+    if (o.type === "door")
+      return html`${this._select<DoorStyle>(
+        L("doorStyle"),
+        o.door_style ?? "slab",
+        [
+          ["slab", L("doorSlab")],
+          ["six_panel", L("doorSixPanel")],
+          ["craftsman", L("doorCraftsman")],
+          ["half_lite", L("doorHalfLite")],
+          ["full_lite", L("doorFullLite")],
+          ["french", L("doorFrench")],
+          ["sliding", L("doorSliding")],
+        ],
+        (v) => v && set({ door_style: v }),
+      )}
+      ${this._color(L("paint"), o.paint_color, (v) => set({ paint_color: v }))}`;
+    return html`${this._select<WindowType>(
+        L("windowType"),
+        o.window_type ?? "picture",
+        [
+          ["picture", L("windowPicture")],
+          ["single_hung", L("windowSingleHung")],
+          ["casement", L("windowCasement")],
+          ["slider", L("windowSlider")],
+        ],
+        (v) => v && set({ window_type: v }),
+      )}
+      ${this._select<WindowGrid>(
+        L("windowGrid"),
+        o.window_grid ?? "none",
+        [
+          ["none", L("gridNone")],
+          ["colonial", L("gridColonial")],
+          ["prairie", L("gridPrairie")],
+          ["craftsman", L("gridCraftsman")],
+        ],
+        (v) => v && set({ window_grid: v }),
+      )}
+      <label class="row">
+        <span>${L("shutters")}</span>
+        <input
+          type="checkbox"
+          .checked=${!!o.shutters}
+          @change=${(e: Event) => set({ shutters: (e.target as HTMLInputElement).checked })}
+        />
+      </label>
+      ${
+        o.shutters
+          ? this._color(L("shutterPaint"), o.paint_color, (v) =>
+              set({ paint_color: v }),
+            )
+          : nothing
+      }`;
+  }
+
   private _select<T extends string>(
     label: string,
     value: T | null | undefined,
@@ -4116,6 +4197,7 @@ export class Floorplan3dView extends LitElement {
                 />
               </label>`
         }
+        ${this._renderOpeningLook(o, set)}
         <span class="hint">${localize("edit3d.openingDragHint")}</span>
         <div class="buttons">
           <button class="danger" @click=${() => this._deleteSelection()}>

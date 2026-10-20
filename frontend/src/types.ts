@@ -174,6 +174,19 @@ export type FloorOrder = "top_down" | "ground_up";
 
 export type OpeningType = "door" | "window";
 
+export type DoorStyle =
+  | "slab"
+  | "six_panel"
+  | "craftsman"
+  | "half_lite"
+  | "full_lite"
+  | "french"
+  | "sliding";
+export type WindowType = "picture" | "single_hung" | "casement" | "slider";
+export type WindowGrid = "none" | "colonial" | "prairie" | "craftsman";
+export type GarageStyle =
+  "flush" | "raised_short" | "raised_long" | "carriage" | "windows" | "modern";
+
 /** A door or window along a wall. `x`/`y` is the opening's centre point;
  * `width` is measured along the wall's own local direction there. */
 export interface Opening {
@@ -196,6 +209,20 @@ export interface Opening {
    * on the wall, drawn as a thin line inside the wall and letting in less
    * light — or "full", floor to ceiling, letting in more. */
   window_style?: "standard" | "transom" | "full";
+  /** An outside door's look (absent: a plain slab, or a sliding patio
+   * door when it's wider than 1.2 m). */
+  door_style?: DoorStyle;
+  /** How a window opens, which sets its dividing rails (absent: one
+   * fixed pane). */
+  window_type?: WindowType;
+  /** A window's muntin grid (absent: none). */
+  window_grid?: WindowGrid;
+  /** A window flanked by a pair of louvered shutters. */
+  shutters?: boolean;
+  /** A garage door's look (absent: flush). */
+  garage_style?: GarageStyle;
+  /** Paint for the door, garage door or shutters (#rrggbb). */
+  paint_color?: string | null;
   /** Fine-tuning for the daylight drawn through this opening (see
    * floorplan-canvas.ts's _renderDaylight). Every field is optional. */
   daylight?: OpeningDaylight;
