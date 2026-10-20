@@ -3184,6 +3184,22 @@ export function stripLights(strip: RoofLightStrip, e: RoofEdge3d): boolean {
   return !!e.facing && strip.sides.includes(e.facing);
 }
 
+/** The colours a strip shows: the pattern of the scene among its own
+ * that was activated last (a scene's state is when it last was), else
+ * its default pattern (none: its light's colour). */
+export function stripPattern(
+  strip: RoofLightStrip,
+  hass: HomeAssistant | undefined,
+): string[] | undefined {
+  let best: { at: number; pattern: string[] } | null = null;
+  for (const entry of strip.scenes ?? []) {
+    const at = Date.parse(hass?.states[entry.scene]?.state ?? "");
+    if (!Number.isFinite(at) || !entry.pattern.length) continue;
+    if (!best || at > best.at) best = { at, pattern: entry.pattern };
+  }
+  return best?.pattern ?? strip.pattern;
+}
+
 /** The compass side an edge faces (n, e, s, w). */
 export function edgeFacing(e: RoofEdge3d, northDeg: number): CompassSide {
   let best: CompassSide = "s";
@@ -3240,7 +3256,10 @@ function roofLights(input: SceneInput, roof: Roof3d | null): RoofLights3d[] {
       points,
       color,
       level: typeof brightness === "number" ? brightness / 255 : 1,
-      ...(strip.pattern?.length ? { pattern: strip.pattern } : {}),
+      ...(() => {
+        const pattern = stripPattern(strip, input.hass);
+        return pattern?.length ? { pattern } : {};
+      })(),
     };
   });
 }

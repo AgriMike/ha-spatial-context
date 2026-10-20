@@ -705,6 +705,29 @@ _ROOF_PART_SCHEMA = vol.Schema(
                                     [vol.Match(r"^#[0-9a-fA-F]{6}$")],
                                     vol.Length(max=64),
                                 ),
+                                # Patterns by scene (the last activated
+                                # one's shows).
+                                vol.Optional("scenes"): vol.All(
+                                    [
+                                        vol.Schema(
+                                            {
+                                                vol.Required("scene"): vol.All(
+                                                    str, vol.Length(max=255)
+                                                ),
+                                                vol.Required("pattern"): vol.All(
+                                                    [
+                                                        vol.Match(
+                                                            r"^#[0-9a-fA-F]{6}$"
+                                                        )
+                                                    ],
+                                                    vol.Length(max=64),
+                                                ),
+                                            },
+                                            extra=vol.REMOVE_EXTRA,
+                                        )
+                                    ],
+                                    vol.Length(max=100),
+                                ),
                             },
                             extra=vol.REMOVE_EXTRA,
                         )

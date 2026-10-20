@@ -91,6 +91,7 @@ import {
   DEFAULT_WALL_HEIGHT_M,
   buildScene,
   stripLights,
+  stripPattern,
   metersPerUnit,
   stackFloors,
   type FloorInput,
@@ -644,6 +645,8 @@ export class Floorplan3dView extends LitElement {
   /** Hour of today the sun is shown at; null follows the clock. */
   @state() private _hour: number | null = null;
   @state() private _sheetOpen = false;
+  /** The roof lights panel. */
+  @state() private _lightsOpen = false;
   @state() private _selectedScanId: string | null = null;
   @state() private _moveMode = false;
   @state() private _snap = true;
@@ -1050,9 +1053,12 @@ export class Floorplan3dView extends LitElement {
       (this._roofPlan?.lights ?? [])
         .map((l) => {
           const st = l.entity_id ? this.hass?.states[l.entity_id] : undefined;
+          const scenes = (l.scenes ?? [])
+            .map((x) => this.hass?.states[x.scene]?.state ?? "")
+            .join("/");
           return st
-            ? `${st.state}:${JSON.stringify(st.attributes["rgb_color"] ?? "")}:${st.attributes["brightness"] ?? ""}`
-            : "";
+            ? `${st.state}:${JSON.stringify(st.attributes["rgb_color"] ?? "")}:${st.attributes["brightness"] ?? ""}:${scenes}`
+            : scenes;
         })
         .join(","),
     ].join("|");
@@ -1334,7 +1340,10 @@ export class Floorplan3dView extends LitElement {
     this._ghost = [];
     this._lines = [];
     this._drag = null;
-    if (this._editing) this._sheetOpen = false;
+    if (this._editing) {
+      this._sheetOpen = false;
+      this._lightsOpen = false;
+    }
     this._sceneSig = "";
   }
 
@@ -3499,6 +3508,7 @@ export class Floorplan3dView extends LitElement {
                   title=${localize("view3d.scansHint")}
                   @click=${() => {
                     if (this._editing) this._toggleEditing();
+                    this._lightsOpen = false;
                     this._sheetOpen = !this._sheetOpen;
                   }}
                 >
@@ -3507,9 +3517,39 @@ export class Floorplan3dView extends LitElement {
                 </button>`
               : nothing
           }
+          ${
+            this.editable
+              ? html`<button
+                  class=${this._lightsOpen ? "active" : ""}
+                  title=${localize("view3d.roofLightsHint")}
+                  @click=${() => {
+                    if (this._editing) this._toggleEditing();
+                    this._sheetOpen = false;
+                    this._lightsOpen = !this._lightsOpen;
+                  }}
+                >
+                  <ha-icon icon="mdi:string-lights"></ha-icon>
+                  ${localize("view3d.roofLights")}
+                </button>`
+              : nothing
+          }
         </div>
       </div>
       ${this.editable && this._sheetOpen && !this._editing ? this._renderSheet() : nothing}
+      ${
+        this.editable && this._lightsOpen && !this._editing
+          ? html`<div class="sheet floating-panel">
+              <h3>${localize("view3d.roofLights")}</h3>
+              ${
+                this._roofPlan
+                  ? this._renderRoofLights(this._roofPlan)
+                  : html`<span class="hint"
+                      >${localize("view3d.roofLightsNeedParts")}</span
+                    >`
+              }
+            </div>`
+          : nothing
+      }
       ${this.editable && this._editing ? this._renderEditor() : nothing}
       <input
         type="file"
@@ -3745,7 +3785,7 @@ export class Floorplan3dView extends LitElement {
           : nothing
       }
       <span class="hint">${localize("view3d.roofPartsHint")}</span>
-      ${plan ? this._renderRoofLights(plan) : nothing}
+
     `;
   }
 
@@ -3756,15 +3796,133 @@ export class Floorplan3dView extends LitElement {
     patch: (p: Partial<RoofLightStrip>) => void,
   ) {
     const pattern = strip.pattern ?? [];
-    const set = (next: string[]) => patch({ pattern: next });
-    return html`<details class="edges">
-      <summary>
-        ${
-          pattern.length
-            ? localize("view3d.roofLightsPattern", { n: String(pattern.length) })
-            : localize("view3d.roofLightsPatternNone")
-        }
-      </summary>
+    const scenes = strip.scenes ?? [];
+    const setScenes = (next: { scene: string; pattern: string[] }[]) =>
+      patch({ scenes: next });
+    const states = this.hass?.states ?? {};
+    // Scenes, the ones likely to drive this light first: a Hue scene of
+    // the room it's in, or a scene that sets it.
+    const reg = this.hass as
+      | (HomeAssistant & { areas?: Record<string, { name?: string }> })
+      | undefined;
+    const areaId = strip.entity_id
+      ? reg?.entities?.[strip.entity_id]?.area_id
+      : undefined;
+    const areaName = (areaId && reg?.areas?.[areaId]?.name) || "";
+    const likely = (id: string) => {
+      const attrs = states[id]?.attributes ?? {};
+      const members = attrs["entity_id"];
+      return (
+        (Array.isArray(members) && members.includes(strip.entity_id)) ||
+        (!!areaName &&
+          String(attrs["group_name"] ?? "").toLowerCase() ===
+            areaName.toLowerCase())
+      );
+    };
+    const all = Object.keys(states)
+      .filter((id) => id.startsWith("scene."))
+      .map((id): [string, string, boolean] => [
+        id,
+        String(states[id]?.attributes["friendly_name"] ?? id),
+        likely(id),
+      ])
+      .sort(
+        (a, b) => Number(b[2]) - Number(a[2]) || a[1].localeCompare(b[1]),
+      );
+    const active = stripPattern(strip, this.hass);
+    const activeScene = scenes.find((x) => x.pattern === active)?.scene;
+    return html`${this._patternEditor(
+        pattern,
+        (next) => patch({ pattern: next }),
+        pattern.length
+          ? localize("view3d.roofLightsPattern", { n: String(pattern.length) })
+          : localize("view3d.roofLightsPatternNone"),
+      )}
+      <details class="edges">
+        <summary>
+          ${localize("view3d.roofLightsScenes", { n: String(scenes.length) })}
+        </summary>
+        ${scenes.map(
+          (entry, i) => html`
+            <label class="row">
+              <span
+                >${localize("view3d.roofLightsScene")}${
+                  entry.scene === activeScene
+                    ? html` <b>(${localize("view3d.roofLightsSceneActive")})</b>`
+                    : nothing
+                }</span
+              >
+              <select
+                ?disabled=${!this.editable}
+                @change=${(e: Event) =>
+                  setScenes(
+                    scenes.map((x, k) =>
+                      k === i
+                        ? { ...x, scene: (e.target as HTMLSelectElement).value }
+                        : x,
+                    ),
+                  )}
+              >
+                ${all.map(
+                  ([id, name, near]) =>
+                    html`<option value=${id} ?selected=${entry.scene === id}>
+                      ${near ? "★ " : ""}${name}
+                    </option>`,
+                )}
+              </select>
+            </label>
+            ${this._patternEditor(
+              entry.pattern,
+              (next) =>
+                setScenes(
+                  scenes.map((x, k) => (k === i ? { ...x, pattern: next } : x)),
+                ),
+              localize("view3d.roofLightsPattern", {
+                n: String(entry.pattern.length),
+              }),
+              true,
+            )}
+            <div class="buttons">
+              <button
+                class="danger"
+                ?disabled=${!this.editable}
+                @click=${() => setScenes(scenes.filter((_, k) => k !== i))}
+              >
+                ${localize("view3d.roofLightsSceneRemove")}
+              </button>
+            </div>
+          `,
+        )}
+        <div class="buttons">
+          <button
+            ?disabled=${!this.editable || !all.length}
+            @click=${() =>
+              setScenes([
+                ...scenes,
+                {
+                  scene:
+                    all.find(([id]) => !scenes.some((x) => x.scene === id))?.[0] ??
+                    all[0]![0],
+                  pattern: [...(pattern.length ? pattern : ["#ff9321"])],
+                },
+              ])}
+          >
+            ${localize("view3d.roofLightsSceneAdd")}
+          </button>
+        </div>
+        <span class="hint">${localize("view3d.roofLightsScenesHint")}</span>
+      </details>`;
+  }
+
+  /** LED colours in turn: a swatch each, more or fewer. */
+  private _patternEditor(
+    pattern: string[],
+    set: (next: string[]) => void,
+    summary: string,
+    open = false,
+  ) {
+    return html`<details class="edges" ?open=${open}>
+      <summary>${summary}</summary>
       <div class="pattern">
         ${pattern.map(
           (c, k) => html`<input

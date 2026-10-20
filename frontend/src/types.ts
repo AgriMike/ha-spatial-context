@@ -370,6 +370,9 @@ export interface RoofLightStrip {
    * which HA doesn't report), shown while the light is on at its
    * brightness; absent or empty = the light's own colour. */
   pattern?: string[];
+  /** Patterns by scene: while one of these scenes is the one last
+   * activated, its pattern shows instead of `pattern`. */
+  scenes?: { scene: string; pattern: string[] }[];
 }
 
 /** Ground that slopes across a building's site (a walk-out on a hill):

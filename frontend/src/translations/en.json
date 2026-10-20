@@ -631,11 +631,18 @@
     "facingW": "west",
     "edgeRake": "rake",
     "edgeEave": "eave",
-    "roofLightsPattern": "Colour pattern: {n} LEDs, repeating",
-    "roofLightsPatternNone": "Colour pattern: the light's own colour",
+    "roofLightsPattern": "Pattern: {n} LEDs, repeating",
+    "roofLightsPatternNone": "Default pattern: the light's own colour",
     "roofLightsPatternAdd": "Add an LED",
     "roofLightsPatternRemove": "Remove the last",
-    "roofLightsPatternHint": "Home Assistant reports one colour per light, so a Hue scene's mix of colours can be set here: these colours run along the strip in turn, repeating, at the light's brightness while it's on."
+    "roofLightsPatternHint": "Home Assistant reports one colour per light, so a Hue scene's mix of colours can be set here: these colours run along the strip in turn, repeating, at the light's brightness while it's on.",
+    "roofLightsScenes": "Patterns by scene ({n})",
+    "roofLightsScene": "Scene",
+    "roofLightsSceneActive": "showing",
+    "roofLightsSceneAdd": "Add a scene's pattern",
+    "roofLightsSceneRemove": "Remove this scene",
+    "roofLightsScenesHint": "While one of these scenes is the one last activated, its pattern shows; otherwise the default pattern. Starred scenes are the light's room's or set the light.",
+    "roofLightsNeedParts": "Roof lights run along a roof drawn from parts: set the roof's parts (Room scans → Roof parts) first."
   },
   "edit3d": {
     "edit": "Edit",
