@@ -1481,12 +1481,19 @@ function weeping(m: Model, rand: () => number, green: string): void {
 
 /** A spruce or fir: drooping tiers of boughs tapering to a point, their
  * edges feathered with needle sprays. */
-function conifer(m: Model, rand: () => number, green: string): void {
+function conifer(
+  m: Model,
+  rand: () => number,
+  green: string,
+  opts: { droop?: boolean; dense?: boolean } = {},
+): void {
   const { W, D, H } = m;
   const rx = W / 2;
   const rz = D / 2;
   m.cyl(0.05, 0.1, H * 0.2, 0, -0.03, 0, mat(BARK, 0.95), 8);
-  const tiers = 12;
+  // A dense dwarf has more, tighter tiers; a Norway spruce's branchlets
+  // hang from its tiers' edges.
+  const tiers = opts.dense ? 16 : 12;
   const y0 = H * 0.06;
   const base = new THREE.Color(green);
   for (let t = 0; t < tiers; t++) {
@@ -1508,11 +1515,12 @@ function conifer(m: Model, rand: () => number, green: string): void {
       const pz = pos.getZ(i);
       const rim = Math.max(0, -py * 2);
       const a = Math.atan2(pz, px);
-      const jag = 1 + 0.05 * Math.sin(a * 7 + s) * rim;
+      const jag = 1 + (opts.dense ? 0.02 : 0.05) * Math.sin(a * 7 + s) * rim;
+      const sag = opts.droop ? 0.3 : 0.1;
       pos.setXYZ(
         i,
         px * jag * rx * k * 0.92,
-        (py + 0.5) * th + y - rim * 0.1 * th * (1.2 + Math.sin(a * 3 + s)),
+        (py + 0.5) * th + y - rim * sag * th * (1.2 + Math.sin(a * 3 + s)),
         pz * jag * rz * k * 0.92,
       );
       c.copy(base).multiplyScalar(0.32 + 0.36 * (py + 0.5));
@@ -1536,19 +1544,28 @@ function conifer(m: Model, rand: () => number, green: string): void {
       n,
       Math.max(0.3, th * 1.05),
       "needle",
-      { up: -0.1 },
+      { up: opts.droop ? -0.45 : -0.1 },
     );
   }
 }
 
 /** A pine: a tall bare trunk and an open, irregular crown of needle tufts
- * on its upper half. */
-function pine(m: Model, rand: () => number, green: string): void {
+ * from `crown` of its height up (lower for a full, young-looking pine);
+ * `flat` spreads it into an umbrella on top (a stone pine); `soft` gives
+ * it bigger, looser tufts (a white pine's long needles); `bark` its
+ * trunk's colour. */
+function pine(
+  m: Model,
+  rand: () => number,
+  green: string,
+  opts: { crown?: number; flat?: boolean; soft?: boolean; bark?: string } = {},
+): void {
   const { W, D, H } = m;
   const rx = W / 2;
   const rz = D / 2;
   const R = Math.min(rx, rz);
-  const bark = mat("#6b4430", 0.95);
+  const bark = mat(opts.bark ?? "#6b4430", 0.95);
+  const crown = Math.max(0.1, Math.min(0.8, opts.crown ?? 0.42));
   limb(
     m,
     v3(0, -0.05, 0),
@@ -1558,29 +1575,38 @@ function pine(m: Model, rand: () => number, green: string): void {
     bark,
     9,
   );
-  const whorls = 8;
+  const whorls = crown < 0.3 ? 11 : 8;
   for (let w = 0; w < whorls; w++) {
     const f = w / (whorls - 1);
-    const y = H * (0.42 + 0.52 * f);
-    const reach = (1 - f * 0.75) * 0.85;
-    const n = 4 + (w % 2);
+    const y = H * (crown + (0.94 - crown) * f);
+    // An umbrella keeps its reach to the top and rounds over; a spire
+    // narrows up.
+    const reach = opts.flat
+      ? (0.55 + 0.45 * Math.sin(Math.PI * (0.25 + 0.6 * f))) * 0.95
+      : (1 - f * 0.75) * 0.85;
+    const n = 4 + (w % 2) + (opts.flat ? 1 : 0);
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2 + rand() + w * 0.7;
+      const rise = opts.flat ? H * (0.06 + 0.04 * (1 - f)) : H * 0.03;
       const end = v3(
         Math.cos(a) * rx * reach,
-        y + H * 0.03,
+        y + rise,
         Math.sin(a) * rz * reach,
       );
       const from = v3(0.05 * (y / H), y, -0.03 * (y / H));
       limb(m, from, end, R * 0.028, R * 0.01, bark, 5);
-      const s = R * (0.24 + 0.1 * rand()) * (1 - f * 0.35);
+      const s =
+        R *
+        (0.24 + 0.1 * rand()) *
+        (opts.flat ? 1.15 : 1 - f * 0.35) *
+        (opts.soft ? 1.25 : 1);
       foliage(
         m,
         end.x,
         end.y + s * 0.15,
         end.z,
         s * 1.2,
-        s * 0.6,
+        s * (opts.flat ? 0.45 : opts.soft ? 0.75 : 0.6),
         s * 1.2,
         shades(green, rand),
         rand,
@@ -1600,6 +1626,53 @@ function pine(m: Model, rand: () => number, green: string): void {
     green,
     rand,
     "needle",
+  );
+}
+
+/** A mugo pine: a low, many-stemmed mound of upturned needle tufts. */
+function mugo(m: Model, rand: () => number, green: string): void {
+  const { W, D, H } = m;
+  const rx = W / 2;
+  const rz = D / 2;
+  const R = Math.min(rx, rz);
+  const bark = mat("#5a4030", 0.95);
+  const n = 7;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + rand() * 0.6;
+    const d = 0.45 + 0.3 * rand();
+    const end = v3(
+      Math.cos(a) * rx * d,
+      H * (0.38 + 0.2 * rand()),
+      Math.sin(a) * rz * d,
+    );
+    limb(m, v3(0, -0.02, 0), end, R * 0.06, R * 0.03, bark, 4);
+    const s = R * (0.5 + 0.12 * rand());
+    foliage(
+      m,
+      end.x,
+      end.y,
+      end.z,
+      s,
+      s * 0.75,
+      s,
+      shades(green, rand),
+      rand,
+      "needle",
+      2,
+    );
+  }
+  foliage(
+    m,
+    0,
+    H * 0.55,
+    0,
+    R * 0.72,
+    H * 0.42,
+    R * 0.72,
+    green,
+    rand,
+    "needle",
+    2,
   );
 }
 
@@ -1860,11 +1933,25 @@ function grass(
   m: Model,
   rand: () => number,
   green: string,
-  opts: { plume?: string | null; reed?: boolean; tall?: boolean },
+  opts: {
+    plume?: string | null;
+    reed?: boolean;
+    tall?: boolean;
+    /** Hair-fine blades (a feather grass), more of them. */
+    fine?: boolean;
+    /** Plumes in a soft haze over the whole clump (a muhly). */
+    cloud?: boolean;
+    /** Blades banded with straw (a zebra grass). */
+    banded?: boolean;
+    /** Plumes held up in a fan over the clump (a miscanthus). */
+    fan?: boolean;
+  },
 ): void {
   const { W, D, H } = m;
   const R = Math.min(W, D) / 2;
-  const n = Math.round(Math.min(260, 70 + R * 280));
+  const n = Math.round(
+    Math.min(opts.fine ? 360 : 260, (70 + R * 280) * (opts.fine ? 1.5 : 1)),
+  );
   const bladeH = opts.plume || opts.reed ? H * 0.7 : H;
   const straw = tone(green, 1.35);
   for (let i = 0; i < n; i++) {
@@ -1880,14 +1967,36 @@ function grass(
       a + (rand() - 0.5) * 0.5,
       bladeH * (0.65 + 0.4 * rand()),
       lean,
-      Math.max(0.006, R * 0.035),
+      Math.max(0.004, R * (opts.fine ? 0.014 : 0.035)),
       shades(green, rand),
       4,
-      rand() < 0.2 ? straw : undefined,
+      rand() < (opts.banded ? 0.5 : 0.2) ? straw : undefined,
     );
   }
   if (!opts.plume) return;
-  const stalks = opts.tall ? 24 : opts.reed ? 34 : 28;
+  // A haze (a muhly) or a fine grass's heads: hair-thin strands, green at
+  // the base and taking the plume's colour out to their tips.
+  if (opts.cloud || opts.fine) {
+    const wisps = opts.cloud ? 240 : 110;
+    for (let i = 0; i < wisps; i++) {
+      const a = rand() * Math.PI * 2;
+      const d = Math.sqrt(rand()) * R * 0.25;
+      const base = v3(Math.cos(a) * d, 0, Math.sin(a) * d);
+      blade(
+        m,
+        base,
+        a + (rand() - 0.5) * 0.6,
+        H * (opts.cloud ? 0.75 + 0.3 * rand() : 0.85 + 0.2 * rand()),
+        (opts.cloud ? 0.5 : 0.7) + 0.7 * rand(),
+        opts.cloud ? 0.006 : 0.004,
+        tone(opts.plume, opts.cloud ? 0.8 : 0.9),
+        4,
+        shades(opts.plume, rand),
+      );
+    }
+    return;
+  }
+  const stalks = opts.fan ? 30 : opts.tall ? 24 : opts.reed ? 34 : 28;
   for (let i = 0; i < stalks; i++) {
     const a = rand() * Math.PI * 2;
     const base = v3(
@@ -1895,12 +2004,16 @@ function grass(
       0,
       Math.sin(a) * R * 0.1 * rand(),
     );
-    const lean = opts.reed ? 0.06 + 0.1 * rand() : 0.35 + 0.5 * rand();
+    const lean = opts.reed
+      ? 0.06 + 0.1 * rand()
+      : opts.fan
+        ? 0.12 + 0.3 * rand()
+        : 0.35 + 0.5 * rand();
     const len = H * (0.82 + 0.18 * rand());
     const tip = blade(m, base, a, len, lean, 0.006, straw, 3);
     const dir = tip.clone().sub(base).normalize();
-    const ph = opts.tall ? 0.5 : opts.reed ? 0.26 : 0.16;
-    const pr = opts.tall ? 0.05 : opts.reed ? 0.016 : 0.022;
+    const ph = opts.tall ? 0.5 : opts.fan ? 0.3 : opts.reed ? 0.26 : 0.16;
+    const pr = opts.tall ? 0.05 : opts.fan ? 0.018 : opts.reed ? 0.016 : 0.022;
     const c = tip.clone().addScaledVector(dir, -ph * 0.35);
     const g0 = new THREE.Group();
     const pm = new Model(1, 1, 1, false);
@@ -2361,10 +2474,18 @@ function plantModel(m: Model, item: Item3d, o: Opts): boolean {
       weeping(m, rand, green);
       return true;
     case "conifer":
-      conifer(m, rand, green);
+      conifer(m, rand, green, { droop: !!o["droop"], dense: !!o["dense"] });
       return true;
     case "pine":
-      pine(m, rand, green);
+      pine(m, rand, green, {
+        ...(typeof o["crown"] === "number" ? { crown: o["crown"] } : {}),
+        ...(typeof o["bark"] === "string" ? { bark: o["bark"] } : {}),
+        flat: !!o["flat"],
+        soft: !!o["soft"],
+      });
+      return true;
+    case "mugo":
+      mugo(m, rand, green);
       return true;
     case "column":
       column(m, rand, green);
@@ -2388,12 +2509,17 @@ function plantModel(m: Model, item: Item3d, o: Opts): boolean {
       grass(m, rand, tint ?? str(o, "leaf", "#728f45"), {
         plume: typeof o["plume"] === "string" ? o["plume"] : null,
         tall: !!o["tall"],
+        fine: !!o["fine"],
+        cloud: !!o["cloud"],
+        banded: !!o["banded"],
+        fan: !!o["fan"],
       });
       return true;
     case "reed":
       grass(m, rand, green, {
         plume: typeof o["plume"] === "string" ? o["plume"] : "#cdb98a",
         reed: true,
+        fine: !!o["fine"],
       });
       return true;
     case "yucca":

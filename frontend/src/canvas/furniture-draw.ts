@@ -651,6 +651,7 @@ function landscapeTop(w: number, d: number, form: string): Prim[] {
   switch (form) {
     case "conifer":
     case "pine":
+    case "mugo":
     case "column":
       return [
         star(form === "column" ? 10 : 14, r * 0.72, r),

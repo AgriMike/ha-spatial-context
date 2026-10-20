@@ -307,17 +307,32 @@ function surface(
       map: surfaceTexture(kind),
     });
     parts.add(g, m);
-    // The slab's edge, down into the ground.
+    // The slab's edge, down into the ground — in short steps, so it
+    // follows the ground between the corners as the top does.
     const edge: number[] = [];
     for (let i = 0; i < outline.length; i++) {
-      const a = outline[i]!;
-      const b = outline[(i + 1) % outline.length]!;
-      const ya = top(a[0], a[1]);
-      const yb = top(b[0], b[1]);
-      const ga = ground(a[0], a[1]) - 0.05;
-      const gb = ground(b[0], b[1]) - 0.05;
-      edge.push(a[0], ya, a[1], b[0], yb, b[1], b[0], gb, b[1]);
-      edge.push(a[0], ya, a[1], b[0], gb, b[1], a[0], ga, a[1]);
+      const p = outline[i]!;
+      const q = outline[(i + 1) % outline.length]!;
+      const n = Math.max(
+        1,
+        Math.min(400, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) / 0.3)),
+      );
+      for (let s = 0; s < n; s++) {
+        const a: Vec2 = [
+          p[0] + ((q[0] - p[0]) * s) / n,
+          p[1] + ((q[1] - p[1]) * s) / n,
+        ];
+        const b: Vec2 = [
+          p[0] + ((q[0] - p[0]) * (s + 1)) / n,
+          p[1] + ((q[1] - p[1]) * (s + 1)) / n,
+        ];
+        const ya = top(a[0], a[1]);
+        const yb = top(b[0], b[1]);
+        const ga = ground(a[0], a[1]) - 0.05;
+        const gb = ground(b[0], b[1]) - 0.05;
+        edge.push(a[0], ya, a[1], b[0], yb, b[1], b[0], gb, b[1]);
+        edge.push(a[0], ya, a[1], b[0], gb, b[1], a[0], ga, a[1]);
+      }
     }
     const eg = new THREE.BufferGeometry();
     eg.setAttribute("position", new THREE.Float32BufferAttribute(edge, 3));
