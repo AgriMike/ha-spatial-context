@@ -1545,7 +1545,7 @@ function createView3d(options: View3dOptions): View3dHandle {
         intensity,
         reach,
         Math.min(Math.PI / 2.2, (cone * Math.PI) / 360),
-        0.65,
+        lit.beam === "spot" ? 0.45 : 0.65,
         1.6,
       );
       light.position.copy(at);

@@ -186,7 +186,7 @@ function itemShape(
 /** How a ground spotlight at (x, z) facing `angle` (Item3d's) tilts from
  * straight up to aim at the first wall ahead of it `SPOT_RISE_M` up, so
  * its wash starts near the ground and climbs the wall: steeper the closer it stands; null with no wall within reach. */
-const SPOT_RISE_M = 1.5;
+const SPOT_RISE_M = 1.1;
 const SPOT_REACH_M = 8;
 function spotTilt(
   walls: Wall[],
