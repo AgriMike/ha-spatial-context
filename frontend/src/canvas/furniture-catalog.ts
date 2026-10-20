@@ -1688,7 +1688,7 @@ const OUTDOOR_LIGHTING: Row[] = [
     10,
     16,
     "spotlight",
-    { h3d: 0.3, beam: "spot", tilt: 30, spread: 30, lightY: 0.26, hue: "Lily" },
+    { h3d: 0.3, beam: "spot", tilt: 30, spread: 42, lightY: 0.26, hue: "Lily" },
   ],
   [
     "hue_lily_xl",
@@ -1700,7 +1700,7 @@ const OUTDOOR_LIGHTING: Row[] = [
       h3d: 0.36,
       beam: "spot",
       tilt: 30,
-      spread: 36,
+      spread: 48,
       lightY: 0.31,
       hue: "Lily",
     },

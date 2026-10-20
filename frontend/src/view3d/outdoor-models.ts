@@ -79,9 +79,37 @@ function lens(item: Item3d, off = "#e9e6df"): THREE.MeshStandardMaterial {
   });
 }
 
-const HALOS = new Map<string, THREE.MeshBasicMaterial>();
-/** A soft halo round a lit lens: nested shells added together, brightest
- * at the middle (they cast and take no shadows). */
+/** Glows waiting to be added to a model as it's grouped (see halo). */
+const GLOWS = new WeakMap<
+  Model,
+  { x: number; y: number; z: number; r: number }[]
+>();
+
+let glowTexture: THREE.Texture | null = null;
+const SPRITES = new Map<string, THREE.SpriteMaterial>();
+/** A soft round glow: white at the middle, fading to nothing at its rim. */
+function glowMap(): THREE.Texture {
+  if (glowTexture) return glowTexture;
+  const cv = document.createElement("canvas");
+  cv.width = 64;
+  cv.height = 64;
+  const ctx = cv.getContext("2d");
+  if (ctx) {
+    const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(0.25, "rgba(255,255,255,0.55)");
+    g.addColorStop(0.6, "rgba(255,255,255,0.14)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 64, 64);
+  }
+  glowTexture = new THREE.CanvasTexture(cv);
+  glowTexture.colorSpace = THREE.SRGBColorSpace;
+  return glowTexture;
+}
+
+/** A soft glow round a lit lens, `r` across from its middle: a sprite
+ * facing the camera, added to the model when it's grouped. */
 function halo(
   m: Model,
   item: Item3d,
@@ -90,29 +118,42 @@ function halo(
   z: number,
   r: number,
 ): void {
+  if (!item.light) return;
+  const list = GLOWS.get(m) ?? [];
+  list.push({ x, y, z, r });
+  GLOWS.set(m, list);
+}
+
+/** The model grouped, with its glows. */
+function finish(m: Model, item: Item3d): THREE.Group {
+  const g = m.group();
   const lit = item.light;
-  if (!lit) return;
-  for (const [k, a] of [
-    [1, 0.05],
-    [0.62, 0.07],
-    [0.36, 0.1],
-  ] as const) {
-    const key = `${lit.color}|${lit.level.toFixed(2)}|${a}`;
-    let hm = HALOS.get(key);
-    if (!hm) {
-      hm = new THREE.MeshBasicMaterial({
-        color: lit.color,
-        transparent: true,
-        opacity: a * (0.6 + 0.8 * lit.level),
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        toneMapped: false,
-      });
-      hm.userData["halo"] = true;
-      HALOS.set(key, hm);
-    }
-    m.sphere(r * k, x, y, z, hm);
+  const glows = GLOWS.get(m);
+  if (!lit || !glows) return g;
+  // Shared by colour and brightness (sprites' materials outlive their
+  // models: the scene's clean-up only frees meshes').
+  const key = `${lit.color}|${lit.level.toFixed(2)}`;
+  let material = SPRITES.get(key);
+  if (!material) {
+    material = new THREE.SpriteMaterial({
+      map: glowMap(),
+      color: lit.color,
+      transparent: true,
+      opacity: 0.35 + 0.5 * lit.level,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    SPRITES.set(key, material);
   }
+  for (const h of glows) {
+    const sprite = new THREE.Sprite(material);
+    sprite.position.set(m.flip ? -h.x : h.x, h.y, h.z);
+    sprite.scale.setScalar(h.r * 2.6);
+    sprite.renderOrder = 2;
+    g.add(sprite);
+  }
+  return g;
 }
 
 const METAL = {
@@ -2387,5 +2428,5 @@ export function outdoorModel(item: Item3d): THREE.Group | null {
     spec.flip,
   );
   const done = lightModel(m, item, spec.kind, o) || plantModel(m, item, o);
-  return done ? m.group() : null;
+  return done ? finish(m, item) : null;
 }
