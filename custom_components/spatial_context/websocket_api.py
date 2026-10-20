@@ -690,6 +690,16 @@ _ROOF_PART_SCHEMA = vol.Schema(
                                 vol.Optional("spacing_in"): vol.All(
                                     vol.Coerce(float), vol.Range(min=0.5, max=48)
                                 ),
+                                # Edges lit besides the sides' and ones
+                                # left dark (keys from the frontend).
+                                vol.Optional("edges"): vol.All(
+                                    [vol.All(str, vol.Length(max=200))],
+                                    vol.Length(max=200),
+                                ),
+                                vol.Optional("skip"): vol.All(
+                                    [vol.All(str, vol.Length(max=200))],
+                                    vol.Length(max=200),
+                                ),
                             },
                             extra=vol.REMOVE_EXTRA,
                         )

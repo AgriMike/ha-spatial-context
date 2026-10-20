@@ -90,12 +90,14 @@ import {
 import {
   DEFAULT_WALL_HEIGHT_M,
   buildScene,
+  stripLights,
   metersPerUnit,
   stackFloors,
   type FloorInput,
 } from "../view3d/scene3d";
 import type {
   Box3d,
+  RoofEdge3d,
   EditPointer,
   EditRef,
   ScanMode,
@@ -500,6 +502,14 @@ export class Floorplan3dView extends LitElement {
         display: flex;
         gap: 4px;
       }
+      details.edges summary {
+        cursor: pointer;
+        padding: 2px 0;
+      }
+      details.edges .row {
+        justify-content: flex-start;
+        gap: 6px;
+      }
       .sides button {
         min-width: 32px;
         border: 1px solid var(--sc-divider);
@@ -648,6 +658,8 @@ export class Floorplan3dView extends LitElement {
   /** The grading tool: how it shapes, its brush (metres across the
    * middle, metres a dab) and grid spacing, the picked point. */
   @state() private _gradeMode: GradeMode | "point" = "raise";
+  /** The roof's edges as last built (see RoofEdge3d). */
+  @state() private _roofEdges: RoofEdge3d[] = [];
   @state() private _gradeRadius = 2.5;
   @state() private _gradeStrength = 0.1;
   @state() private _gradeStep = 1;
@@ -1039,20 +1051,22 @@ export class Floorplan3dView extends LitElement {
     if (sig !== this._sceneSig || layoutsChanged) {
       this._sceneSig = sig;
       this._lastLayouts = context.map((f) => f.layout);
-      handle.setScene(
-        buildScene({
-          floors,
-          context,
-          hass: this.hass,
-          dark: this.dark,
-          date,
-          sky: this.sky,
-          showLights: true,
-          ground,
-          roof: this._roofShown,
-          roofPlan: this._roofPlan,
-        }),
-      );
+      const scene = buildScene({
+        floors,
+        context,
+        hass: this.hass,
+        dark: this.dark,
+        date,
+        sky: this.sky,
+        showLights: true,
+        ground,
+        roof: this._roofShown,
+        roofPlan: this._roofPlan,
+      });
+      handle.setScene(scene);
+      // The roof's edges, for picking which a light strip runs along.
+      const edges = scene.roof?.edges;
+      if (edges && edges !== this._roofEdges) this._roofEdges = edges;
       this._scanSig = "";
     }
     const placements: ScanPlacement3d[] = [];
@@ -3723,6 +3737,71 @@ export class Floorplan3dView extends LitElement {
     `;
   }
 
+  /** A strip's edges, each ticked where it runs: unticking one it runs
+   * along by its sides leaves it out; ticking another adds it. */
+  private _renderStripEdges(
+    strip: RoofLightStrip,
+    patch: (p: Partial<RoofLightStrip>) => void,
+  ) {
+    const byKey = new Map<string, RoofEdge3d & { length: number }>();
+    for (const e of this._roofEdges) {
+      const len = Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1], e.b[2] - e.a[2]);
+      const seen = byKey.get(e.key);
+      if (seen) seen.length += len;
+      else byKey.set(e.key, { ...e, length: len });
+    }
+    const edges = [...byKey.values()].filter((e) => e.length > 0.15);
+    if (!edges.length) return nothing;
+    const facing: Record<string, string> = {
+      n: localize("view3d.facingN"),
+      e: localize("view3d.facingE"),
+      s: localize("view3d.facingS"),
+      w: localize("view3d.facingW"),
+    };
+    const lit = edges.filter((e) => stripLights(strip, e)).length;
+    const toggle = (e: RoofEdge3d, on: boolean) => {
+      const bySide = !!e.facing && strip.sides.includes(e.facing);
+      const add = new Set(strip.edges ?? []);
+      const skip = new Set(strip.skip ?? []);
+      add.delete(e.key);
+      skip.delete(e.key);
+      if (on && !bySide) add.add(e.key);
+      if (!on && bySide) skip.add(e.key);
+      patch({ edges: [...add], skip: [...skip] });
+    };
+    return html`<details class="edges">
+      <summary>
+        ${localize("view3d.roofLightsEdges", {
+          lit: String(lit),
+          all: String(edges.length),
+        })}
+      </summary>
+      ${edges
+        .sort(
+          (a, b) =>
+            (a.facing ?? "").localeCompare(b.facing ?? "") ||
+            a.label.localeCompare(b.label),
+        )
+        .map(
+          (e) => html`<label class="row">
+            <input
+              type="checkbox"
+              ?disabled=${!this.editable}
+              .checked=${stripLights(strip, e)}
+              @change=${(ev: Event) =>
+                toggle(e, (ev.target as HTMLInputElement).checked)}
+            />
+            <span
+              >${e.label} ·
+              ${facing[e.facing ?? "s"]}
+              ${e.rake ? localize("view3d.edgeRake") : localize("view3d.edgeEave")}</span
+            >
+            <span class="unit">${Math.round(e.length / 0.3048)} ft</span>
+          </label>`,
+        )}
+    </details>`;
+  }
+
   /** Light strips along the roof's edges: each a light and the sides
    * whose edges it runs along, its LEDs so many inches apart. */
   private _renderRoofLights(plan: RoofPlan) {
@@ -3813,6 +3892,7 @@ export class Floorplan3dView extends LitElement {
             />
             <span class="unit">in</span>
           </label>
+          ${this._renderStripEdges(strip, (p) => patch(i, p))}
           <div class="buttons">
             <button
               class="danger"

@@ -233,17 +233,23 @@ export interface RoofEdge3d {
   a: [number, number, number];
   b: [number, number, number];
   out: Vec2;
+  /** Which edge it is, kept as the roof changes: its part ("name" or
+   * "#index", "porch:n") and side ("c0", "c1", "a0", "a1"). */
+  key: string;
+  /** The part's name, and whether it's a gable's rake (else an eave). */
+  label: string;
+  rake: boolean;
+  /** The compass side it faces ("n", "e", "s", "w"). */
+  facing?: "n" | "e" | "s" | "w";
 }
 
 /** A light strip's LEDs along the roof's edges: their centres (world,
- * x y z in turn), its colour while on (null: off) and brightness (0-1),
- * and spots along it to light the walls from. */
+ * x y z in turn), its colour while on (null: off) and brightness (0-1). */
 export interface RoofLights3d {
   name: string;
   points: number[];
   color: string | null;
   level: number;
-  glow: [number, number, number][];
 }
 
 /** One flat, convex piece of roof in world space, its corners in order. */

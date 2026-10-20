@@ -622,8 +622,15 @@
     "roofLightsSides": "Edges facing",
     "roofLightsSpacing": "LED spacing",
     "roofLightsRemove": "Remove strip",
-    "roofLightsHint": "A row of LEDs along the fascia of every roof edge (eaves and gable rakes) facing the picked sides, lit in its light's colour and brightness: permanent outdoor lights like Hue Festavia.",
-    "roofLightsRestart": "Restart Home Assistant to save the roof lights; until then they last only until the page reloads."
+    "roofLightsHint": "A row of LEDs along the fascia of the roof's edges (eaves and gable rakes) facing the picked sides, plus any edges ticked below: lit in its light's colour and brightness, like Hue Festavia permanent lights.",
+    "roofLightsRestart": "Restart Home Assistant to save the roof lights; until then they last only until the page reloads.",
+    "roofLightsEdges": "Edges: {lit} of {all} lit",
+    "facingN": "north",
+    "facingE": "east",
+    "facingS": "south",
+    "facingW": "west",
+    "edgeRake": "rake",
+    "edgeEave": "eave"
   },
   "edit3d": {
     "edit": "Edit",

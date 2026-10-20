@@ -842,13 +842,8 @@ function modelItem(item: Item3d): THREE.Group {
   return g;
 }
 
-/** Most lights a strip washes the walls with (each costs every material
- * a little). */
-const STRIP_LIGHTS = 10;
-
 /** The roof's light strips: a bead per LED, glowing in its light's colour
- * while on (with a soft halo, and a few lights washing the walls), else
- * dark. */
+ * while on (with a soft halo), else dark. */
 function buildRoofLights(strips: RoofLights3d[]): THREE.Group {
   const group = new THREE.Group();
   group.name = "Roof lights";
@@ -906,14 +901,6 @@ function buildRoofLights(strips: RoofLights3d[]): THREE.Group {
     );
     halo.name = `${strip.name} glow`;
     group.add(beads, halo);
-    const every = Math.max(1, Math.ceil(strip.glow.length / STRIP_LIGHTS));
-    strip.glow
-      .filter((_, k) => k % every === 0)
-      .forEach(([x, y, z]) => {
-        const light = new THREE.PointLight(lit, 0.4 + 1.0 * level, 6, 2);
-        light.position.set(x, y, z);
-        group.add(light);
-      });
   }
   return group;
 }

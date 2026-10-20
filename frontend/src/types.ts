@@ -362,6 +362,10 @@ export interface RoofLightStrip {
   sides: CompassSide[];
   /** Inches between LEDs; 2 when absent. */
   spacing_in?: number;
+  /** Edges (RoofEdge3d keys) lit besides those facing `sides`, and ones
+   * facing them left dark. */
+  edges?: string[];
+  skip?: string[];
 }
 
 /** Ground that slopes across a building's site (a walk-out on a hill):

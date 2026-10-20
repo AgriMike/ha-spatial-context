@@ -233,6 +233,7 @@ const STRIP_OUT_M = 0.012;
 export function sectionFaces(
   s: RoofSection,
   edges?: RoofEdge3d[],
+  name: { key: string; label: string } = { key: "?", label: "" },
 ): RoofFace3d[] {
   const ps = planes(s);
   const o = s.overhang;
@@ -257,16 +258,20 @@ export function sectionFaces(
   const eps = 1e-6;
   /** Which outer edge of the section a point pair lies along, if any:
    * the inward direction (a, c) and whether it's a gable's rake. */
-  const edgeOf = (p: Vec2, q: Vec2): { inward: Vec2; rake: boolean } | null => {
+  const edgeOf = (
+    p: Vec2,
+    q: Vec2,
+  ): { inward: Vec2; rake: boolean; side: string } | null => {
     const on = (i: 0 | 1, v: number) =>
       Math.abs(p[i] - v) < eps && Math.abs(q[i] - v) < eps;
     const trimmed = (end: RoofEnd) => end !== "open";
-    if (on(1, C0)) return s.shed ? null : { inward: [0, 1], rake: false };
-    if (on(1, C1)) return { inward: [0, -1], rake: false };
+    if (on(1, C0))
+      return s.shed ? null : { inward: [0, 1], rake: false, side: "c0" };
+    if (on(1, C1)) return { inward: [0, -1], rake: false, side: "c1" };
     if (on(0, A0) && trimmed(s.ends[0]))
-      return { inward: [1, 0], rake: s.ends[0] === "gable" };
+      return { inward: [1, 0], rake: s.ends[0] === "gable", side: "a0" };
     if (on(0, A1) && trimmed(s.ends[1]))
-      return { inward: [-1, 0], rake: s.ends[1] === "gable" };
+      return { inward: [-1, 0], rake: s.ends[1] === "gable", side: "a1" };
     return null;
   };
   ps.forEach((plane, i) => {
@@ -310,7 +315,14 @@ export function sectionFaces(
           const w = world(v[0], v[1], h - STRIP_DOWN_M);
           return [w[0] + ox * STRIP_OUT_M, w[1], w[2] + oz * STRIP_OUT_M];
         };
-        edges.push({ a: at(p, hp), b: at(q, hq), out: [ox, oz] });
+        edges.push({
+          a: at(p, hp),
+          b: at(q, hq),
+          out: [ox, oz],
+          key: `${name.key}:${edge.side}`,
+          label: name.label,
+          rake: edge.rake,
+        });
       }
       const pi: Vec2 = [p[0] + ia * o, p[1] + ic * o];
       const qi: Vec2 = [q[0] + ia * o, q[1] + ic * o];
