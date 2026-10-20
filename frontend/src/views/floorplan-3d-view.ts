@@ -8,6 +8,7 @@ import {
   fetchScan,
   groundGridUnsaved,
   layoutFinishesUnsaved,
+  roofLightsUnsaved,
 } from "../ha-client";
 import type {
   FloorFinishKind,
@@ -19,6 +20,8 @@ import type {
   HomeAssistant,
   Opening,
   OpeningType,
+  CompassSide,
+  RoofLightStrip,
   RoofPart,
   RoofPlan,
   Room,
@@ -493,6 +496,18 @@ export class Floorplan3dView extends LitElement {
       .divider {
         border-top: 1px solid var(--sc-divider);
       }
+      .sides {
+        display: flex;
+        gap: 4px;
+      }
+      .sides button {
+        min-width: 32px;
+        border: 1px solid var(--sc-divider);
+      }
+      .sides button.active {
+        background: color-mix(in srgb, var(--sc-accent) 18%, transparent);
+        border-color: var(--sc-accent);
+      }
       .editor .tools {
         display: grid;
         grid-template-columns: repeat(5, 1fr);
@@ -879,7 +894,11 @@ export class Floorplan3dView extends LitElement {
     }
     this._view3d = map;
     if (!this.editable) return;
-    void this._client?.saveRoof(ids, plan).catch((err: unknown) => {
+    void this._client
+      ?.saveRoof(ids, plan)
+      // It may have had to leave the light strips out: say so.
+      .then(() => this.requestUpdate())
+      .catch((err: unknown) => {
       this._error = localize("view3d.saveFailed", {
         error: (err as { message?: string })?.message ?? String(err),
       });
@@ -1004,6 +1023,14 @@ export class Floorplan3dView extends LitElement {
       JSON.stringify(ground),
       this._roofShown,
       JSON.stringify(this._roofPlan),
+      (this._roofPlan?.lights ?? [])
+        .map((l) => {
+          const st = l.entity_id ? this.hass?.states[l.entity_id] : undefined;
+          return st
+            ? `${st.state}:${JSON.stringify(st.attributes["rgb_color"] ?? "")}:${st.attributes["brightness"] ?? ""}`
+            : "";
+        })
+        .join(","),
     ].join("|");
     // Layout objects are replaced on every edit, so identity is enough.
     const layoutsChanged =
@@ -3650,7 +3677,7 @@ export class Floorplan3dView extends LitElement {
         return;
       }
       this._roofDraft = null;
-      this._setRoof({ parts });
+      this._setRoof({ ...(plan ?? {}), parts });
     };
     return html`
       <div class="divider"></div>
@@ -3692,6 +3719,119 @@ export class Floorplan3dView extends LitElement {
           : nothing
       }
       <span class="hint">${localize("view3d.roofPartsHint")}</span>
+      ${plan ? this._renderRoofLights(plan) : nothing}
+    `;
+  }
+
+  /** Light strips along the roof's edges: each a light and the sides
+   * whose edges it runs along, its LEDs so many inches apart. */
+  private _renderRoofLights(plan: RoofPlan) {
+    const strips = plan.lights ?? [];
+    const set = (next: RoofLightStrip[]) =>
+      this._setRoof({ ...plan, lights: next });
+    const patch = (i: number, p: Partial<RoofLightStrip>) =>
+      set(strips.map((s, k) => (k === i ? { ...s, ...p } : s)));
+    const states = this.hass?.states ?? {};
+    const lights = Object.keys(states)
+      .filter((id) => id.startsWith("light."))
+      .map((id): [string, string] => [
+        id,
+        String(states[id]?.attributes["friendly_name"] ?? id),
+      ])
+      .sort((a, b) => a[1].localeCompare(b[1]));
+    const sides: [CompassSide, string][] = [
+      ["n", "N"],
+      ["e", "E"],
+      ["s", "S"],
+      ["w", "W"],
+    ];
+    return html`
+      <div class="divider"></div>
+      <div class="row">
+        <span>${localize("view3d.roofLights")}</span>
+        <button
+          ?disabled=${!this.editable}
+          @click=${() =>
+            set([...strips, { entity_id: null, sides: ["s"], spacing_in: 2 }])}
+        >
+          ${localize("view3d.roofLightsAdd")}
+        </button>
+      </div>
+      ${strips.map(
+        (strip, i) => html`
+          <label class="row">
+            <span>${localize("view3d.roofLightsLight")}</span>
+            <select
+              ?disabled=${!this.editable}
+              @change=${(e: Event) =>
+                patch(i, {
+                  entity_id: (e.target as HTMLSelectElement).value || null,
+                })}
+            >
+              <option value="" ?selected=${!strip.entity_id}>—</option>
+              ${lights.map(
+                ([id, name]) =>
+                  html`<option value=${id} ?selected=${strip.entity_id === id}>
+                    ${name}
+                  </option>`,
+              )}
+            </select>
+          </label>
+          <div class="row">
+            <span>${localize("view3d.roofLightsSides")}</span>
+            <span class="sides">
+              ${sides.map(
+                ([side, label]) =>
+                  html`<button
+                    class=${strip.sides.includes(side) ? "active" : ""}
+                    ?disabled=${!this.editable}
+                    @click=${() =>
+                      patch(i, {
+                        sides: strip.sides.includes(side)
+                          ? strip.sides.filter((x) => x !== side)
+                          : [...strip.sides, side],
+                      })}
+                  >
+                    ${label}
+                  </button>`,
+              )}
+            </span>
+          </div>
+          <label class="row">
+            <span>${localize("view3d.roofLightsSpacing")}</span>
+            <input
+              type="number"
+              min="0.5"
+              max="48"
+              step="0.5"
+              ?disabled=${!this.editable}
+              .value=${String(strip.spacing_in ?? 2)}
+              @change=${(e: Event) => {
+                const v = Number((e.target as HTMLInputElement).value);
+                if (v >= 0.5 && v <= 48) patch(i, { spacing_in: v });
+              }}
+            />
+            <span class="unit">in</span>
+          </label>
+          <div class="buttons">
+            <button
+              class="danger"
+              ?disabled=${!this.editable}
+              @click=${() => set(strips.filter((_, k) => k !== i))}
+            >
+              ${localize("view3d.roofLightsRemove")}
+            </button>
+          </div>
+        `,
+      )}
+      ${
+        roofLightsUnsaved
+          ? html`<span class="hint error"
+              >${localize("view3d.roofLightsRestart")}</span
+            >`
+          : nothing
+      }
+      <span class="hint">${localize("view3d.roofLightsHint")}</span>
     `;
   }
 

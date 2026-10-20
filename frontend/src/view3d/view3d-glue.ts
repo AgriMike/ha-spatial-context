@@ -910,7 +910,7 @@ function buildRoofLights(strips: RoofLights3d[]): THREE.Group {
     strip.glow
       .filter((_, k) => k % every === 0)
       .forEach(([x, y, z]) => {
-        const light = new THREE.PointLight(lit, 0.6 + 1.6 * level, 6, 2);
+        const light = new THREE.PointLight(lit, 0.4 + 1.0 * level, 6, 2);
         light.position.set(x, y, z);
         group.add(light);
       });

@@ -319,11 +319,23 @@ export class HaClient {
   /** Sets a building's roof on each of its floors (see scans.py's
    * async_save_roof); null = worked out from the rooms. */
   async saveRoof(floorIds: string[], roof: RoofPlan | null): Promise<void> {
-    await this.hass.connection.sendMessagePromise({
-      type: "spatial_context/save_roof",
-      floor_ids: floorIds,
-      roof,
-    });
+    const send = (r: RoofPlan | null) =>
+      this.hass.connection.sendMessagePromise({
+        type: "spatial_context/save_roof",
+        floor_ids: floorIds,
+        roof: r,
+      });
+    try {
+      await send(roof);
+      roofLightsUnsaved = false;
+    } catch (err) {
+      // A backend from before roof lights (not restarted since updating)
+      // refuses them: save the parts, and say so.
+      const message = (err as { message?: string })?.message ?? "";
+      if (!roof?.lights || !/extra keys|lights/i.test(message)) throw err;
+      await send({ parts: roof.parts });
+      roofLightsUnsaved = roof.lights.length > 0;
+    }
   }
 
   /** Uploads a .glb/.gltf room scan to the integration's own storage
@@ -411,6 +423,9 @@ const ROOM_FINISH_KEYS = [
   "wall_color",
 ] as const;
 const ITEM_FINISH_KEYS = ["height_cm", "elevation_cm"] as const;
+
+/** The last roof save had to leave the light strips out (restart needed). */
+export let roofLightsUnsaved = false;
 
 /** The last ground save had to leave the grading out (restart needed). */
 export let groundGridUnsaved = false;

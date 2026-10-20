@@ -676,6 +676,26 @@ _ROOF_PART_SCHEMA = vol.Schema(
                 vol.Required("parts"): vol.All(
                     [_ROOF_PART_SCHEMA], vol.Length(max=100)
                 ),
+                # Light strips along the roof's edges facing some sides
+                # (permanent outdoor lights), each shown as its light.
+                vol.Optional("lights"): vol.All(
+                    [
+                        vol.Schema(
+                            {
+                                vol.Required("entity_id"): vol.Any(str, None),
+                                vol.Required("sides"): vol.All(
+                                    [vol.In(["n", "e", "s", "w"])],
+                                    vol.Length(max=4),
+                                ),
+                                vol.Optional("spacing_in"): vol.All(
+                                    vol.Coerce(float), vol.Range(min=0.5, max=48)
+                                ),
+                            },
+                            extra=vol.REMOVE_EXTRA,
+                        )
+                    ],
+                    vol.Length(max=20),
+                ),
             },
         ),
     }

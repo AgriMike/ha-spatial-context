@@ -3031,9 +3031,9 @@ function roofLights(
       for (let d = 1.5 - run; d < len; d += 3) {
         const t = Math.max(0, d) / len;
         glow.push([
-          e.a[0] + (e.b[0] - e.a[0]) * t + e.out[0] * 0.3,
-          e.a[1] + (e.b[1] - e.a[1]) * t - 0.1,
-          e.a[2] + (e.b[2] - e.a[2]) * t + e.out[1] * 0.3,
+          e.a[0] + (e.b[0] - e.a[0]) * t + e.out[0] * 0.7,
+          e.a[1] + (e.b[1] - e.a[1]) * t - 0.2,
+          e.a[2] + (e.b[2] - e.a[2]) * t + e.out[1] * 0.7,
         ]);
       }
       run = (run + len) % 3;

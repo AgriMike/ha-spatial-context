@@ -615,7 +615,15 @@
     "groundDownhill": "Low side",
     "groundToward": "Slopes down toward",
     "scanMode": "Scan",
-    "scanModeHint": "Show the room scans' walls and objects in place of the plan's walls and furniture (the scans' stairs always show)"
+    "scanModeHint": "Show the room scans' walls and objects in place of the plan's walls and furniture (the scans' stairs always show)",
+    "roofLights": "Roof lights",
+    "roofLightsAdd": "Add a light strip",
+    "roofLightsLight": "Light",
+    "roofLightsSides": "Edges facing",
+    "roofLightsSpacing": "LED spacing",
+    "roofLightsRemove": "Remove strip",
+    "roofLightsHint": "A row of LEDs along the fascia of every roof edge (eaves and gable rakes) facing the picked sides, lit in its light's colour and brightness: permanent outdoor lights like Hue Festavia.",
+    "roofLightsRestart": "Restart Home Assistant to save the roof lights; until then they last only until the page reloads."
   },
   "edit3d": {
     "edit": "Edit",
