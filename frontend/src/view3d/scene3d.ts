@@ -2930,7 +2930,32 @@ function plannedRoof(
         );
       porchIndex++;
     }
-  return { ...roofColors(input.dark), grid: null, faces, edges };
+  // No light strip inside the house: an eave running on through an upper
+  // storey (hidden in its walls) would show through its windows.
+  const indoor = floorsAll.flatMap((f) => {
+    const fm = metersPerUnit(f.layout.scale);
+    return f.layout.rooms
+      .filter((r) => !r.outdoor && r.points.length >= 3)
+      .map((r) => {
+        const y0 = f.baseY + (r.floor_offset_m ?? 0);
+        return {
+          y0,
+          y1: y0 + f.wallHeight + 0.6,
+          poly: r.points.map(([x, y]): Vec2 => [x * fm, y * fm]),
+        };
+      });
+  });
+  const outside = indoor.reduce<RoofEdge3d[]>(
+    (acc, room) =>
+      acc.flatMap((e) =>
+        Math.max(e.a[1], e.b[1]) < room.y0 ||
+        Math.min(e.a[1], e.b[1]) > room.y1
+          ? [e]
+          : cutEdge(e, room.poly, -Infinity),
+      ),
+    edges,
+  );
+  return { ...roofColors(input.dark), grid: null, faces, edges: outside };
 }
 
 /** A roof edge less its stretch inside a room's outline (x, z) standing
