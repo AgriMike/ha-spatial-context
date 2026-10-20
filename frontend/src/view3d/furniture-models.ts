@@ -17,7 +17,7 @@ import type { Item3d } from "./view3d-api";
 type Opts = Record<string, string | number | boolean | undefined>;
 
 const MATS = new Map<string, THREE.MeshStandardMaterial>();
-function mat(
+export function mat(
   color: string,
   rough = 0.85,
   metal = 0,
@@ -48,7 +48,7 @@ function mat(
 }
 
 /** The palette. */
-const C = {
+export const C = {
   fabric: "#8d9096",
   cushion: "#9da0a6",
   linen: "#efebe3",
@@ -70,7 +70,7 @@ const C = {
 };
 
 /** Collects parts, then merges them by material into one group. */
-class Model {
+export class Model {
   private parts = new Map<THREE.Material, THREE.BufferGeometry[]>();
   constructor(
     readonly W: number,
@@ -82,8 +82,15 @@ class Model {
   add(geom: THREE.BufferGeometry, m: THREE.Material): void {
     const g = geom.index ? geom.toNonIndexed() : geom;
     if (g !== geom) geom.dispose();
+    // Vertex colours stay for a material drawn with them (foliage).
+    const keepColor = !!(m as THREE.MeshStandardMaterial).vertexColors;
     for (const name of Object.keys(g.attributes))
-      if (name !== "position" && name !== "normal" && name !== "uv")
+      if (
+        name !== "position" &&
+        name !== "normal" &&
+        name !== "uv" &&
+        !(keepColor && name === "color")
+      )
         g.deleteAttribute(name);
     if (!g.getAttribute("uv")) {
       const n = g.getAttribute("position").count;
@@ -247,8 +254,10 @@ class Model {
       for (const p of list) p.dispose();
       if (!merged) continue;
       const mesh = new THREE.Mesh(merged, m);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      // A glow's halo neither casts nor takes shadows.
+      const halo = !!m.userData["halo"];
+      mesh.castShadow = !halo;
+      mesh.receiveShadow = !halo;
       g.add(mesh);
     }
     return g;

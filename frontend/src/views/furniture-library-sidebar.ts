@@ -221,6 +221,11 @@ export class FurnitureLibrarySidebar extends LitElement {
         border-color: var(--sc-accent);
         box-shadow: inset 0 0 0 1px var(--sc-accent);
       }
+      .item .pic {
+        width: 100%;
+        height: 64px;
+        object-fit: contain;
+      }
       .item svg {
         width: 100%;
         height: 64px;
@@ -251,6 +256,10 @@ export class FurnitureLibrarySidebar extends LitElement {
   ];
 
   @property({ attribute: false }) armedKind: string | null = null;
+  /** Only these categories (the 3D view's outdoor tool), else all. */
+  @property({ attribute: false }) categories: FurnitureCategory[] | null = null;
+  /** Rendered pictures to show in place of the drawings, by catalog id. */
+  @property({ attribute: false }) thumbs: Record<string, string> | null = null;
   @property({ attribute: false }) unitSystem: UnitSystem = "metric";
   /** Settings.custom_icons — the imported SVGs. */
   @property({ attribute: false }) customIcons: CustomIcon[] = [];
@@ -274,13 +283,17 @@ export class FurnitureLibrarySidebar extends LitElement {
 
   private get _items(): CatalogItem[] {
     const words = this._query.toLowerCase().split(/\s+/).filter(Boolean);
-    return [...customCatalog(), ...FURNITURE_CATALOG].filter((item) => {
-      if (this._category && item.category !== this._category) return false;
-      if (words.length === 0) return true;
-      const hay =
-        `${item.name} ${localize(`furniture.category.${item.category}`)} ${item.id}`.toLowerCase();
-      return words.every((w) => hay.includes(w));
-    });
+    const only = this.categories;
+    return [...(only ? [] : customCatalog()), ...FURNITURE_CATALOG].filter(
+      (item) => {
+        if (only && !only.includes(item.category)) return false;
+        if (this._category && item.category !== this._category) return false;
+        if (words.length === 0) return true;
+        const hay =
+          `${item.name} ${localize(`furniture.category.${item.category}`)} ${item.id}`.toLowerCase();
+        return words.every((w) => hay.includes(w));
+      },
+    );
   }
 
   override willUpdate(changed: Map<string, unknown>): void {
@@ -386,6 +399,8 @@ export class FurnitureLibrarySidebar extends LitElement {
   }
 
   private _thumb(item: CatalogItem) {
+    const pic = this.thumbs?.[item.id];
+    if (pic) return html`<img class="pic" src=${pic} alt="" />`;
     const m = Math.max(item.w, item.d) * 0.1;
     return svg`<svg viewBox="${-m} ${-m} ${item.w + 2 * m} ${item.d + 2 * m}" preserveAspectRatio="xMidYMid meet">
       <g transform=${item.flip ? `translate(${item.w} 0) scale(-1 1)` : ""}>
@@ -446,7 +461,9 @@ export class FurnitureLibrarySidebar extends LitElement {
         >
           ${localize("furniture.category.all")}
         </button>
-        ${FURNITURE_CATEGORIES.map(
+        ${FURNITURE_CATEGORIES.filter(
+          (c) => !this.categories || this.categories.includes(c.id),
+        ).map(
           (c) =>
             html`<button
               class="chip ${this._category === c.id ? "active" : ""}"

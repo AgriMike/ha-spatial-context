@@ -80,20 +80,9 @@ export interface Pin {
 }
 
 export type FloorFinishKind =
-  | "wood"
-  | "tile"
-  | "carpet"
-  | "concrete"
-  | "stone"
-  | "plain";
+  "wood" | "tile" | "carpet" | "concrete" | "stone" | "plain";
 export type WallFinishKind =
-  | "paint"
-  | "tile"
-  | "brick"
-  | "wood"
-  | "wallpaper"
-  | "stone"
-  | "shiplap";
+  "paint" | "tile" | "brick" | "wood" | "wallpaper" | "stone" | "shiplap";
 
 export interface Wall {
   id: string;
@@ -817,7 +806,10 @@ export interface HomeAssistant {
     string,
     { area_id?: string | null; device_id?: string | null } | undefined
   >;
-  devices?: Record<string, { area_id?: string | null } | undefined>;
+  devices?: Record<
+    string,
+    { area_id?: string | null; model?: string | null } | undefined
+  >;
   callService?: (
     domain: string,
     service: string,

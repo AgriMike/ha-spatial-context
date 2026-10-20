@@ -18,6 +18,7 @@ import type {
   RoofPlan,
   Room,
   Scale,
+  Wall,
 } from "../types";
 import {
   eaveCuts,
@@ -34,6 +35,7 @@ import type {
   FloorFinish,
   Floor3d,
   Item3d,
+  LightBeam,
   Pane3d,
   Porch3d,
   Roof3d,
@@ -146,12 +148,24 @@ const RAIL_THICKNESS_M = 0.06;
 const RAIL_HEIGHT_M = 0.95;
 const STUB_M = 0.3;
 
+/** The catalog's outdoor lights and plantings: modelled by
+ * outdoor-models.ts, standing on the ground when out in the yard. */
+const OUTDOOR_MODELLED = new Set(["outdoor_lighting", "landscape"]);
+/** Things that stand on the ground when they're in none of the floor's
+ * rooms. */
+const GROUNDED_CATEGORIES = new Set([
+  "outdoor_lighting",
+  "landscape",
+  "outdoor",
+]);
+
 /** Items modelled rather than extruded (see Item3d.shape). */
 function itemShape(
   kind: string,
   entry: CatalogItem | undefined,
 ): Item3d["shape"] {
   if (kind === STAIRS_KIND) return "stairs";
+  if (entry && OUTDOOR_MODELLED.has(entry.category)) return "block";
   if (/stand|pedestal|basket/.test(kind)) return "block";
   if (/shower(?!_bench)/.test(kind)) return "shower";
   if (/tree|olive/.test(kind) && entry?.category === "outdoor") return "tree";
@@ -169,6 +183,88 @@ function itemShape(
     return "lamp";
   return "block";
 }
+/** How a ground spotlight at (x, z) facing `angle` (Item3d's) tilts from
+ * straight up to wash the first wall ahead of it from about `SPOT_RISE_M`
+ * up: steeper the closer it stands; null with no wall within reach. */
+const SPOT_RISE_M = 2.6;
+const SPOT_REACH_M = 8;
+function spotTilt(
+  walls: Wall[],
+  m: number,
+  x: number,
+  z: number,
+  angle: number,
+): number | null {
+  const dx = Math.sin(angle);
+  const dz = Math.cos(angle);
+  let best = SPOT_REACH_M;
+  for (const w of walls)
+    for (let i = 0; i + 1 < w.points.length; i++) {
+      const ax = w.points[i]![0] * m;
+      const az = w.points[i]![1] * m;
+      const ex = w.points[i + 1]![0] * m - ax;
+      const ez = w.points[i + 1]![1] * m - az;
+      // Ray (x, z) + t (dx, dz) against the segment a + u e.
+      const den = dx * ez - dz * ex;
+      if (Math.abs(den) < 1e-9) continue;
+      const t = ((ax - x) * ez - (az - z) * ex) / den;
+      const u = ((ax - x) * dz - (az - z) * dx) / den;
+      if (t > 0.05 && t < best && u >= 0 && u <= 1) best = t;
+    }
+  if (best >= SPOT_REACH_M) return null;
+  const deg = (Math.atan2(best, SPOT_RISE_M) * 180) / Math.PI;
+  return Math.max(8, Math.min(70, deg));
+}
+
+/** A catalog item on its own, as the 3D view would model it (lit, if it's
+ * a light): for the library's thumbnails. */
+export function catalogItem3d(entry: CatalogItem): Item3d {
+  const auto = itemHeight(entry.id, entry, DEFAULT_WALL_HEIGHT_M);
+  // A long string of lights pictured a couple of metres of it.
+  const w =
+    (entry.category === "outdoor_lighting" ? Math.min(entry.w, 160) : entry.w) /
+    100;
+  const d = entry.d / 100;
+  const beam = entry.opts["beam"];
+  return {
+    id: entry.id,
+    name: entry.name,
+    footprint: [
+      [-w / 2, -d / 2],
+      [w / 2, -d / 2],
+      [w / 2, d / 2],
+      [-w / 2, d / 2],
+    ],
+    width: w,
+    depth: d,
+    x: 0,
+    z: 0,
+    angle: 0,
+    y0: 0,
+    height: auto.height,
+    color: "#d9d2c6",
+    topImage: null,
+    opacity: 1,
+    light:
+      typeof beam === "string"
+        ? {
+            color: "#ffd9a0",
+            level: 0.8,
+            y: auto.height / 2,
+            beam: beam as LightBeam,
+          }
+        : null,
+    shape: "block",
+    model: {
+      kind: entry.id,
+      draw: entry.draw,
+      opts: entry.opts,
+      flip: entry.flip,
+      tint: null,
+    },
+  };
+}
+
 /** The staircase item (see furniture-catalog.ts). */
 const STAIRS_KIND = "stairs_straight";
 /** How far wall joints stop short of an outer face, and window pieces lap
@@ -375,6 +471,13 @@ export function itemHeight(
   entry: CatalogItem | undefined,
   wallHeight: number,
 ): { y0: number; height: number } {
+  // An outdoor light or planting's own height, and how high a wall light
+  // hangs.
+  const h3d = entry?.opts["h3d"];
+  if (typeof h3d === "number") {
+    const y3d = entry?.opts["y3d"];
+    return { y0: typeof y3d === "number" ? y3d : 0, height: h3d };
+  }
   for (const [re, height, mount] of HEIGHT_RULES) {
     if (!re.test(kind)) continue;
     if (mount === "ceiling") return { y0: wallHeight - height, height };
@@ -1979,14 +2082,25 @@ function buildFloor(
     const flip = !!item.mirrored !== !!entry?.flip;
     const prims = itemPrims(item, entry);
     const auto = itemHeight(item.kind, entry, H);
+    // A planting grows with its spread: resized, it keeps its shape.
+    if (entry?.category === "landscape")
+      auto.height *=
+        (item.width_cm + item.depth_cm) / Math.max(1, entry.w + entry.d);
     // A height or elevation set by hand wins.
     const placed = {
       height: item.height_cm ? item.height_cm / 100 : auto.height,
       y0: item.elevation_cm != null ? item.elevation_cm / 100 : auto.y0,
     };
-    // In a room set higher or lower, with it.
+    // Out in the yard (in none of the floor's rooms), on the ground;
+    // else in a room set higher or lower, with it.
+    const grounded =
+      !!entry &&
+      GROUNDED_CATEGORIES.has(entry.category) &&
+      !layout.rooms.some(
+        (r) => r.points.length >= 3 && pointInPolygon(item.x, item.y, r.points),
+      );
     const height = placed.height;
-    const y0 = placed.y0 + offsetAt(item.x, item.y);
+    const y0 = placed.y0 + (grounded ? 0 : offsetAt(item.x, item.y));
     const live = states.get(item.id);
     const own = item.color ?? null;
     const line = live?.color ?? own ?? (dark ? "#e0e0e0" : "#4a4a4a");
@@ -2000,8 +2114,27 @@ function buildFloor(
       own ?? line,
       own ? 0.35 : 0.08,
     );
-    const isLight = item.entity_id?.startsWith("light.") === true;
+    const beam = entry?.opts["beam"];
+    // An outdoor fixture may be switched by a plain switch.
+    const isLight =
+      item.entity_id?.startsWith("light.") === true ||
+      (typeof beam === "string" &&
+        item.entity_id?.startsWith("switch.") === true);
     const on = !!live && live.active && isLight && showLights;
+    const lightY = entry?.opts["lightY"];
+    // A spotlight on the ground aims up the wall it faces, so its beam
+    // lands on it wherever it's set; its catalog tilt else.
+    const aimTilt =
+      beam === "spot" && grounded
+        ? spotTilt(
+            layout.walls,
+            m,
+            item.x * m,
+            item.y * m,
+            (-item.rotation_deg * Math.PI) / 180,
+          )
+        : null;
+    const tilt = aimTilt ?? Number(entry?.opts["tilt"] ?? 30);
     const shape = itemShape(item.kind, entry);
     const si = stairs.findIndex((st) => st.item === item);
     const flight = si >= 0 ? stairs[si]! : null;
@@ -2060,17 +2193,32 @@ function buildFloor(
       topImage: topImage(item, prims, flip, line, base, !!live?.active),
       opacity: (item.opacity ?? 1) * (live?.unavailable ? 0.6 : 1),
       light: on
-        ? {
-            color: live.color ?? "#ffd54f",
-            level: Math.max(0.15, live.glow),
-            y:
-              shape === "lamp"
-                ? y0 + height - 0.15
-                : y0 > H * 0.5
-                  ? y0 - 0.05
-                  : y0 + height + 0.05,
-          }
+        ? typeof beam === "string"
+          ? {
+              color: live.color ?? "#ffe2b0",
+              level: Math.max(0.15, live.glow),
+              y:
+                y0 +
+                (typeof lightY === "number"
+                  ? lightY * (height / Math.max(0.01, auto.height))
+                  : height / 2),
+              beam: beam as LightBeam,
+              tilt,
+              spread: Number(entry?.opts["spread"] ?? 30),
+            }
+          : {
+              color: live.color ?? "#ffd54f",
+              level: Math.max(0.15, live.glow),
+              y:
+                shape === "lamp"
+                  ? y0 + height - 0.15
+                  : y0 > H * 0.5
+                    ? y0 - 0.05
+                    : y0 + height + 0.05,
+            }
         : null,
+      ...(grounded ? { grounded: true } : {}),
+      ...(aimTilt !== null ? { tilt: aimTilt } : {}),
       shape,
     });
   }
@@ -2976,8 +3124,7 @@ function plannedRoof(
   const outside = indoor.reduce<RoofEdge3d[]>(
     (acc, room) =>
       acc.flatMap((e) =>
-        Math.max(e.a[1], e.b[1]) < room.y0 ||
-        Math.min(e.a[1], e.b[1]) > room.y1
+        Math.max(e.a[1], e.b[1]) < room.y0 || Math.min(e.a[1], e.b[1]) > room.y1
           ? [e]
           : cutEdge(e, room.poly, -Infinity, true),
       ),
@@ -3051,7 +3198,9 @@ function indoorStrips(
       if (hit && start === null) start = t;
       if ((!hit || t + step > t1 + 1e-9) && start !== null) {
         const end = hit ? t1 : t;
-        out.push(quad(Math.max(t0, start - step / 2), Math.min(t1, end + step / 2)));
+        out.push(
+          quad(Math.max(t0, start - step / 2), Math.min(t1, end + step / 2)),
+        );
         start = null;
       }
     }
@@ -3073,7 +3222,12 @@ function indoorStrips(
         A0,
         A1,
         (a) => world(a, (wall + edge) / 2),
-        (u0, u1) => [world(u0, wall), world(u1, wall), world(u1, out), world(u0, out)],
+        (u0, u1) => [
+          world(u0, wall),
+          world(u1, wall),
+          world(u1, out),
+          world(u0, out),
+        ],
       ),
     );
   }
@@ -3089,7 +3243,12 @@ function indoorStrips(
         s.shed ? s.c0 : C0,
         C1,
         (c) => world((wall + edge) / 2, c),
-        (u0, u1) => [world(wall, u0), world(wall, u1), world(out, u1), world(out, u0)],
+        (u0, u1) => [
+          world(wall, u0),
+          world(wall, u1),
+          world(out, u1),
+          world(out, u0),
+        ],
       ),
     );
   });
@@ -3121,14 +3280,15 @@ function cutEdge(
   });
   const xs = ring.map((p) => p[0]);
   const zs = ring.map((p) => p[1]);
-  const poly: Vec2[] = convex || exact
-    ? ring
-    : [
-        [Math.min(...xs), Math.min(...zs)],
-        [Math.max(...xs), Math.min(...zs)],
-        [Math.max(...xs), Math.max(...zs)],
-        [Math.min(...xs), Math.max(...zs)],
-      ];
+  const poly: Vec2[] =
+    convex || exact
+      ? ring
+      : [
+          [Math.min(...xs), Math.min(...zs)],
+          [Math.max(...xs), Math.min(...zs)],
+          [Math.max(...xs), Math.max(...zs)],
+          [Math.min(...xs), Math.max(...zs)],
+        ];
   const [ax, , az] = e.a;
   const dx = e.b[0] - ax;
   const dz = e.b[2] - az;
@@ -3239,7 +3399,9 @@ function roofLights(input: SceneInput, roof: Roof3d | null): RoofLights3d[] {
         );
       }
     }
-    const st = strip.entity_id ? input.hass?.states[strip.entity_id] : undefined;
+    const st = strip.entity_id
+      ? input.hass?.states[strip.entity_id]
+      : undefined;
     const on = st?.state === "on";
     const attrs = (st?.attributes ?? {}) as Record<string, unknown>;
     const rgb = attrs["rgb_color"];
@@ -3247,7 +3409,11 @@ function roofLights(input: SceneInput, roof: Roof3d | null): RoofLights3d[] {
       ? null
       : Array.isArray(rgb) && rgb.length === 3
         ? `#${(rgb as number[])
-            .map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0"))
+            .map((v) =>
+              Math.max(0, Math.min(255, Math.round(v)))
+                .toString(16)
+                .padStart(2, "0"),
+            )
             .join("")}`
         : "#ffd27a";
     const brightness = attrs["brightness"];

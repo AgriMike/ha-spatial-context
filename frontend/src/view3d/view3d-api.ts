@@ -99,6 +99,8 @@ export interface Slab3d {
 export type FloorFinish =
   "wood" | "tile" | "carpet" | "concrete" | "stone" | "deck" | "plain";
 
+export type LightBeam = "spot" | "flood" | "updown" | "down" | "omni" | "glow";
+
 export interface Item3d {
   id: string;
   name: string;
@@ -118,8 +120,27 @@ export interface Item3d {
   topImage: string | null;
   opacity: number;
   /** A linked light that's on: glows, and lights the room from height
-   * `y` (metres above the floor's level). */
-  light: { color: string; level: number; y: number } | null;
+   * `y` (metres above the floor's level, or above the ground for a
+   * grounded item). An outdoor fixture's `beam` is how it throws its
+   * light: a "spot" tilted `tilt`° from straight up toward the item's
+   * front with a `spread`° cone, a "flood" out and down from a wall, "up"
+   * and "down" ("updown"), "down", "omni" all round, or "glow" (its lens
+   * only). */
+  light: {
+    color: string;
+    level: number;
+    y: number;
+    beam?: LightBeam;
+    tilt?: number;
+    spread?: number;
+  } | null;
+  /** Stands on the ground (out in the yard, in none of the floor's rooms):
+   * `y0` and the light's `y` are above the ground there, not the floor's
+   * level. */
+  grounded?: boolean;
+  /** A ground spotlight's tilt (degrees from straight up), aimed at the
+   * wall it faces (its model's head and its beam both). */
+  tilt?: number;
   /** Drawn as an extruded block with its 2D drawing on top ("block"), or
    * modelled: a potted plant, a tree, a lamp. */
   shape: "block" | "plant" | "tree" | "lamp" | "shower" | "stairs";
@@ -443,4 +464,7 @@ export interface View3dHandle {
 export interface View3dModule {
   createView3d(options: View3dOptions): View3dHandle;
   supportsWebgl(): boolean;
+  /** Each item drawn alone as a picture (a PNG data URL, `size` pixels
+   * square), by its id: the library's thumbnails. */
+  thumbnails?(items: Item3d[], size: number): Promise<Record<string, string>>;
 }

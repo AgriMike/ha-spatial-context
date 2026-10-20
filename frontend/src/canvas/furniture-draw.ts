@@ -622,6 +622,100 @@ function scallopPath(cx: number, cy: number, r: number, lobes: number): string {
   return d + " Z";
 }
 
+/** A tree, shrub, grass or rock from above (see the "landscape"
+ * template): a canopy's scallops, a conifer's star of boughs, a grass's
+ * fan of blades, a yucca's spikes, flowers' heads, a boulder's facets. */
+function landscapeTop(w: number, d: number, form: string): Prim[] {
+  const cx = w / 2;
+  const cy = d / 2;
+  const r = min(w, d) / 2 - 1;
+  const ray = (n: number, r0: number, r1: number, dash?: boolean) =>
+    Array.from({ length: n }, (_, i) => {
+      const a = (i / n) * Math.PI * 2 + 0.3;
+      return line(
+        cx + Math.cos(a) * r0,
+        cy + Math.sin(a) * r0,
+        cx + Math.cos(a) * r1,
+        cy + Math.sin(a) * r1,
+        dash,
+      );
+    });
+  const star = (n: number, r0: number, r1: number): Prim =>
+    poly(
+      Array.from({ length: n * 2 }, (_, i): Pt => {
+        const a = (i / (n * 2)) * Math.PI * 2;
+        const k = i % 2 ? r0 : r1;
+        return [cx + Math.cos(a) * k, cy + Math.sin(a) * k];
+      }),
+    );
+  switch (form) {
+    case "conifer":
+    case "pine":
+    case "column":
+      return [
+        star(form === "column" ? 10 : 14, r * 0.72, r),
+        circ(cx, cy, r * 0.08),
+      ];
+    case "palm":
+      return [circ(cx, cy, r * 0.1), ...ray(9, r * 0.12, r)];
+    case "grass":
+    case "reed":
+    case "lavender":
+    case "fern":
+    case "daylily":
+      return [circ(cx, cy, r * 0.15), ...ray(18, r * 0.2, r)];
+    case "yucca":
+    case "agave":
+      return [
+        star(form === "agave" ? 9 : 16, r * 0.25, r),
+        circ(cx, cy, r * 0.12),
+      ];
+    case "hosta":
+      return Array.from({ length: 7 }, (_, i) => {
+        const a = (i / 7) * 360;
+        const rad = (a * Math.PI) / 180;
+        return ell(
+          cx + Math.cos(rad) * r * 0.55,
+          cy + Math.sin(rad) * r * 0.55,
+          r * 0.45,
+          r * 0.22,
+          a,
+        );
+      });
+    case "flowers":
+      return [
+        ell(cx, cy, w / 2 - 1, d / 2 - 1),
+        ...Array.from({ length: 9 }, (_, i) =>
+          circ(
+            cx + Math.cos(i * 2.4) * (w / 2 - 6) * Math.sqrt((i + 0.5) / 9),
+            cy + Math.sin(i * 2.4) * (d / 2 - 6) * Math.sqrt((i + 0.5) / 9),
+            min(w, d) * 0.06,
+          ),
+        ),
+      ];
+    case "boulder":
+    case "boulders":
+      return [
+        poly(
+          Array.from({ length: 7 }, (_, i): Pt => {
+            const a = (i / 7) * Math.PI * 2;
+            const k = 0.82 + 0.18 * Math.sin(i * 2.7);
+            return [
+              cx + Math.cos(a) * (w / 2) * k,
+              cy + Math.sin(a) * (d / 2) * k,
+            ];
+          }),
+        ),
+        line(cx - w * 0.15, cy - d * 0.1, cx + w * 0.1, cy + d * 0.12),
+      ];
+    default:
+      return [
+        path(scallopPath(cx, cy, r, form === "spreader" ? 12 : 9)),
+        circ(cx, cy, r * 0.05),
+      ];
+  }
+}
+
 // --- templates -------------------------------------------------------------
 
 const T: Record<string, Template> = {
@@ -2086,6 +2180,14 @@ const T: Record<string, Template> = {
   tree: (w, d, o) => [
     path(scallopPath(w / 2, d / 2, min(w, d) / 2 - 2, num(o, "lobes", 9))),
     circ(w / 2, d / 2, min(w, d) * 0.05),
+  ],
+  /** A planting seen from above, by opts.form (see outdoor-models.ts). */
+  landscape: (w, d, o) => landscapeTop(w, d, String(o["form"] ?? "")),
+  /** A slim pedestal or wall light: its body, and the lit face along its
+   * front. */
+  impress: (w, d) => [
+    rect(0, 0, w, d, 1),
+    rect(w * 0.12, d * 0.62, w * 0.76, d * 0.28, 1, true),
   ],
   cactus: (w, d) => [
     circ(w / 2, d / 2, min(w, d) / 2),

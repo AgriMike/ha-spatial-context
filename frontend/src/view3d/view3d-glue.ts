@@ -4,6 +4,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { counterModel, furnitureModel } from "./furniture-models";
+import { outdoorModel } from "./outdoor-models";
 import { siteModel } from "./site-models";
 import { gradeAt } from "./ground-grid";
 import type {
@@ -43,6 +44,9 @@ import type {
 const SLAB_M = 0.04;
 /** Point lights are costly per fragment; the brightest few get one. */
 const MAX_POINT_LIGHTS = 8;
+/** Outdoor fixtures' lights (spots, floods, lanterns), on top of those:
+ * the brightest get one (two for an up & down light). */
+const MAX_OUTDOOR_LIGHTS = 12;
 /** How close (metres) a dragged scan's edge must come to a wall face to
  * snap onto it, and how far auto-align looks. */
 const DRAG_SNAP_M = 0.15;
@@ -1426,7 +1430,25 @@ function createView3d(options: View3dOptions): View3dHandle {
 
   // --- the building ---------------------------------------------------------
 
+  /** Where an item stands, up from its floor's level: on the ground out
+   * in the yard. */
+  function itemY(item: Item3d, baseY: number): number {
+    return item.grounded
+      ? groundAt(siteTerrain, item.x, item.z) - baseY + item.y0
+      : item.y0;
+  }
+
   function buildItem(item: Item3d, baseY = 0): THREE.Object3D {
+    const obj = buildItemObject(item, baseY);
+    // Out in the yard it rides the ground as it's dragged.
+    if (item.grounded) {
+      obj.userData["grounded"] = true;
+      obj.userData["y0"] = item.y0;
+    }
+    return obj;
+  }
+
+  function buildItemObject(item: Item3d, baseY: number): THREE.Object3D {
     // On the ground: the terrain's height (or the flat ground's), in the
     // item's floor's frame.
     const site = item.site
@@ -1438,10 +1460,10 @@ function createView3d(options: View3dOptions): View3dHandle {
         ? null
         : item.counter
           ? counterModel(item.footprint, item.height, item.tint ?? null)
-          : furnitureModel(item);
+          : (outdoorModel(item) ?? furnitureModel(item));
     if (furniture) {
       furniture.name = item.name;
-      furniture.position.set(item.x, item.y0, item.z);
+      furniture.position.set(item.x, itemY(item, baseY), item.z);
       furniture.rotation.y = item.angle;
       furniture.userData["xz"] = [item.x, item.z];
       furniture.userData["itemId"] = item.id;
@@ -1450,7 +1472,7 @@ function createView3d(options: View3dOptions): View3dHandle {
     if (item.shape !== "block") {
       const model = modelItem(item);
       model.name = item.name;
-      model.position.set(item.x, item.y0, item.z);
+      model.position.set(item.x, itemY(item, baseY), item.z);
       model.rotation.y = item.angle;
       model.userData["xz"] = [item.x, item.z];
       model.userData["itemId"] = item.id;
@@ -1486,13 +1508,85 @@ function createView3d(options: View3dOptions): View3dHandle {
     }
     const mesh = new THREE.Mesh(geom, [top, side]);
     mesh.name = item.name;
-    mesh.position.set(item.x, item.y0, item.z);
+    mesh.position.set(item.x, itemY(item, baseY), item.z);
     mesh.userData["xz"] = [item.x, item.z];
     mesh.userData["itemId"] = item.id;
     mesh.rotation.y = item.angle;
     mesh.castShadow = item.height > 0.03 && !item.light;
     mesh.receiveShadow = true;
     return mesh;
+  }
+
+  /** An outdoor fixture's lights, by its beam: spots aimed from it, a
+   * flood out and down, up and down, down, or all round. */
+  function fixtureLights(item: Item3d, baseY: number): THREE.Light[] {
+    const lit = item.light;
+    if (!lit?.beam || lit.beam === "glow") return [];
+    const ground = item.grounded
+      ? groundAt(siteTerrain, item.x, item.z) - baseY
+      : 0;
+    const pos = new THREE.Vector3(item.x, lit.y + ground, item.z);
+    const k = lit.level;
+    // Into the world from the item's frame (its front is local +z).
+    const world = (x: number, y: number, z: number) => {
+      const c = Math.cos(item.angle);
+      const sn = Math.sin(item.angle);
+      return new THREE.Vector3(x * c + z * sn, y, -x * sn + z * c).normalize();
+    };
+    const spot = (
+      dir: THREE.Vector3,
+      intensity: number,
+      cone: number,
+      reach: number,
+      at = pos,
+    ) => {
+      const light = new THREE.SpotLight(
+        lit.color,
+        intensity,
+        reach,
+        Math.min(Math.PI / 2.2, (cone * Math.PI) / 360),
+        0.65,
+        1.6,
+      );
+      light.position.copy(at);
+      light.target.position.copy(at).addScaledVector(dir, 4);
+      light.name = `${item.name} light`;
+      return light;
+    };
+    const t = ((lit.tilt ?? 30) * Math.PI) / 180;
+    switch (lit.beam) {
+      case "spot":
+        return [
+          spot(
+            world(0, Math.cos(t), Math.sin(t)),
+            25 + 70 * k,
+            Math.max(12, lit.spread ?? 30),
+            14,
+          ),
+        ];
+      case "flood": {
+        const d = (35 * Math.PI) / 180;
+        return [
+          spot(world(0, -Math.sin(d), Math.cos(d)), 40 + 110 * k, 100, 16),
+        ];
+      }
+      case "down":
+        return [spot(new THREE.Vector3(0, -1, 0), 10 + 26 * k, 110, 6)];
+      case "updown": {
+        const out = world(0, 0, 1).multiplyScalar(0.06);
+        const at = pos.clone().add(out);
+        return [
+          spot(new THREE.Vector3(0, 1, 0), 8 + 20 * k, 40, 5, at),
+          spot(new THREE.Vector3(0, -1, 0), 8 + 20 * k, 40, 5, at),
+        ];
+      }
+      default: {
+        const light = new THREE.PointLight(lit.color, 3 + 10 * k, 8, 2);
+        light.position.copy(pos);
+        light.name = `${item.name} light`;
+        return [light];
+      }
+    }
   }
 
   function buildFloor(spec: Floor3d, pointLights: Set<string>): FloorEntry {
@@ -1567,6 +1661,15 @@ function createView3d(options: View3dOptions): View3dHandle {
     group.add(lights);
     for (const item of spec.items) {
       furniture.add(buildItem(item, spec.baseY));
+      if (item.light?.beam) {
+        if (pointLights.has(item.id))
+          for (const light of fixtureLights(item, spec.baseY)) {
+            lights.add(light);
+            if ((light as THREE.SpotLight).isSpotLight)
+              lights.add((light as THREE.SpotLight).target);
+          }
+        continue;
+      }
       if (item.light && pointLights.has(item.id)) {
         const light = new THREE.PointLight(
           item.light.color,
@@ -1640,12 +1743,24 @@ function createView3d(options: View3dOptions): View3dHandle {
       disposeObject(f.group);
     }
     floors.clear();
-    // The brightest linked lights get a real point light.
-    const lit = spec.floors
+    // The brightest linked lights get a real point light; outdoor
+    // fixtures theirs, from a budget of their own.
+    const byLevel = spec.floors
       .flatMap((f) => f.items)
       .filter((i) => i.light)
-      .sort((a, b) => b.light!.level - a.light!.level)
+      .sort((a, b) => b.light!.level - a.light!.level);
+    const lit = byLevel
+      .filter((i) => !i.light!.beam)
       .slice(0, MAX_POINT_LIGHTS);
+    let budget = MAX_OUTDOOR_LIGHTS;
+    for (const i of byLevel) {
+      const beam = i.light!.beam;
+      if (!beam || beam === "glow") continue;
+      const cost = beam === "updown" ? 2 : 1;
+      if (cost > budget) continue;
+      budget -= cost;
+      lit.push(i);
+    }
     const pointLights = new Set(lit.map((i) => i.id));
     const ordered = [...spec.floors].sort((a, b) => a.baseY - b.baseY);
     ordered.forEach((f, i) => {
@@ -2551,12 +2666,14 @@ function createView3d(options: View3dOptions): View3dHandle {
       // Its own (unturned) bounds, turned with it.
       const item = entry.spec.items.find((i) => i.id === ref.id);
       if (!item) return [];
+      // Where it stands now (on the ground, out in the yard).
+      const y0 = obj.position.y;
       return [
         {
           x: obj.position.x,
           z: obj.position.z,
-          y0: item.y0,
-          y1: item.y0 + Math.max(0.05, item.height),
+          y0,
+          y1: y0 + Math.max(0.05, item.height),
           length: item.width,
           depth: item.depth,
           angle: obj.rotation.y,
@@ -2598,10 +2715,15 @@ function createView3d(options: View3dOptions): View3dHandle {
       corners.forEach(([x, z], k) => {
         const prev = corners[k - 1];
         if (prev) {
-          const n = Math.min(400, Math.ceil(Math.hypot(x - prev[0], z - prev[1]) / 0.25));
+          const n = Math.min(
+            400,
+            Math.ceil(Math.hypot(x - prev[0], z - prev[1]) / 0.25),
+          );
           for (let s = 1; s < n; s++) {
             const t = s / n;
-            pts.push(at(prev[0] + (x - prev[0]) * t, prev[1] + (z - prev[1]) * t));
+            pts.push(
+              at(prev[0] + (x - prev[0]) * t, prev[1] + (z - prev[1]) * t),
+            );
           }
         }
         pts.push(at(x, z));
@@ -2850,6 +2972,11 @@ function createView3d(options: View3dOptions): View3dHandle {
       obj.position.x = x;
       obj.position.z = z;
       obj.rotation.y = angle;
+      if (obj.userData["grounded"])
+        obj.position.y =
+          groundAt(siteTerrain, x, z) -
+          (editEntry()?.spec.baseY ?? 0) +
+          Number(obj.userData["y0"] ?? 0);
       applyOverlay();
     },
     setScanMode(mode) {
@@ -2911,6 +3038,59 @@ function createView3d(options: View3dOptions): View3dHandle {
   };
 }
 
-const glue: View3dModule = { createView3d, supportsWebgl };
+/** Library thumbnails: each item modelled and photographed alone, from
+ * the front and a little above, on a clear background. */
+async function thumbnails(
+  items: Item3d[],
+  size: number,
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    alpha: true,
+    preserveDrawingBuffer: true,
+  });
+  renderer.setPixelRatio(1);
+  renderer.setSize(size, size);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.NeutralToneMapping;
+  renderer.setClearColor(0x000000, 0);
+  const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight("#f4f7ff", "#8a8270", 1.5));
+  const sun = new THREE.DirectionalLight("#fff6e8", 2.2);
+  sun.position.set(3, 6, 5);
+  scene.add(sun);
+  const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 200);
+  try {
+    for (const [k, item] of items.entries()) {
+      const model = outdoorModel(item) ?? furnitureModel(item);
+      if (!model) continue;
+      scene.add(model);
+      const box = new THREE.Box3().setFromObject(model);
+      const centre = box.getCenter(new THREE.Vector3());
+      const radius = Math.max(
+        0.05,
+        box.getSize(new THREE.Vector3()).length() / 2,
+      );
+      const dist = radius / Math.sin((camera.fov * Math.PI) / 360);
+      camera.position
+        .copy(centre)
+        .add(new THREE.Vector3(0.35, 0.45, 1).normalize().multiplyScalar(dist));
+      camera.lookAt(centre);
+      renderer.render(scene, camera);
+      out[item.id] = renderer.domElement.toDataURL("image/png");
+      scene.remove(model);
+      model.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
+      // A breath now and then, so the page stays responsive.
+      if (k % 6 === 5) await new Promise((r) => setTimeout(r, 0));
+    }
+  } finally {
+    renderer.dispose();
+    renderer.forceContextLoss();
+  }
+  return out;
+}
+
+const glue: View3dModule = { createView3d, supportsWebgl, thumbnails };
 export default glue;
-export { createView3d, supportsWebgl };
+export { createView3d, supportsWebgl, thumbnails };

@@ -34,7 +34,12 @@ import {
   FURNITURE_CATALOG,
   catalogItem,
   isOutlineKind,
+  type CatalogItem,
+  type FurnitureCategory,
 } from "../canvas/furniture-catalog";
+import { pointInPolygon } from "../canvas/geometry";
+import "./search-select";
+import type { SearchOption } from "./search-select";
 import {
   WALL_MATERIALS,
   materialLabel,
@@ -90,6 +95,7 @@ import {
 import {
   DEFAULT_WALL_HEIGHT_M,
   buildScene,
+  catalogItem3d,
   stripLights,
   stripPattern,
   metersPerUnit,
@@ -115,11 +121,42 @@ type EditTool =
   | "door"
   | "window"
   | "object"
+  | "outdoor"
   | "yard"
   | "grade";
 
 /** The site's kinds the yard tool draws: surfaces, then lines. */
 const SITE_KINDS = FURNITURE_CATALOG.filter((c) => c.category === "site");
+
+/** The outdoor tool's library: lights for outside, and plantings. */
+const OUTDOOR_CATEGORIES: FurnitureCategory[] = [
+  "outdoor_lighting",
+  "landscape",
+];
+
+function isOutdoorKind(kind: string): boolean {
+  const c = catalogItem(kind)?.category;
+  return c === "outdoor_lighting" || c === "landscape";
+}
+
+/** Entity domains an item can stand for, in picker order. */
+const LINK_DOMAINS = [
+  "light",
+  "switch",
+  "fan",
+  "cover",
+  "media_player",
+  "climate",
+  "lock",
+  "vacuum",
+  "input_boolean",
+  "binary_sensor",
+  "sensor",
+];
+
+/** How far (m) a spotlight placed on the ground looks for a wall to aim
+ * at. */
+const AIM_REACH_M = 8;
 
 /** A length (metres) in feet and inches, to the nearest inch. */
 function feetInches(meters: number): string {
@@ -663,6 +700,10 @@ export class Floorplan3dView extends LitElement {
   @state() private _sel: EditRef | null = null;
   @state() private _hover: EditRef | null = null;
   @state() private _armedKind: string | null = null;
+  /** The outdoor library's pictures, rendered in 3D (by catalog id). */
+  @state() private _thumbs: Record<string, string> = {};
+  private _thumbsAsked = false;
+  private _module: View3dModule | null = null;
   private _armedRot = 0;
   /** The yard tool's kind, and a free-form outline's picked corner. */
   @state() private _yardKind = "site_sidewalk";
@@ -756,7 +797,11 @@ export class Floorplan3dView extends LitElement {
     }
     // Another floor's thing clicked: selected once its floor's layout is
     // here (the panel loads it after switching).
-    if (changed.has("layout") && this._pendingSel && this._refExists(this._pendingSel)) {
+    if (
+      changed.has("layout") &&
+      this._pendingSel &&
+      this._refExists(this._pendingSel)
+    ) {
       this._sel = this._pendingSel;
       this._pendingSel = null;
     }
@@ -774,6 +819,7 @@ export class Floorplan3dView extends LitElement {
     try {
       const mod = await loadModule(this.moduleUrl);
       if (!mod.supportsWebgl()) throw new Error(localize("view3d.noWebgl"));
+      this._module = mod;
       if (!this.isConnected || this._handle) return;
       this._handle = mod.createView3d({
         container: this._stage,
@@ -893,10 +939,10 @@ export class Floorplan3dView extends LitElement {
       // It may have had to leave the grading out: say so.
       .then(() => this.requestUpdate())
       .catch((err: unknown) => {
-      this._error = localize("view3d.saveFailed", {
-        error: (err as { message?: string })?.message ?? String(err),
+        this._error = localize("view3d.saveFailed", {
+          error: (err as { message?: string })?.message ?? String(err),
+        });
       });
-    });
   }
 
   /** The building's roof parts: this floor's, else any shown floor's
@@ -926,10 +972,10 @@ export class Floorplan3dView extends LitElement {
       // It may have had to leave the light strips out: say so.
       .then(() => this.requestUpdate())
       .catch((err: unknown) => {
-      this._error = localize("view3d.saveFailed", {
-        error: (err as { message?: string })?.message ?? String(err),
+        this._error = localize("view3d.saveFailed", {
+          error: (err as { message?: string })?.message ?? String(err),
+        });
       });
-    });
   }
 
   private get _canDollhouse(): boolean {
@@ -1356,8 +1402,24 @@ export class Floorplan3dView extends LitElement {
     this._gradeCursor = null;
     this._gradeNode = null;
     this._measure = null;
-    if (tool !== "object") this._armedKind = null;
+    if (tool !== "object" && tool !== "outdoor") this._armedKind = null;
+    if (tool === "outdoor") void this._loadThumbs();
     this._pushOverlay();
+  }
+
+  /** Renders the outdoor library's pictures in 3D, once. */
+  private async _loadThumbs(): Promise<void> {
+    const mod = this._module;
+    if (this._thumbsAsked || !mod?.thumbnails) return;
+    this._thumbsAsked = true;
+    const entries = FURNITURE_CATALOG.filter((c) =>
+      OUTDOOR_CATEGORIES.includes(c.category),
+    );
+    try {
+      this._thumbs = await mod.thumbnails(entries.map(catalogItem3d), 160);
+    } catch {
+      this._thumbsAsked = false;
+    }
   }
 
   /** Sends a change to the panel: one undo step, saved like a plan edit. */
@@ -1572,7 +1634,162 @@ export class Floorplan3dView extends LitElement {
 
   /** A site item: laid on the ground, not the floor. */
   private _onGround(item: FurnitureItem): boolean {
-    return item.kind.startsWith("site_");
+    return (
+      item.kind.startsWith("site_") ||
+      (isOutdoorKind(item.kind) && !this._roomAt([item.x, item.y]))
+    );
+  }
+
+  /** The room of this floor's plan a point (plan units) is in. */
+  private _roomAt(p: Pt): Room | undefined {
+    return this.layout?.rooms.find(
+      (r) => r.points.length >= 3 && pointInPolygon(p[0], p[1], r.points),
+    );
+  }
+
+  /** Where an outdoor light or planting goes under the pointer: a wall
+   * light on the wall face it's over, turned out from it and hung where
+   * the pointer is; anything else on the ground, a spotlight turned to
+   * face the nearest wall. Plan units; elevation (cm) for a wall light. */
+  private _outdoorSpot(
+    e: EditPointer,
+    entry: CatalogItem,
+    m: number,
+    grid: number,
+  ): { at: Pt; rot: number; elevation: number | null; ghost: Box3d } | null {
+    const handle = this._handle;
+    const h = Math.max(0.05, Number(entry.opts["h3d"] ?? 0.5));
+    const w = entry.w / 100;
+    const d = entry.d / 100;
+    const n = e.hit.normal;
+    const p = e.hit.point;
+    if (
+      entry.opts["mount"] === "wall" &&
+      // A wall's face, or a door or window in it (a light beside a door).
+      (e.hit.ref?.kind === "wall" || e.hit.ref?.kind === "opening") &&
+      p &&
+      n &&
+      Math.abs(n[1]) < 0.5 &&
+      (!e.hit.floorId || e.hit.floorId === this.floorId)
+    ) {
+      const len = Math.hypot(n[0], n[2]) || 1;
+      const nx = n[0] / len;
+      const nz = n[2] / len;
+      const cx = p[0] + (nx * d) / 2;
+      const cz = p[2] + (nz * d) / 2;
+      const a = Math.atan2(nx, nz);
+      const at: Pt = [cx / m, cz / m];
+      const room = this._roomAt(at);
+      const base = room
+        ? (room.floor_offset_m ?? 0)
+        : (handle?.groundHeight(cx, cz) ?? 0);
+      let elev = p[1] - h / 2 - base;
+      if (grid > 0) elev = Math.round(elev * 20) / 20;
+      return {
+        at,
+        rot: ((((-a * 180) / Math.PI) % 360) + 360) % 360,
+        elevation: Math.round(elev * 100),
+        ghost: {
+          x: cx,
+          z: cz,
+          y0: base + elev,
+          y1: base + elev + h,
+          length: w,
+          depth: d,
+          angle: a,
+        },
+      };
+    }
+    const g = this._groundAt(e);
+    if (!g) return null;
+    let at: Pt = [g[0] / m, g[2] / m];
+    if (grid > 0)
+      at = [Math.round(at[0] / grid) * grid, Math.round(at[1] / grid) * grid];
+    let rot = this._armedRot;
+    // A spotlight looks at the nearest wall (its front, local +z, toward
+    // it).
+    if (entry.opts["beam"] === "spot") {
+      let best: Pt | null = null;
+      let bestD = AIM_REACH_M / m;
+      for (const wl of this._snapWalls()) {
+        if (!wl.own) continue;
+        const dx = wl.b[0] - wl.a[0];
+        const dy = wl.b[1] - wl.a[1];
+        const l2 = dx * dx + dy * dy;
+        if (l2 <= 0) continue;
+        const t = Math.max(
+          0,
+          Math.min(1, ((at[0] - wl.a[0]) * dx + (at[1] - wl.a[1]) * dy) / l2),
+        );
+        const q: Pt = [wl.a[0] + dx * t, wl.a[1] + dy * t];
+        const dist = Math.hypot(q[0] - at[0], q[1] - at[1]);
+        if (dist < bestD && dist > 1e-6) {
+          bestD = dist;
+          best = q;
+        }
+      }
+      if (best) {
+        const a = Math.atan2(best[0] - at[0], best[1] - at[1]);
+        rot = Math.round(((((-a * 180) / Math.PI) % 360) + 360) % 360);
+      }
+    }
+    const y3d = Number(entry.opts["y3d"] ?? 0);
+    const room = this._roomAt(at);
+    const base = room ? (room.floor_offset_m ?? 0) : g[1];
+    return {
+      at,
+      rot,
+      elevation: null,
+      ghost: {
+        x: at[0] * m,
+        z: at[1] * m,
+        y0: base + y3d,
+        y1: base + y3d + h,
+        length: w,
+        depth: d,
+        angle: (-rot * Math.PI) / 180,
+      },
+    };
+  }
+
+  /** The entities an item can stand for, the linkable domains in turn;
+   * for a Hue fixture, the lights of its own model first. */
+  private _linkOptions(item: FurnitureItem): SearchOption[] {
+    const hass = this.hass;
+    if (!hass) return [];
+    const entry = catalogItem(item.kind);
+    const hue =
+      typeof entry?.opts["hue"] === "string"
+        ? entry.opts["hue"].toLowerCase()
+        : null;
+    const suggested: SearchOption[] = [];
+    const rest: SearchOption[] = [];
+    const ids = Object.keys(hass.states).sort();
+    for (const domain of LINK_DOMAINS)
+      for (const id of ids) {
+        if (!id.startsWith(`${domain}.`)) continue;
+        const st = hass.states[id];
+        const name = String(st?.attributes["friendly_name"] ?? id);
+        const opt: SearchOption = {
+          value: id,
+          label: name,
+          group: domain,
+          secondary: id,
+        };
+        if (hue && domain === "light") {
+          const dev = hass.entities?.[id]?.device_id;
+          const model = dev ? hass.devices?.[dev]?.model : null;
+          if (
+            (typeof model === "string" && model.toLowerCase().includes(hue)) ||
+            name.toLowerCase().includes(hue)
+          ) {
+            suggested.push({ ...opt, group: localize("edit3d.suggested") });
+            continue;
+          }
+        }
+        rest.push(opt);
+      }
+    return [...suggested, ...rest];
   }
 
   private _closedOutline(item: FurnitureItem): boolean {
@@ -1667,10 +1884,7 @@ export class Floorplan3dView extends LitElement {
   /** Shows the length of the edge from `a` to `b` (plan units) beside
    * its middle, `y` metres up (edit-floor frame), with the whole line's
    * when there's more than that edge; feet and inches. */
-  private _showMeasure(
-    pts: Pt[],
-    yAt: (q: Pt) => number,
-  ): void {
+  private _showMeasure(pts: Pt[], yAt: (q: Pt) => number): void {
     const a = pts[pts.length - 2];
     const b = pts[pts.length - 1];
     const handle = this._handle;
@@ -1849,8 +2063,10 @@ export class Floorplan3dView extends LitElement {
         // here, before snapping) closes the outline.
         const first = this._draft[0];
         const { o } = e.hit.ray;
-        const near =
-          Math.max(reach * 2, (0.025 * Math.hypot(g[0] - o[0], g[1] - o[1], g[2] - o[2])) / m);
+        const near = Math.max(
+          reach * 2,
+          (0.025 * Math.hypot(g[0] - o[0], g[1] - o[1], g[2] - o[2])) / m,
+        );
         if (
           first &&
           this._draft.length >= 3 &&
@@ -2064,6 +2280,38 @@ export class Floorplan3dView extends LitElement {
         this._sel = { kind: "opening", id };
         this._ghost = [];
         if (!e.shift) this._tool = "select";
+        this._pushOverlay();
+      }
+      return false;
+    }
+
+    // --- placing an outdoor light or a planting ---
+    if (
+      tool === "outdoor" ||
+      (tool === "object" && this._armedKind && isOutdoorKind(this._armedKind))
+    ) {
+      const entry = this._armedKind ? catalogItem(this._armedKind) : undefined;
+      if (!entry) return false;
+      const spot = this._outdoorSpot(e, entry, m, grid);
+      if (e.type === "move") {
+        this._ghost = spot ? [spot.ghost] : [];
+        this._pushOverlay();
+      } else if (e.type === "click" && spot) {
+        const added = addItem(layout, entry.id, spot.at, spot.rot);
+        if (added) {
+          const furniture = (added.patch.furniture ?? []).map((f) =>
+            f.id === added.id && spot.elevation !== null
+              ? { ...f, elevation_cm: spot.elevation }
+              : f,
+          );
+          this._edit({ furniture });
+          this._sel = { kind: "item", id: added.id };
+        }
+        if (!e.shift) {
+          this._tool = "select";
+          this._armedKind = null;
+          this._ghost = [];
+        }
         this._pushOverlay();
       }
       return false;
@@ -2514,7 +2762,8 @@ export class Floorplan3dView extends LitElement {
     )[0];
     const lowest = lowestId ? this._layoutOf(lowestId) : null;
     const k =
-      metersPerUnit(layout.scale) / metersPerUnit(lowest?.scale ?? layout.scale);
+      metersPerUnit(layout.scale) /
+      metersPerUnit(lowest?.scale ?? layout.scale);
     const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
     if (len <= 0) return;
     const nx = (-(b[1] - a[1]) / len) * d * k;
@@ -2540,7 +2789,12 @@ export class Floorplan3dView extends LitElement {
         if (Math.abs(part.x0 - line) <= tol) next.x0 = part.x0 + nx;
         if (Math.abs(part.x1 - line) <= tol) next.x1 = part.x1 + nx;
       }
-      if (next.x0 !== part.x0 || next.x1 !== part.x1 || next.y0 !== part.y0 || next.y1 !== part.y1)
+      if (
+        next.x0 !== part.x0 ||
+        next.x1 !== part.x1 ||
+        next.y0 !== part.y0 ||
+        next.y1 !== part.y1
+      )
         changed = true;
       return next;
     });
@@ -2665,7 +2919,7 @@ export class Floorplan3dView extends LitElement {
     }
     if (!mod && key.toLowerCase() === "r" && layout) {
       const step = e.shiftKey ? 15 : 90;
-      if (this._tool === "object") {
+      if (this._tool === "object" || this._tool === "outdoor") {
         take();
         this._armedRot = (this._armedRot + step) % 360;
         return;
@@ -2788,6 +3042,7 @@ export class Floorplan3dView extends LitElement {
       ["door", "mdi:door", localize("edit3d.door")],
       ["window", "mdi:window-closed-variant", localize("edit3d.window")],
       ["object", "mdi:sofa-outline", localize("edit3d.object")],
+      ["outdoor", "mdi:outdoor-lamp", localize("edit3d.outdoor")],
       ["yard", "mdi:road-variant", localize("edit3d.yard")],
       ["grade", "mdi:terrain", localize("edit3d.grade")],
     ];
@@ -2797,6 +3052,7 @@ export class Floorplan3dView extends LitElement {
       door: localize("edit3d.openingHint"),
       window: localize("edit3d.openingHint"),
       object: localize("edit3d.objectHint"),
+      outdoor: localize("edit3d.outdoorHint"),
       yard: localize("edit3d.yardHint"),
       grade: localize(
         this._gradeMode === "point"
@@ -2844,9 +3100,11 @@ export class Floorplan3dView extends LitElement {
           : nothing
       }
       ${
-        this._tool === "object"
+        this._tool === "object" || this._tool === "outdoor"
           ? html`<furniture-library-sidebar
               class="library"
+              .categories=${this._tool === "outdoor" ? OUTDOOR_CATEGORIES : null}
+              .thumbs=${this._tool === "outdoor" ? this._thumbs : null}
               .armedKind=${this._armedKind}
               @furniture-armed=${(e: CustomEvent<{ kind: string | null }>) => {
                 this._armedKind = e.detail.kind;
@@ -3102,6 +3360,38 @@ export class Floorplan3dView extends LitElement {
       </div>`;
   }
 
+  /** The entity an item stands for (a light it shows lit, a switch), and
+   * its state now. */
+  private _renderLink(
+    item: FurnitureItem,
+    set: (patch: Partial<FurnitureItem>) => void,
+  ) {
+    const st = item.entity_id ? this.hass?.states[item.entity_id] : undefined;
+    const state = st?.state;
+    const level =
+      state === "on" && typeof st?.attributes["brightness"] === "number"
+        ? ` · ${Math.round(((st.attributes["brightness"] as number) / 255) * 100)}%`
+        : "";
+    return html`<label class="row link">
+        <span>${localize("edit3d.entity")}</span>
+        <search-select
+          .options=${this._linkOptions(item)}
+          .value=${item.entity_id ?? null}
+          .noneLabel=${localize("furniture.noEntity")}
+          placeholder=${localize("furniture.searchEntity")}
+          @value-changed=${(e: CustomEvent<{ value: string | null }>) =>
+            set({ entity_id: e.detail.value })}
+        ></search-select>
+      </label>
+      ${
+        item.entity_id
+          ? html`<span class="hint"
+              >${state ?? localize("edit3d.unavailable")}${level}</span
+            >`
+          : nothing
+      }`;
+  }
+
   private _renderSelection(layout: FloorLayout) {
     const sel = this._sel;
     if (!sel)
@@ -3128,6 +3418,7 @@ export class Floorplan3dView extends LitElement {
             @change=${(e: Event) => set({ label: (e.target as HTMLInputElement).value.trim() || null })}
           />
         </label>
+        ${this._renderLink(item, set)}
         ${this._num(localize("edit3d.width"), item.width_cm, (v) => v && v > 0 && set({ width_cm: v }), { unit: "cm", min: 1 })}
         ${this._num(localize("edit3d.depth"), item.depth_cm, (v) => v && v > 0 && set({ depth_cm: v }), { unit: "cm", min: 1 })}
         ${this._num(localize("edit3d.height"), item.height_cm ?? null, (v) => set({ height_cm: v && v > 0 ? v : null }), { unit: "cm", placeholder: localize("edit3d.auto") })}
@@ -3336,7 +3627,9 @@ export class Floorplan3dView extends LitElement {
             >
               ${this._measure.seg}${
                 this._measure.total
-                  ? html`<span>${localize("edit3d.totalLength", { length: this._measure.total })}</span>`
+                  ? html`<span
+                      >${localize("edit3d.totalLength", { length: this._measure.total })}</span
+                    >`
                   : nothing
               }
             </div>`
@@ -3785,7 +4078,6 @@ export class Floorplan3dView extends LitElement {
           : nothing
       }
       <span class="hint">${localize("view3d.roofPartsHint")}</span>
-
     `;
   }
 
@@ -3826,9 +4118,7 @@ export class Floorplan3dView extends LitElement {
         String(states[id]?.attributes["friendly_name"] ?? id),
         likely(id),
       ])
-      .sort(
-        (a, b) => Number(b[2]) - Number(a[2]) || a[1].localeCompare(b[1]),
-      );
+      .sort((a, b) => Number(b[2]) - Number(a[2]) || a[1].localeCompare(b[1]));
     const active = stripPattern(strip, this.hass);
     const activeScene = scenes.find((x) => x.pattern === active)?.scene;
     return html`${this._patternEditor(
@@ -3848,7 +4138,9 @@ export class Floorplan3dView extends LitElement {
               <span
                 >${localize("view3d.roofLightsScene")}${
                   entry.scene === activeScene
-                    ? html` <b>(${localize("view3d.roofLightsSceneActive")})</b>`
+                    ? html` <b
+                        >(${localize("view3d.roofLightsSceneActive")})</b
+                      >`
                     : nothing
                 }</span
               >
@@ -3901,8 +4193,9 @@ export class Floorplan3dView extends LitElement {
                 ...scenes,
                 {
                   scene:
-                    all.find(([id]) => !scenes.some((x) => x.scene === id))?.[0] ??
-                    all[0]![0],
+                    all.find(
+                      ([id]) => !scenes.some((x) => x.scene === id),
+                    )?.[0] ?? all[0]![0],
                   pattern: [...(pattern.length ? pattern : ["#ff9321"])],
                 },
               ])}
@@ -3925,18 +4218,19 @@ export class Floorplan3dView extends LitElement {
       <summary>${summary}</summary>
       <div class="pattern">
         ${pattern.map(
-          (c, k) => html`<input
-            type="color"
-            title=${String(k + 1)}
-            ?disabled=${!this.editable}
-            .value=${c}
-            @change=${(e: Event) =>
-              set(
-                pattern.map((x, j) =>
-                  j === k ? (e.target as HTMLInputElement).value : x,
-                ),
-              )}
-          />`,
+          (c, k) =>
+            html`<input
+              type="color"
+              title=${String(k + 1)}
+              ?disabled=${!this.editable}
+              .value=${c}
+              @change=${(e: Event) =>
+                set(
+                  pattern.map((x, j) =>
+                    j === k ? (e.target as HTMLInputElement).value : x,
+                  ),
+                )}
+            />`,
         )}
       </div>
       <div class="buttons">
@@ -4003,21 +4297,21 @@ export class Floorplan3dView extends LitElement {
             a.label.localeCompare(b.label),
         )
         .map(
-          (e) => html`<label class="row">
-            <input
-              type="checkbox"
-              ?disabled=${!this.editable}
-              .checked=${stripLights(strip, e)}
-              @change=${(ev: Event) =>
-                toggle(e, (ev.target as HTMLInputElement).checked)}
-            />
-            <span
-              >${e.label} ·
-              ${facing[e.facing ?? "s"]}
-              ${e.rake ? localize("view3d.edgeRake") : localize("view3d.edgeEave")}</span
-            >
-            <span class="unit">${Math.round(e.length / 0.3048)} ft</span>
-          </label>`,
+          (e) =>
+            html`<label class="row">
+              <input
+                type="checkbox"
+                ?disabled=${!this.editable}
+                .checked=${stripLights(strip, e)}
+                @change=${(ev: Event) =>
+                  toggle(e, (ev.target as HTMLInputElement).checked)}
+              />
+              <span
+                >${e.label} · ${facing[e.facing ?? "s"]}
+                ${e.rake ? localize("view3d.edgeRake") : localize("view3d.edgeEave")}</span
+              >
+              <span class="unit">${Math.round(e.length / 0.3048)} ft</span>
+            </label>`,
         )}
     </details>`;
   }
