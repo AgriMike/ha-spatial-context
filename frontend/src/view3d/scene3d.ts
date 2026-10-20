@@ -8,6 +8,7 @@
 import { render, svg } from "lit";
 import type {
   CompassSide,
+  RoofEnd,
   RoofLightStrip,
   FloorLayout,
   FurnitureItem,
@@ -25,6 +26,7 @@ import {
   porchSection,
   sectionFaces,
   sectionHeightAt,
+  type RoofSection,
 } from "./roof-planes";
 import type {
   Box3d,
@@ -2818,6 +2820,20 @@ function plannedRoof(
   const floorsAll = input.context ?? input.floors;
   const cuts = eaveCuts(sections);
   const edges: RoofEdge3d[] = [];
+  // The building's rooms, each with the heights it spans.
+  const indoor = floorsAll.flatMap((f) => {
+    const fm = metersPerUnit(f.layout.scale);
+    return f.layout.rooms
+      .filter((r) => !r.outdoor && r.points.length >= 3)
+      .map((r) => {
+        const y0 = f.baseY + (r.floor_offset_m ?? 0);
+        return {
+          y0,
+          y1: y0 + f.wallHeight + 0.6,
+          poly: r.points.map(([x, y]): Vec2 => [x * fm, y * fm]),
+        };
+      });
+  });
   const faces = sections.flatMap((s) => {
     const eave = Math.min(s.eave0, s.eave1);
     const rooms = floorsAll.flatMap((f) => {
@@ -2835,7 +2851,16 @@ function plannedRoof(
         }));
     });
     const si = sections.indexOf(s);
-    const strips = cuts.filter((c) => c.section === si);
+    // Its overhang where it runs into another part of the house (a
+    // garage's eave against the entry beside it): not there.
+    const strips = [
+      ...cuts.filter((c) => c.section === si),
+      ...indoorStrips(s, indoor).map((strip) => ({
+        section: si,
+        strip,
+        caps: [] as RoofFace3d[],
+      })),
+    ];
     // Its edges, cut where its fascia is (inside an upper room, along
     // another's gable).
     const own: RoofEdge3d[] = [];
@@ -2932,36 +2957,120 @@ function plannedRoof(
     }
   // No light strip inside the house: an eave running on through an upper
   // storey (hidden in its walls) would show through its windows.
-  const indoor = floorsAll.flatMap((f) => {
-    const fm = metersPerUnit(f.layout.scale);
-    return f.layout.rooms
-      .filter((r) => !r.outdoor && r.points.length >= 3)
-      .map((r) => {
-        const y0 = f.baseY + (r.floor_offset_m ?? 0);
-        return {
-          y0,
-          y1: y0 + f.wallHeight + 0.6,
-          poly: r.points.map(([x, y]): Vec2 => [x * fm, y * fm]),
-        };
-      });
-  });
   const outside = indoor.reduce<RoofEdge3d[]>(
     (acc, room) =>
       acc.flatMap((e) =>
         Math.max(e.a[1], e.b[1]) < room.y0 ||
         Math.min(e.a[1], e.b[1]) > room.y1
           ? [e]
-          : cutEdge(e, room.poly, -Infinity),
+          : cutEdge(e, room.poly, -Infinity, true),
       ),
     edges,
   );
   return { ...roofColors(input.dark), grid: null, faces, edges: outside };
 }
 
+/** Where a section's overhang runs into a room of the house (another
+ * part of it, at the overhang's height): those stretches of the strip
+ * beyond its walls, as convex quads (x, z) to cut its faces by. */
+function indoorStrips(
+  s: RoofSection,
+  rooms: { y0: number; y1: number; poly: Vec2[] }[],
+): Vec2[][] {
+  const o = s.overhang;
+  if (o <= 0.01) return [];
+  const low = Math.min(s.eave0, s.eave1);
+  const high = Math.max(s.eave0, s.eave1) + (s.pitch * (s.c1 - s.c0)) / 2;
+  const near = rooms.filter((r) => r.y0 < high && r.y1 > low - 0.3);
+  if (!near.length) return [];
+  const world = (a: number, c: number): Vec2 => [
+    s.origin[0] + s.along[0] * a + s.across[0] * c,
+    s.origin[1] + s.along[1] * a + s.across[1] * c,
+  ];
+  const inside = ([x, z]: Vec2) =>
+    near.some(({ poly }) => {
+      let hit = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const [xi, zi] = poly[i]!;
+        const [xj, zj] = poly[j]!;
+        if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi)
+          hit = !hit;
+      }
+      return hit;
+    });
+  const reach = (end: RoofEnd) => (end === "open" ? 0 : o);
+  const A0 = s.a0 - reach(s.ends[0]);
+  const A1 = s.a1 + reach(s.ends[1]);
+  const C0 = s.c0 - o;
+  const C1 = s.c1 + o;
+  /** Runs along [t0, t1] (step 5 cm) where the strip's middle is in a
+   * room, as quads through `quad(t0, t1)`. */
+  const runs = (
+    t0: number,
+    t1: number,
+    mid: (t: number) => Vec2,
+    quad: (u0: number, u1: number) => Vec2[],
+  ): Vec2[][] => {
+    const out: Vec2[][] = [];
+    const step = 0.05;
+    let start: number | null = null;
+    for (let t = t0; t <= t1 + 1e-9; t += step) {
+      const hit = inside(mid(Math.min(t, t1)));
+      if (hit && start === null) start = t;
+      if ((!hit || t + step > t1 + 1e-9) && start !== null) {
+        const end = hit ? t1 : t;
+        out.push(quad(Math.max(t0, start - step / 2), Math.min(t1, end + step / 2)));
+        start = null;
+      }
+    }
+    return out;
+  };
+  const strips: Vec2[][] = [];
+  // Eaves: along a, out from c0 (none on a lean-to's wall side) and c1.
+  const eaveSides: [number, number][] = s.shed
+    ? [[s.c1, C1]]
+    : [
+        [s.c0, C0],
+        [s.c1, C1],
+      ];
+  for (const [wall, edge] of eaveSides) {
+    const out = edge + (edge < wall ? -0.05 : 0.05);
+    strips.push(
+      ...runs(
+        A0,
+        A1,
+        (a) => world(a, (wall + edge) / 2),
+        (u0, u1) => [world(u0, wall), world(u1, wall), world(u1, out), world(u0, out)],
+      ),
+    );
+  }
+  // Gable or hip ends: across c, out from a0 and a1.
+  ([0, 1] as const).forEach((end) => {
+    if (s.ends[end] === "open") return;
+    const wall = end === 0 ? s.a0 : s.a1;
+    const edge = end === 0 ? A0 : A1;
+    const out = edge + (end === 0 ? -0.05 : 0.05);
+    strips.push(
+      ...runs(
+        s.shed ? s.c0 : C0,
+        C1,
+        (c) => world((wall + edge) / 2, c),
+        (u0, u1) => [world(wall, u0), world(wall, u1), world(out, u1), world(out, u0)],
+      ),
+    );
+  });
+  return strips;
+}
+
 /** A roof edge less its stretch inside a room's outline (x, z) standing
  * above `level`, cut as cutFace cuts the fascia: a concave room as its
  * box. */
-function cutEdge(e: RoofEdge3d, room: Vec2[], level: number): RoofEdge3d[] {
+function cutEdge(
+  e: RoofEdge3d,
+  room: Vec2[],
+  level: number,
+  exact = false,
+): RoofEdge3d[] {
   if (Math.max(e.a[1], e.b[1]) <= level + 0.01 || room.length < 3) return [e];
   let area2 = 0;
   room.forEach(([x, z], k) => {
@@ -2978,7 +3087,7 @@ function cutEdge(e: RoofEdge3d, room: Vec2[], level: number): RoofEdge3d[] {
   });
   const xs = ring.map((p) => p[0]);
   const zs = ring.map((p) => p[1]);
-  const poly: Vec2[] = convex
+  const poly: Vec2[] = convex || exact
     ? ring
     : [
         [Math.min(...xs), Math.min(...zs)],
