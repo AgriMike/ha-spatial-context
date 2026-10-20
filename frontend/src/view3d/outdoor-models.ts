@@ -2439,6 +2439,12 @@ export function outdoorModel(item: Item3d): THREE.Group | null {
     Math.max(0.02, item.height),
     spec.flip,
   );
-  const done = lightModel(m, item, spec.kind, o) || plantModel(m, item, o);
-  return done ? finish(m) : null;
+  if (lightModel(m, item, spec.kind, o)) {
+    // A fixture is small and sits in its own beam: it casts no shadow
+    // (else it would black out its own light).
+    const g = finish(m);
+    g.traverse((ob) => (ob.castShadow = false));
+    return g;
+  }
+  return plantModel(m, item, o) ? finish(m) : null;
 }

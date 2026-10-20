@@ -47,6 +47,11 @@ const MAX_POINT_LIGHTS = 8;
 /** Outdoor fixtures' lights (spots, floods, lanterns), on top of those:
  * the brightest get one (two for an up & down light). */
 const MAX_OUTDOOR_LIGHTS = 12;
+/** Of those spots and floods, the brightest cast shadows (a soffit stops an
+ * uplight's wash, a shrub shades a wall): their maps drawn once each time
+ * the scene changes, not every frame. The rest stop at the first roof over
+ * the wall they light (see clipWashes). */
+const MAX_SHADOW_SPOTS = 8;
 /** How close (metres) a dragged scan's edge must come to a wall face to
  * snap onto it, and how far auto-align looks. */
 const DRAG_SNAP_M = 0.15;
@@ -1554,6 +1559,9 @@ function createView3d(options: View3dOptions): View3dHandle {
       light.position.copy(at);
       light.target.position.copy(at).addScaledVector(dir, 4);
       light.name = `${item.name} light`;
+      light.userData["fixture"] = true;
+      // Climbing a wall: a roof or soffit above it stops it.
+      if (dir.y > 0.3) light.userData["wash"] = true;
       return light;
     };
     const t = ((lit.tilt ?? 30) * Math.PI) / 180;
@@ -1722,6 +1730,7 @@ function createView3d(options: View3dOptions): View3dHandle {
   function placeFloors(): void {
     for (const f of floors.values())
       f.group.position.y = f.spec.baseY + spread * f.order;
+    refreshFixtureShadows();
   }
 
   /** The visible building's bounds (ignores the ground). */
@@ -1851,6 +1860,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       roofLightGroup.visible = spread === 0;
       root.add(roofLightGroup);
     }
+    fixtureShadows();
     applyWallHiding();
 
     if (terrain) {
@@ -1947,6 +1957,76 @@ function createView3d(options: View3dOptions): View3dHandle {
   /** The plan's walls and furniture give way to a floor's shown scan in
    * "scan" mode (or for a scan set to replace the walls); in "plan" mode
    * the scan shows only its stairs. */
+  /** The outdoor fixtures' spots and floods: the brightest cast shadows
+   * (walls first lit from below), the rest clipped at the roof. */
+  function fixtureShadows(): void {
+    const spots: THREE.SpotLight[] = [];
+    for (const f of floors.values())
+      f.group.traverse((o) => {
+        const l = o as THREE.SpotLight;
+        if (l.isSpotLight && l.userData["fixture"]) spots.push(l);
+      });
+    spots.sort(
+      (a, b) =>
+        Number(!!b.userData["wash"]) - Number(!!a.userData["wash"]) ||
+        b.intensity - a.intensity,
+    );
+    const rest: THREE.SpotLight[] = [];
+    spots.forEach((l, k) => {
+      if (k >= MAX_SHADOW_SPOTS) {
+        rest.push(l);
+        return;
+      }
+      l.castShadow = true;
+      l.shadow.mapSize.set(512, 512);
+      l.shadow.bias = -0.0004;
+      l.shadow.normalBias = 0.03;
+      l.shadow.camera.near = 0.05;
+      l.shadow.autoUpdate = false;
+      l.shadow.needsUpdate = true;
+    });
+    clipWashes(rest.filter((l) => l.userData["wash"]));
+  }
+
+  /** Redraws the fixtures' shadows (the scene moved or its walls changed). */
+  function refreshFixtureShadows(): void {
+    for (const f of floors.values())
+      f.group.traverse((o) => {
+        const l = o as THREE.SpotLight;
+        if (l.isSpotLight && l.castShadow) l.shadow.needsUpdate = true;
+      });
+  }
+
+  /** An uplight with no shadow of its own stops at the first roof or
+   * soffit over the wall it climbs: it reaches only as far as that eave. */
+  function clipWashes(lights: THREE.SpotLight[]): void {
+    if (!roof || !lights.length) return;
+    root.updateMatrixWorld(true);
+    const walls = [...floors.values()].map((f) => f.walls);
+    const ray = new THREE.Raycaster();
+    const p = new THREE.Vector3();
+    const t = new THREE.Vector3();
+    for (const light of lights) {
+      light.getWorldPosition(p);
+      light.target.getWorldPosition(t);
+      const dir = t.clone().sub(p).normalize();
+      ray.set(p, dir);
+      ray.far = 20;
+      const hit = ray.intersectObjects(walls, true)[0];
+      const at = hit ? hit.point.clone() : p.clone();
+      // Just off the wall, toward the light, then up to the roof.
+      const back = new THREE.Vector3(p.x - at.x, 0, p.z - at.z);
+      if (back.lengthSq() > 1e-6) at.addScaledVector(back.normalize(), 0.05);
+      ray.set(at, new THREE.Vector3(0, 1, 0));
+      ray.far = 30;
+      const up = ray.intersectObject(roof, false)[0];
+      if (!up) continue;
+      const reach = p.distanceTo(new THREE.Vector3(at.x, up.point.y, at.z));
+      light.distance = reach * 1.1;
+      light.decay = 1;
+    }
+  }
+
   function applyWallHiding(): void {
     for (const [floorId, f] of floors) {
       const shown = [...scans.values()].filter(
@@ -2004,6 +2084,7 @@ function createView3d(options: View3dOptions): View3dHandle {
               !planStairsAt(s.placement.floorId)));
       });
     }
+    refreshFixtureShadows();
   }
 
   /** The plan models the stairs on this floor or a floor next to it (a
