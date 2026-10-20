@@ -348,6 +348,20 @@ export interface RoofPart {
 
 export interface RoofPlan {
   parts: RoofPart[];
+  /** Light strips along the roof's edges (permanent outdoor lights). */
+  lights?: RoofLightStrip[];
+}
+
+export type CompassSide = "n" | "e" | "s" | "w";
+
+/** LEDs in a row along the fascia of every roof edge (eaves and gable
+ * rakes) facing one of `sides`: a Hue Festavia permanent light's run. */
+export interface RoofLightStrip {
+  /** The light it shows (its colour, brightness, on or off). */
+  entity_id: string | null;
+  sides: CompassSide[];
+  /** Inches between LEDs; 2 when absent. */
+  spacing_in?: number;
 }
 
 /** Ground that slopes across a building's site (a walk-out on a hill):

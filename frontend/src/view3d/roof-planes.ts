@@ -4,7 +4,7 @@
  * and soffits under the eaves, and sided gable ends. Part of the main
  * bundle (pure numbers), like scene3d.ts. */
 
-import type { RoofFace3d, Vec2 } from "./view3d-api";
+import type { RoofEdge3d, RoofFace3d, Vec2 } from "./view3d-api";
 import type { RoofEnd, RoofPart } from "../types";
 
 type Vec3 = [number, number, number];
@@ -225,7 +225,15 @@ export function eaveCuts(
 }
 
 /** The faces of one section, in world space. */
-export function sectionFaces(s: RoofSection): RoofFace3d[] {
+/** Light strips sit this far down the fascia from the roof's edge, and
+ * this far out from its face. */
+const STRIP_DOWN_M = FASCIA_M * 0.55;
+const STRIP_OUT_M = 0.012;
+
+export function sectionFaces(
+  s: RoofSection,
+  edges?: RoofEdge3d[],
+): RoofFace3d[] {
   const ps = planes(s);
   const o = s.overhang;
   // Open ends stop at the wall line; so does a lean-to's high side.
@@ -294,6 +302,16 @@ export function sectionFaces(s: RoofSection): RoofFace3d[] {
         kind: "trim",
       });
       const [ia, ic] = edge.inward;
+      if (edges) {
+        // Facing out: against the inward direction, on the floor plane.
+        const ox = -(s.along[0] * ia + s.across[0] * ic);
+        const oz = -(s.along[1] * ia + s.across[1] * ic);
+        const at = (v: Vec2, h: number): Vec3 => {
+          const w = world(v[0], v[1], h - STRIP_DOWN_M);
+          return [w[0] + ox * STRIP_OUT_M, w[1], w[2] + oz * STRIP_OUT_M];
+        };
+        edges.push({ a: at(p, hp), b: at(q, hq), out: [ox, oz] });
+      }
       const pi: Vec2 = [p[0] + ia * o, p[1] + ic * o];
       const qi: Vec2 = [q[0] + ia * o, q[1] + ic * o];
       faces.push({

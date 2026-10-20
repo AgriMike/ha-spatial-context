@@ -96,7 +96,8 @@ export function moveCorners(
 }
 
 /** A wall segment moved square to itself by `d` (plan units, along its
- * left-hand normal), carrying the walls and rooms joined at its ends. */
+ * left-hand normal), carrying the walls and rooms joined at its ends or
+ * along it. */
 export function moveSegment(
   layout: FloorLayout,
   wallId: string,
@@ -112,14 +113,25 @@ export function moveSegment(
   if (len <= 0) return {};
   const nx = -(b[1] - a[1]) / len;
   const ny = (b[0] - a[0]) / len;
-  return moveCorners(
-    layout,
-    [
-      { from: a, to: [a[0] + nx * d, a[1] + ny * d] },
-      { from: b, to: [b[0] + nx * d, b[1] + ny * d] },
-    ],
-    tol,
-  );
+  const moves: { from: Pt; to: Pt }[] = [
+    { from: a, to: [a[0] + nx * d, a[1] + ny * d] },
+    { from: b, to: [b[0] + nx * d, b[1] + ny * d] },
+  ];
+  // Walls ending on it (a T) and room corners along it come too, so
+  // they stay against it.
+  const ux = (b[0] - a[0]) / len;
+  const uy = (b[1] - a[1]) / len;
+  const onIt = (p: Pt) => {
+    const along = (p[0] - a[0]) * ux + (p[1] - a[1]) * uy;
+    const off = (p[0] - a[0]) * nx + (p[1] - a[1]) * ny;
+    return Math.abs(off) <= tol && along > tol && along < len - tol;
+  };
+  for (const list of [layout.walls, layout.rooms])
+    for (const x of list)
+      for (const p of x.points as Pt[])
+        if (onIt(p) && !moves.some((m) => near(m.from, p, 1e-9)))
+          moves.push({ from: p, to: [p[0] + nx * d, p[1] + ny * d] });
+  return moveCorners(layout, moves, tol);
 }
 
 /** How far a point is from a segment's line, along its left-hand normal. */

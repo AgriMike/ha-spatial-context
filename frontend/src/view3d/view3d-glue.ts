@@ -17,6 +17,7 @@ import type {
   Item3d,
   Roof3d,
   RoofFace3d,
+  RoofLights3d,
   RoofGrid3d,
   Scene3d,
   ScanPlacement3d,
@@ -841,6 +842,82 @@ function modelItem(item: Item3d): THREE.Group {
   return g;
 }
 
+/** Most lights a strip washes the walls with (each costs every material
+ * a little). */
+const STRIP_LIGHTS = 10;
+
+/** The roof's light strips: a bead per LED, glowing in its light's colour
+ * while on (with a soft halo, and a few lights washing the walls), else
+ * dark. */
+function buildRoofLights(strips: RoofLights3d[]): THREE.Group {
+  const group = new THREE.Group();
+  group.name = "Roof lights";
+  const dummy = new THREE.Object3D();
+  const instanced = (
+    geom: THREE.BufferGeometry,
+    mat: THREE.Material,
+    pts: number[],
+  ) => {
+    const n = pts.length / 3;
+    const mesh = new THREE.InstancedMesh(geom, mat, n);
+    for (let k = 0; k < n; k++) {
+      dummy.position.set(pts[k * 3]!, pts[k * 3 + 1]!, pts[k * 3 + 2]!);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(k, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    return mesh;
+  };
+  for (const strip of strips) {
+    if (!strip.points.length) continue;
+    if (!strip.color) {
+      const beads = instanced(
+        new THREE.SphereGeometry(0.009, 8, 6),
+        new THREE.MeshStandardMaterial({ color: "#2e2e2e", roughness: 0.35 }),
+        strip.points,
+      );
+      beads.name = `${strip.name} (off)`;
+      group.add(beads);
+      continue;
+    }
+    const level = Math.max(0.15, Math.min(1, strip.level));
+    const lit = new THREE.Color(strip.color);
+    const beads = instanced(
+      new THREE.SphereGeometry(0.01, 8, 6),
+      new THREE.MeshBasicMaterial({
+        color: lit.clone().lerp(new THREE.Color("#ffffff"), 0.25 * level),
+        toneMapped: false,
+      }),
+      strip.points,
+    );
+    beads.name = strip.name;
+    const halo = instanced(
+      new THREE.SphereGeometry(0.03, 8, 6),
+      new THREE.MeshBasicMaterial({
+        color: lit,
+        transparent: true,
+        opacity: 0.12 + 0.18 * level,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+      }),
+      strip.points,
+    );
+    halo.name = `${strip.name} glow`;
+    group.add(beads, halo);
+    const every = Math.max(1, Math.ceil(strip.glow.length / STRIP_LIGHTS));
+    strip.glow
+      .filter((_, k) => k % every === 0)
+      .forEach(([x, y, z]) => {
+        const light = new THREE.PointLight(lit, 0.6 + 1.6 * level, 6, 2);
+        light.position.set(x, y, z);
+        group.add(light);
+      });
+  }
+  return group;
+}
+
 function insidePolygon(poly: Vec2[], x: number, z: number): boolean {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -1257,6 +1334,8 @@ function createView3d(options: View3dOptions): View3dHandle {
   let terrainBox: THREE.Box3 | null = null;
   /** The building's roof, shown while the floors stand together. */
   let roof: THREE.Mesh | null = null;
+  /** The roof's light strips (see RoofLights3d). */
+  let roofLightGroup: THREE.Group | null = null;
   let roofSpec: Roof3d | null = null;
 
   const hemi = new THREE.HemisphereLight("#dcecff", "#b9a88f", 1);
@@ -1619,6 +1698,20 @@ function createView3d(options: View3dOptions): View3dHandle {
       roof.receiveShadow = true;
       roof.visible = spread === 0;
       root.add(roof);
+    }
+    if (roofLightGroup) {
+      roofLightGroup.removeFromParent();
+      roofLightGroup.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        mesh.geometry?.dispose();
+        (mesh.material as THREE.Material | undefined)?.dispose();
+      });
+      roofLightGroup = null;
+    }
+    if (spec.roofLights?.length) {
+      roofLightGroup = buildRoofLights(spec.roofLights);
+      roofLightGroup.visible = spread === 0;
+      root.add(roofLightGroup);
     }
     applyWallHiding();
 
@@ -2778,6 +2871,7 @@ function createView3d(options: View3dOptions): View3dHandle {
     setSpread(metres) {
       spread = metres;
       if (roof) roof.visible = spread === 0;
+      if (roofLightGroup) roofLightGroup.visible = spread === 0;
       applyWallHiding();
       placeFloors();
       placeSun();

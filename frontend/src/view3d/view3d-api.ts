@@ -208,6 +208,8 @@ export interface Scene3d {
   terrain: Terrain3d | null;
   /** The building's roof, null when not shown. */
   roof: Roof3d | null;
+  /** Light strips along the roof's edges (shown with it). */
+  roofLights?: RoofLights3d[];
 }
 
 /** A roof: planar faces (from explicit parts), else a height grid worked
@@ -221,6 +223,27 @@ export interface Roof3d {
   trimColor: string;
   /** Shake-sided gable ends. */
   shakeColor: string;
+  /** Its outer edges (eaves and gable rakes) along the fascia's face,
+   * each with the way it faces out (unit, floor plane): where light
+   * strips go. */
+  edges?: RoofEdge3d[];
+}
+
+export interface RoofEdge3d {
+  a: [number, number, number];
+  b: [number, number, number];
+  out: Vec2;
+}
+
+/** A light strip's LEDs along the roof's edges: their centres (world,
+ * x y z in turn), its colour while on (null: off) and brightness (0-1),
+ * and spots along it to light the walls from. */
+export interface RoofLights3d {
+  name: string;
+  points: number[];
+  color: string | null;
+  level: number;
+  glow: [number, number, number][];
 }
 
 /** One flat, convex piece of roof in world space, its corners in order. */

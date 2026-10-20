@@ -7,6 +7,7 @@
 
 import { render, svg } from "lit";
 import type {
+  CompassSide,
   FloorLayout,
   FurnitureItem,
   GroundSetting,
@@ -33,7 +34,9 @@ import type {
   Pane3d,
   Porch3d,
   Roof3d,
+  RoofEdge3d,
   RoofFace3d,
+  RoofLights3d,
   Scene3d,
   Slab3d,
   Terrain3d,
@@ -2254,6 +2257,7 @@ export function buildScene(input: SceneInput): Scene3d {
       intensity: 2.6 * day * (1 - 0.65 * clouds),
     };
   }
+  const shownRoof = input.roof ? cachedRoof(input, northDeg, floors) : null;
   return {
     floors,
     sun,
@@ -2264,7 +2268,8 @@ export function buildScene(input: SceneInput): Scene3d {
       intensity: 0.55 + 0.7 * day,
     },
     terrain: site,
-    roof: input.roof ? cachedRoof(input, northDeg, floors) : null,
+    roof: shownRoof,
+    roofLights: roofLights(input, shownRoof, northDeg),
     background: dark
       ? day > 0
         ? "#1f2a33"
@@ -2810,6 +2815,7 @@ function plannedRoof(
   // where it rises above their floor.
   const floorsAll = input.context ?? input.floors;
   const cuts = eaveCuts(sections);
+  const edges: RoofEdge3d[] = [];
   const faces = sections.flatMap((s) => {
     const eave = Math.min(s.eave0, s.eave1);
     const rooms = floorsAll.flatMap((f) => {
@@ -2828,7 +2834,21 @@ function plannedRoof(
     });
     const si = sections.indexOf(s);
     const strips = cuts.filter((c) => c.section === si);
-    return [...sectionFaces(s), ...strips.flatMap((c) => c.caps)].flatMap(
+    // Its edges, cut where its fascia is (inside an upper room, along
+    // another's gable).
+    const own: RoofEdge3d[] = [];
+    const sectionFaceList = sectionFaces(s, own);
+    for (const e of own)
+      edges.push(
+        ...[
+          ...rooms,
+          ...strips.map((c) => ({ y: -Infinity, poly: c.strip })),
+        ].reduce<RoofEdge3d[]>(
+          (acc, room) => acc.flatMap((x) => cutEdge(x, room.poly, room.y)),
+          [e],
+        ),
+      );
+    return [...sectionFaceList, ...strips.flatMap((c) => c.caps)].flatMap(
       (face) =>
         [
           ...rooms,
@@ -2894,9 +2914,150 @@ function plannedRoof(
         meets ? meets.overhang : PORCH_OVERHANG_M,
         p.abutted,
       );
-      if (s) faces.push(...sectionFaces(s));
+      if (s) faces.push(...sectionFaces(s, edges));
     }
-  return { ...roofColors(input.dark), grid: null, faces };
+  return { ...roofColors(input.dark), grid: null, faces, edges };
+}
+
+/** A roof edge less its stretch inside a room's outline (x, z) standing
+ * above `level`, cut as cutFace cuts the fascia: a concave room as its
+ * box. */
+function cutEdge(e: RoofEdge3d, room: Vec2[], level: number): RoofEdge3d[] {
+  if (Math.max(e.a[1], e.b[1]) <= level + 0.01 || room.length < 3) return [e];
+  let area2 = 0;
+  room.forEach(([x, z], k) => {
+    const [x2, z2] = room[(k + 1) % room.length]!;
+    area2 += x * z2 - x2 * z;
+  });
+  const ring = area2 > 0 ? room : [...room].reverse();
+  const convex = ring.every((p, k) => {
+    const q = ring[(k + 1) % ring.length]!;
+    const r = ring[(k + 2) % ring.length]!;
+    return (
+      (q[0] - p[0]) * (r[1] - q[1]) - (q[1] - p[1]) * (r[0] - q[0]) >= -1e-9
+    );
+  });
+  const xs = ring.map((p) => p[0]);
+  const zs = ring.map((p) => p[1]);
+  const poly: Vec2[] = convex
+    ? ring
+    : [
+        [Math.min(...xs), Math.min(...zs)],
+        [Math.max(...xs), Math.min(...zs)],
+        [Math.max(...xs), Math.max(...zs)],
+        [Math.min(...xs), Math.max(...zs)],
+      ];
+  const [ax, , az] = e.a;
+  const dx = e.b[0] - ax;
+  const dz = e.b[2] - az;
+  const ts = [0, 1];
+  poly.forEach(([px, pz], k) => {
+    const [qx, qz] = poly[(k + 1) % poly.length]!;
+    const ex = qx - px;
+    const ez = qz - pz;
+    const den = dx * ez - dz * ex;
+    if (Math.abs(den) < 1e-12) return;
+    const t = ((px - ax) * ez - (pz - az) * ex) / den;
+    const u = ((px - ax) * dz - (pz - az) * dx) / den;
+    if (t > 0 && t < 1 && u >= 0 && u <= 1) ts.push(t);
+  });
+  ts.sort((x, y) => x - y);
+  const inside = (x: number, z: number) => {
+    let hit = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [xi, zi] = poly[i]!;
+      const [xj, zj] = poly[j]!;
+      if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi)
+        hit = !hit;
+    }
+    return hit;
+  };
+  const at = (t: number): [number, number, number] => [
+    ax + dx * t,
+    e.a[1] + (e.b[1] - e.a[1]) * t,
+    az + dz * t,
+  ];
+  const out: RoofEdge3d[] = [];
+  for (let k = 0; k + 1 < ts.length; k++) {
+    const t0 = ts[k]!;
+    const t1 = ts[k + 1]!;
+    if (t1 - t0 < 1e-6) continue;
+    const mid = at((t0 + t1) / 2);
+    if (inside(mid[0], mid[2])) continue;
+    const last = out[out.length - 1];
+    if (last && Math.hypot(last.b[0] - at(t0)[0], last.b[2] - at(t0)[2]) < 1e-6)
+      last.b = at(t1);
+    else out.push({ a: at(t0), b: at(t1), out: e.out });
+  }
+  return out;
+}
+
+const SIDE_DEG: Record<CompassSide, number> = { n: 0, e: 90, s: 180, w: 270 };
+
+/** The roof's light strips: an LED every `spacing_in` along each edge
+ * facing one of a strip's sides (within 45 degrees), lit as its light is. */
+function roofLights(
+  input: SceneInput,
+  roof: Roof3d | null,
+  northDeg: number,
+): RoofLights3d[] {
+  const strips = input.roofPlan?.lights ?? [];
+  const edges = roof?.edges ?? [];
+  if (!strips.length || !edges.length) return [];
+  return strips.map((strip) => {
+    const dirs = strip.sides.map((side) =>
+      planVector(SIDE_DEG[side] ?? 180, northDeg),
+    );
+    const step = Math.max(0.01, (strip.spacing_in ?? 2) * 0.0254);
+    const points: number[] = [];
+    const glow: [number, number, number][] = [];
+    let run = 0;
+    for (const e of edges) {
+      if (!dirs.some(([vx, vz]) => e.out[0] * vx + e.out[1] * vz > 0.7))
+        continue;
+      const len = Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1], e.b[2] - e.a[2]);
+      if (len < step) continue;
+      const n = Math.floor(len / step);
+      const start = (len - n * step) / 2;
+      for (let k = 0; k <= n; k++) {
+        const t = (start + k * step) / len;
+        points.push(
+          e.a[0] + (e.b[0] - e.a[0]) * t,
+          e.a[1] + (e.b[1] - e.a[1]) * t,
+          e.a[2] + (e.b[2] - e.a[2]) * t,
+        );
+      }
+      // A wash of light on the walls every few metres of it.
+      for (let d = 1.5 - run; d < len; d += 3) {
+        const t = Math.max(0, d) / len;
+        glow.push([
+          e.a[0] + (e.b[0] - e.a[0]) * t + e.out[0] * 0.3,
+          e.a[1] + (e.b[1] - e.a[1]) * t - 0.1,
+          e.a[2] + (e.b[2] - e.a[2]) * t + e.out[1] * 0.3,
+        ]);
+      }
+      run = (run + len) % 3;
+    }
+    const st = strip.entity_id ? input.hass?.states[strip.entity_id] : undefined;
+    const on = st?.state === "on";
+    const attrs = (st?.attributes ?? {}) as Record<string, unknown>;
+    const rgb = attrs["rgb_color"];
+    const color = !on
+      ? null
+      : Array.isArray(rgb) && rgb.length === 3
+        ? `#${(rgb as number[])
+            .map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0"))
+            .join("")}`
+        : "#ffd27a";
+    const brightness = attrs["brightness"];
+    return {
+      name: strip.entity_id ?? "Roof lights",
+      points,
+      color,
+      level: typeof brightness === "number" ? brightness / 255 : 1,
+      glow,
+    };
+  });
 }
 
 /** A roof face less the part of it inside a room's outline (x, z) that

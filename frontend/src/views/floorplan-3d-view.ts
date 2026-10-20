@@ -2285,9 +2285,13 @@ export class Floorplan3dView extends LitElement {
             patchItem(layout, drag.id, { x: drag.at[0], y: drag.at[1] }),
           );
       } else if (drag.kind === "seg" && Math.abs(drag.d) > 1e-9) {
+        const wall = this._wallOf(drag.wallId);
+        const a = wall?.points[drag.seg] as Pt | undefined;
+        const b = wall?.points[drag.seg + 1] as Pt | undefined;
         this._edit(
           moveSegment(layout, drag.wallId, drag.seg, drag.d, 1.5 * this._perCm),
         );
+        if (a && b) this._roofFollow(a, b, drag.d);
       } else if (
         drag.kind === "corner" &&
         (drag.to[0] !== drag.from[0] || drag.to[1] !== drag.from[1])
@@ -2432,6 +2436,53 @@ export class Floorplan3dView extends LitElement {
       }),
     );
     this._outlineCorner = null;
+  }
+
+  /** The roof's parts follow a wall moved square to itself (plan units,
+   * `d` along its left-hand normal): an edge of a part lying on its line
+   * and overlapping it moves with it, so the roof still meets the wall. */
+  private _roofFollow(a: Pt, b: Pt, d: number): void {
+    const plan = this._roofPlan;
+    const layout = this.layout;
+    if (!plan?.parts.length || !layout) return;
+    // The parts are in the building's lowest floor's plan units.
+    const ids = this._buildingFloorIds;
+    const lowestId = [...ids].sort(
+      (x, y) => (this._floorBases.get(x) ?? 0) - (this._floorBases.get(y) ?? 0),
+    )[0];
+    const lowest = lowestId ? this._layoutOf(lowestId) : null;
+    const k =
+      metersPerUnit(layout.scale) / metersPerUnit(lowest?.scale ?? layout.scale);
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (len <= 0) return;
+    const nx = (-(b[1] - a[1]) / len) * d * k;
+    const ny = ((b[0] - a[0]) / len) * d * k;
+    const tol = 3 * this._perCm * k;
+    const horizontal = Math.abs(a[1] - b[1]) * k <= tol;
+    const vertical = Math.abs(a[0] - b[0]) * k <= tol;
+    if (!horizontal && !vertical) return;
+    const line = horizontal ? ((a[1] + b[1]) / 2) * k : ((a[0] + b[0]) / 2) * k;
+    const lo = (horizontal ? Math.min(a[0], b[0]) : Math.min(a[1], b[1])) * k;
+    const hi = (horizontal ? Math.max(a[0], b[0]) : Math.max(a[1], b[1])) * k;
+    let changed = false;
+    const parts = plan.parts.map((part) => {
+      const [s0, s1] = horizontal ? [part.x0, part.x1] : [part.y0, part.y1];
+      const overlaps =
+        Math.min(hi, Math.max(s0, s1)) - Math.max(lo, Math.min(s0, s1)) > tol;
+      if (!overlaps) return part;
+      const next = { ...part };
+      if (horizontal) {
+        if (Math.abs(part.y0 - line) <= tol) next.y0 = part.y0 + ny;
+        if (Math.abs(part.y1 - line) <= tol) next.y1 = part.y1 + ny;
+      } else {
+        if (Math.abs(part.x0 - line) <= tol) next.x0 = part.x0 + nx;
+        if (Math.abs(part.x1 - line) <= tol) next.x1 = part.x1 + nx;
+      }
+      if (next.x0 !== part.x0 || next.x1 !== part.x1 || next.y0 !== part.y0 || next.y1 !== part.y1)
+        changed = true;
+      return next;
+    });
+    if (changed) this._setRoof({ ...plan, parts });
   }
 
   /** Previews the walls a change would move, as boxes. */
