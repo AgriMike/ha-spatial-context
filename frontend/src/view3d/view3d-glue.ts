@@ -1519,8 +1519,11 @@ function createView3d(options: View3dOptions): View3dHandle {
 
   /** An outdoor fixture's lights, by its beam: spots aimed from it, a
    * flood out and down, up and down, down, or all round. */
-  function fixtureLights(item: Item3d, baseY: number): THREE.Light[] {
-    const lit = item.light;
+  function fixtureLights(
+    item: Item3d,
+    baseY: number,
+    lit = item.light,
+  ): THREE.Light[] {
     if (!lit?.beam || lit.beam === "glow") return [];
     const ground = item.grounded
       ? groundAt(siteTerrain, item.x, item.z) - baseY
@@ -1565,20 +1568,37 @@ function createView3d(options: View3dOptions): View3dHandle {
           ),
         ];
       case "flood": {
-        const d = (35 * Math.PI) / 180;
+        // `tilt` here is how far below level it points.
+        const d = ((lit.tilt ?? 35) * Math.PI) / 180;
         return [
-          spot(world(0, -Math.sin(d), Math.cos(d)), 40 + 110 * k, 100, 16),
+          spot(
+            world(0, -Math.sin(d), Math.cos(d)),
+            40 + 110 * k,
+            lit.spread ?? 100,
+            16,
+          ),
         ];
       }
       case "down":
-        return [spot(new THREE.Vector3(0, -1, 0), 10 + 26 * k, 110, 6)];
+      case "up":
       case "updown": {
+        // Just out from the wall, up and/or down along it.
         const out = world(0, 0, 1).multiplyScalar(0.06);
-        const at = pos.clone().add(out);
-        return [
-          spot(new THREE.Vector3(0, 1, 0), 8 + 20 * k, 40, 5, at),
-          spot(new THREE.Vector3(0, -1, 0), 8 + 20 * k, 40, 5, at),
-        ];
+        const at =
+          lit.beam === "down" && !item.light2 ? pos : pos.clone().add(out);
+        const cone = lit.spread ?? (lit.beam === "updown" ? 40 : 110);
+        const strength = lit.beam === "down" ? 10 + 26 * k : 8 + 20 * k;
+        const reach = cone > 80 ? 6 : 5;
+        const out2: THREE.Light[] = [];
+        if (lit.beam !== "down")
+          out2.push(
+            spot(new THREE.Vector3(0, 1, 0), strength, cone, reach, at),
+          );
+        if (lit.beam !== "up")
+          out2.push(
+            spot(new THREE.Vector3(0, -1, 0), strength, cone, reach, at),
+          );
+        return out2;
       }
       default: {
         const light = new THREE.PointLight(lit.color, 3 + 10 * k, 8, 2);
@@ -1661,9 +1681,12 @@ function createView3d(options: View3dOptions): View3dHandle {
     group.add(lights);
     for (const item of spec.items) {
       furniture.add(buildItem(item, spec.baseY));
-      if (item.light?.beam) {
+      if (item.light?.beam || item.light2) {
         if (pointLights.has(item.id))
-          for (const light of fixtureLights(item, spec.baseY)) {
+          for (const light of [
+            ...fixtureLights(item, spec.baseY),
+            ...fixtureLights(item, spec.baseY, item.light2),
+          ]) {
             lights.add(light);
             if ((light as THREE.SpotLight).isSpotLight)
               lights.add((light as THREE.SpotLight).target);
@@ -1745,18 +1768,22 @@ function createView3d(options: View3dOptions): View3dHandle {
     floors.clear();
     // The brightest linked lights get a real point light; outdoor
     // fixtures theirs, from a budget of their own.
+    const level = (i: Item3d) =>
+      Math.max(i.light?.level ?? 0, i.light2?.level ?? 0);
     const byLevel = spec.floors
       .flatMap((f) => f.items)
-      .filter((i) => i.light)
-      .sort((a, b) => b.light!.level - a.light!.level);
+      .filter((i) => i.light || i.light2)
+      .sort((a, b) => level(b) - level(a));
     const lit = byLevel
-      .filter((i) => !i.light!.beam)
+      .filter((i) => i.light && !i.light.beam && !i.light2)
       .slice(0, MAX_POINT_LIGHTS);
     let budget = MAX_OUTDOOR_LIGHTS;
     for (const i of byLevel) {
-      const beam = i.light!.beam;
-      if (!beam || beam === "glow") continue;
-      const cost = beam === "updown" ? 2 : 1;
+      const beam = i.light?.beam;
+      const cost =
+        (beam && beam !== "glow" ? (beam === "updown" ? 2 : 1) : 0) +
+        (i.light2 ? 1 : 0);
+      if (!cost) continue;
       if (cost > budget) continue;
       budget -= cost;
       lit.push(i);

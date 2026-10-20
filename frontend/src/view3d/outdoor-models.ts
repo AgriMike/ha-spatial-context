@@ -69,8 +69,11 @@ const SHEET = new THREE.MeshStandardMaterial({
 
 /** A light's lens or diffuser: frosted while off, glowing in the light's
  * colour while on. */
-function lens(item: Item3d, off = "#e9e6df"): THREE.MeshStandardMaterial {
-  const lit = item.light;
+function lens(
+  item: Item3d,
+  off = "#e9e6df",
+  lit = item.light,
+): THREE.MeshStandardMaterial {
   if (!lit) return mat(off, 0.3);
   const c = new THREE.Color(lit.color).lerp(new THREE.Color("#ffffff"), 0.45);
   return mat(`#${c.getHexString()}`, 0.4, 0, {
@@ -82,8 +85,9 @@ function lens(item: Item3d, off = "#e9e6df"): THREE.MeshStandardMaterial {
 /** Glows waiting to be added to a model as it's grouped (see halo). */
 const GLOWS = new WeakMap<
   Model,
-  { x: number; y: number; z: number; r: number }[]
+  { x: number; y: number; z: number; r: number; lit: Light }[]
 >();
+type Light = NonNullable<Item3d["light"]>;
 
 let glowTexture: THREE.Texture | null = null;
 const SPRITES = new Map<string, THREE.SpriteMaterial>();
@@ -117,36 +121,37 @@ function halo(
   y: number,
   z: number,
   r: number,
+  lit = item.light,
 ): void {
-  if (!item.light) return;
+  if (!lit) return;
   const list = GLOWS.get(m) ?? [];
-  list.push({ x, y, z, r });
+  list.push({ x, y, z, r, lit });
   GLOWS.set(m, list);
 }
 
 /** The model grouped, with its glows. */
-function finish(m: Model, item: Item3d): THREE.Group {
+function finish(m: Model): THREE.Group {
   const g = m.group();
-  const lit = item.light;
   const glows = GLOWS.get(m);
-  if (!lit || !glows) return g;
-  // Shared by colour and brightness (sprites' materials outlive their
-  // models: the scene's clean-up only frees meshes').
-  const key = `${lit.color}|${lit.level.toFixed(2)}`;
-  let material = SPRITES.get(key);
-  if (!material) {
-    material = new THREE.SpriteMaterial({
-      map: glowMap(),
-      color: lit.color,
-      transparent: true,
-      opacity: 0.35 + 0.5 * lit.level,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      toneMapped: false,
-    });
-    SPRITES.set(key, material);
-  }
+  if (!glows) return g;
   for (const h of glows) {
+    // Shared by colour and brightness (sprites' materials outlive their
+    // models: the scene's clean-up only frees meshes').
+    const lit = h.lit;
+    const key = `${lit.color}|${lit.level.toFixed(2)}`;
+    let material = SPRITES.get(key);
+    if (!material) {
+      material = new THREE.SpriteMaterial({
+        map: glowMap(),
+        color: lit.color,
+        transparent: true,
+        opacity: 0.35 + 0.5 * lit.level,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+      });
+      SPRITES.set(key, material);
+    }
     const sprite = new THREE.Sprite(material);
     sprite.position.set(m.flip ? -h.x : h.x, h.y, h.z);
     sprite.scale.setScalar(h.r * 2.6);
@@ -758,19 +763,24 @@ function upDown(m: Model, item: Item3d, round: boolean, tri = false): void {
     g.translate(0, H / 2, z);
     m.add(g, body);
   } else m.soft(W, H, D * 0.9, 0, 0, z, body, 0.01);
-  const glow = lens(item);
+  // Up and down: one light both ways, or a two-light sconce's own each.
+  const twin = item.model?.opts["twin"] === true;
+  const upLit = item.light;
+  const downLit = twin ? item.light2 : item.light;
+  const up = lens(item, undefined, upLit);
+  const down = lens(item, undefined, downLit);
   const r = round || tri ? D * 0.4 : 0;
   if (r) {
-    m.cyl(r, r, 0.006, 0, H - 0.004, z, glow, 20);
-    m.cyl(r, r, 0.006, 0, -0.002, z, glow, 20);
+    m.cyl(r, r, 0.006, 0, H - 0.004, z, up, 20);
+    m.cyl(r, r, 0.006, 0, -0.002, z, down, 20);
   } else {
-    m.box(W * 0.8, 0.006, D * 0.6, 0, H - 0.004, z, glow);
-    m.box(W * 0.8, 0.006, D * 0.6, 0, -0.002, z, glow);
+    m.box(W * 0.8, 0.006, D * 0.6, 0, H - 0.004, z, up);
+    m.box(W * 0.8, 0.006, D * 0.6, 0, -0.002, z, down);
   }
   // A plate on the wall behind.
   m.box(W * 0.9, H * 0.85, 0.01, 0, H * 0.075, -D / 2 + 0.005, body);
-  halo(m, item, 0, H + 0.02, z, Math.max(W, D) * 0.55);
-  halo(m, item, 0, -0.02, z, Math.max(W, D) * 0.55);
+  halo(m, item, 0, H + 0.02, z, Math.max(W, D) * 0.55, upLit);
+  halo(m, item, 0, -0.02, z, Math.max(W, D) * 0.55, downLit);
 }
 
 /** A flat wall light glowing below (Hue Turaco, Daylo) or all over its
@@ -811,7 +821,8 @@ function flood(m: Model, item: Item3d, o: Opts, round: boolean): void {
     body,
     0.006,
   );
-  const tilt = (35 * Math.PI) / 180;
+  // Aimed down to where it's set to reach (Item3d.tilt), 35° else.
+  const tilt = ((item.tilt ?? 35) * Math.PI) / 180;
   const hw = (W / heads) * 0.86;
   for (let k = 0; k < heads; k++) {
     const x = heads === 1 ? 0 : (k - (heads - 1) / 2) * (W / heads);
@@ -1088,6 +1099,7 @@ function lightModel(m: Model, item: Item3d, kind: string, o: Opts): boolean {
     }
     case "hue_econic_updown":
     case "cylinder_updown":
+    case "cylinder_updown_twin":
     case "hue_appear_wall":
       upDown(m, item, kind !== "hue_appear_wall");
       return true;
@@ -2428,5 +2440,5 @@ export function outdoorModel(item: Item3d): THREE.Group | null {
     spec.flip,
   );
   const done = lightModel(m, item, spec.kind, o) || plantModel(m, item, o);
-  return done ? finish(m, item) : null;
+  return done ? finish(m) : null;
 }

@@ -190,6 +190,17 @@ _FURNITURE_SCHEMA = {
     vol.Optional("opacity"): vol.All(vol.Coerce(float), vol.Range(min=0.05, max=1)),
     # An HA entity the item stands for (a lamp's light, say).
     vol.Optional("entity_id"): vol.Any(str, None),
+    # A second one: the down light of a two-light up & down sconce.
+    vol.Optional("entity_id_2"): vol.Any(str, None),
+    # An outdoor light's beam in the 3D view: its spread (degrees, narrow
+    # spot to wide flood) and where it lands (metres: up the wall a ground
+    # spot faces, or out from the wall a flood is on); unset = automatic.
+    vol.Optional("beam_deg"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=5, max=160))
+    ),
+    vol.Optional("aim_m"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=0.1, max=40))
+    ),
     # A free-form shape's outline, as 0-1 fractions of its size.
     vol.Optional("points"): vol.All(
         [vol.All([vol.Coerce(float)], vol.Length(min=2, max=2))],

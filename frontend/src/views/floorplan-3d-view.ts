@@ -624,6 +624,25 @@ export class Floorplan3dView extends LitElement {
         font-size: var(--sc-fs-small);
         color: var(--sc-fg-secondary);
       }
+      .editor .row.beam {
+        flex-wrap: wrap;
+      }
+      .editor .row.beam .range {
+        flex: 1 1 140px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        min-width: 0;
+      }
+      .editor .row.beam small {
+        font-size: 10px;
+        color: var(--sc-fg-secondary);
+      }
+      .editor .row.beam .unit {
+        width: auto;
+        min-width: 34px;
+        text-align: right;
+      }
       .editor button.danger {
         color: var(--sc-danger);
       }
@@ -3365,31 +3384,134 @@ export class Floorplan3dView extends LitElement {
   private _renderLink(
     item: FurnitureItem,
     set: (patch: Partial<FurnitureItem>) => void,
+    field: "entity_id" | "entity_id_2" = "entity_id",
+    label = localize("edit3d.entity"),
   ) {
-    const st = item.entity_id ? this.hass?.states[item.entity_id] : undefined;
+    const id = item[field] ?? null;
+    const st = id ? this.hass?.states[id] : undefined;
     const state = st?.state;
     const level =
       state === "on" && typeof st?.attributes["brightness"] === "number"
         ? ` · ${Math.round(((st.attributes["brightness"] as number) / 255) * 100)}%`
         : "";
     return html`<label class="row link">
-        <span>${localize("edit3d.entity")}</span>
+        <span>${label}</span>
         <search-select
           .options=${this._linkOptions(item)}
-          .value=${item.entity_id ?? null}
+          .value=${id}
           .noneLabel=${localize("furniture.noEntity")}
           placeholder=${localize("furniture.searchEntity")}
           @value-changed=${(e: CustomEvent<{ value: string | null }>) =>
-            set({ entity_id: e.detail.value })}
+            set({ [field]: e.detail.value })}
         ></search-select>
       </label>
       ${
-        item.entity_id
+        id
           ? html`<span class="hint"
               >${state ?? localize("edit3d.unavailable")}${level}</span
             >`
           : nothing
       }`;
+  }
+
+  /** An outdoor light's beam: how wide (spot to flood) and where it lands
+   * (up the wall a ground spot faces, out from the wall a flood is on);
+   * and a two-light sconce's down light. */
+  private _renderBeam(
+    item: FurnitureItem,
+    entry: CatalogItem | undefined,
+    set: (patch: Partial<FurnitureItem>) => void,
+  ) {
+    const beam = entry?.opts["beam"];
+    if (typeof beam !== "string" || beam === "glow" || beam === "omni")
+      return nothing;
+    const own = Number(
+      entry?.opts["spread"] ??
+        (beam === "flood"
+          ? 100
+          : beam === "down"
+            ? 110
+            : beam === "updown"
+              ? 40
+              : 30),
+    );
+    const spread = Math.round(item.beam_deg ?? own);
+    const spot = beam === "spot" && this._onGround(item);
+    const flood = beam === "flood";
+    const aim = item.aim_m ?? null;
+    const slider = (
+      label: string,
+      value: number,
+      min: number,
+      max: number,
+      step: number,
+      ends: [string, string],
+      text: string,
+      onChange: (v: number) => void,
+    ) =>
+      html`<label class="row beam">
+        <span>${label}</span>
+        <span class="range">
+          <small>${ends[0]}</small>
+          <input
+            type="range"
+            min=${min}
+            max=${max}
+            step=${step}
+            .value=${String(value)}
+            @change=${(e: Event) =>
+              onChange(Number((e.target as HTMLInputElement).value))}
+          />
+          <small>${ends[1]}</small>
+        </span>
+        <span class="unit">${text}</span>
+      </label>`;
+    return html`${
+      entry?.opts["twin"]
+        ? this._renderLink(
+            item,
+            set,
+            "entity_id_2",
+            localize("edit3d.downLight"),
+          )
+        : nothing
+    }
+    ${slider(
+      localize("edit3d.beam"),
+      spread,
+      8,
+      140,
+      2,
+      [localize("edit3d.beamSpot"), localize("edit3d.beamFlood")],
+      `${spread}°`,
+      (v) => set({ beam_deg: v === Math.round(own) ? null : v }),
+    )}
+    ${
+      spot || flood
+        ? html`${slider(
+            localize(spot ? "edit3d.landsUp" : "edit3d.landsOut"),
+            aim ?? (spot ? 1.1 : 4),
+            spot ? 0.2 : 0.5,
+            spot ? 8 : 15,
+            0.1,
+            [
+              localize(spot ? "edit3d.low" : "edit3d.near"),
+              localize(spot ? "edit3d.high" : "edit3d.far"),
+            ],
+            aim === null ? localize("edit3d.auto") : `${aim.toFixed(1)} m`,
+            (v) => set({ aim_m: v }),
+          )}
+          ${
+            aim !== null
+              ? html`<div class="buttons">
+                  <button @click=${() => set({ aim_m: null })}>
+                    ${localize("edit3d.autoAim")}
+                  </button>
+                </div>`
+              : nothing
+          }`
+        : nothing
+    }`;
   }
 
   private _renderSelection(layout: FloorLayout) {
@@ -3418,7 +3540,13 @@ export class Floorplan3dView extends LitElement {
             @change=${(e: Event) => set({ label: (e.target as HTMLInputElement).value.trim() || null })}
           />
         </label>
-        ${this._renderLink(item, set)}
+        ${this._renderLink(
+          item,
+          set,
+          "entity_id",
+          entry?.opts["twin"] ? localize("edit3d.upLight") : undefined,
+        )}
+        ${this._renderBeam(item, entry, set)}
         ${this._num(localize("edit3d.width"), item.width_cm, (v) => v && v > 0 && set({ width_cm: v }), { unit: "cm", min: 1 })}
         ${this._num(localize("edit3d.depth"), item.depth_cm, (v) => v && v > 0 && set({ depth_cm: v }), { unit: "cm", min: 1 })}
         ${this._num(localize("edit3d.height"), item.height_cm ?? null, (v) => set({ height_cm: v && v > 0 ? v : null }), { unit: "cm", placeholder: localize("edit3d.auto") })}

@@ -422,7 +422,13 @@ const ROOM_FINISH_KEYS = [
   "wall_finish",
   "wall_color",
 ] as const;
-const ITEM_FINISH_KEYS = ["height_cm", "elevation_cm"] as const;
+const ITEM_FINISH_KEYS = [
+  "height_cm",
+  "elevation_cm",
+  "entity_id_2",
+  "beam_deg",
+  "aim_m",
+] as const;
 
 /** The last roof save had to leave the light strips out (restart needed). */
 export let roofLightsUnsaved = false;

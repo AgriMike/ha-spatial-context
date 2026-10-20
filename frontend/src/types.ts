@@ -260,6 +260,15 @@ export interface FurnitureItem {
    * stands (a wall shelf, a hung TV), centimetres; unset = the catalog's. */
   height_cm?: number | null;
   elevation_cm?: number | null;
+  /** A second entity: the down light of a two-light up & down sconce
+   * (`entity_id` is its up light). */
+  entity_id_2?: string | null;
+  /** An outdoor light's beam in the 3D view: its spread in degrees (a
+   * narrow spot to a wide flood), and where it lands in metres (up the
+   * wall a ground spot faces, out from the wall a flood is on); unset =
+   * the fixture's own, aimed automatically. */
+  beam_deg?: number | null;
+  aim_m?: number | null;
 }
 
 /** A phone room scan (glTF/GLB) laid over a floor in the 3D view — see

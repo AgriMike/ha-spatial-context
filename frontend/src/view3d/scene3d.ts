@@ -64,6 +64,7 @@ import { gradeAt } from "./ground-grid";
 import {
   computeCoverOpenness,
   computeItemStates,
+  itemState,
   computeRoomLights,
   mixHex,
   roomFillStyle,
@@ -194,6 +195,7 @@ function spotTilt(
   x: number,
   z: number,
   angle: number,
+  rise: number,
 ): number | null {
   const dx = Math.sin(angle);
   const dz = Math.cos(angle);
@@ -212,7 +214,7 @@ function spotTilt(
       if (t > 0.05 && t < best && u >= 0 && u <= 1) best = t;
     }
   if (best >= SPOT_REACH_M) return null;
-  const deg = (Math.atan2(best, SPOT_RISE_M) * 180) / Math.PI;
+  const deg = (Math.atan2(best, rise) * 180) / Math.PI;
   return Math.max(8, Math.min(70, deg));
 }
 
@@ -2122,19 +2124,53 @@ function buildFloor(
         item.entity_id?.startsWith("switch.") === true);
     const on = !!live && live.active && isLight && showLights;
     const lightY = entry?.opts["lightY"];
+    const sourceY =
+      typeof lightY === "number"
+        ? lightY * (height / Math.max(0.01, auto.height))
+        : height / 2;
     // A spotlight on the ground aims up the wall it faces, so its beam
-    // lands on it wherever it's set; its catalog tilt else.
+    // lands on it wherever it's set (`aim_m` up it, else about
+    // SPOT_RISE_M); its catalog tilt else. A flood on a wall tilts down to
+    // reach `aim_m` out across the ground.
+    const aim = item.aim_m ?? null;
     const aimTilt =
       beam === "spot" && grounded
-        ? spotTilt(
+        ? (spotTilt(
             layout.walls,
             m,
             item.x * m,
             item.y * m,
             (-item.rotation_deg * Math.PI) / 180,
-          )
+            aim ?? SPOT_RISE_M,
+          ) ?? (aim !== null ? (Math.atan2(1.5, aim) * 180) / Math.PI : null))
+        : beam === "flood" && aim !== null
+          ? (Math.atan2(Math.max(0.3, y0 + sourceY), aim) * 180) / Math.PI
+          : null;
+    const tilt =
+      aimTilt ?? Number(entry?.opts["tilt"] ?? (beam === "flood" ? 35 : 30));
+    const spread =
+      item.beam_deg ??
+      Number(
+        entry?.opts["spread"] ??
+          (beam === "flood"
+            ? 100
+            : beam === "down"
+              ? 110
+              : beam === "updown"
+                ? 40
+                : 30),
+      );
+    // A two-light sconce: its down light is a second entity.
+    const twin = !!entry?.opts["twin"];
+    const live2 =
+      twin && item.entity_id_2 && hass
+        ? itemState(hass, item.entity_id_2)
         : null;
-    const tilt = aimTilt ?? Number(entry?.opts["tilt"] ?? 30);
+    const on2 =
+      !!live2 &&
+      live2.active &&
+      showLights &&
+      /^(light|switch)\./.test(item.entity_id_2 ?? "");
     const shape = itemShape(item.kind, entry);
     const si = stairs.findIndex((st) => st.item === item);
     const flight = si >= 0 ? stairs[si]! : null;
@@ -2197,14 +2233,10 @@ function buildFloor(
           ? {
               color: live.color ?? "#ffe2b0",
               level: Math.max(0.15, live.glow),
-              y:
-                y0 +
-                (typeof lightY === "number"
-                  ? lightY * (height / Math.max(0.01, auto.height))
-                  : height / 2),
-              beam: beam as LightBeam,
+              y: y0 + sourceY,
+              beam: (twin ? "up" : beam) as LightBeam,
               tilt,
-              spread: Number(entry?.opts["spread"] ?? 30),
+              spread,
             }
           : {
               color: live.color ?? "#ffd54f",
@@ -2217,6 +2249,18 @@ function buildFloor(
                     : y0 + height + 0.05,
             }
         : null,
+      ...(on2 && live2
+        ? {
+            light2: {
+              color: live2.color ?? "#ffe2b0",
+              level: Math.max(0.15, live2.glow),
+              y: y0 + sourceY,
+              beam: "down" as LightBeam,
+              tilt,
+              spread,
+            },
+          }
+        : {}),
       ...(grounded ? { grounded: true } : {}),
       ...(aimTilt !== null ? { tilt: aimTilt } : {}),
       shape,

@@ -1966,6 +1966,22 @@ const OUTDOOR_LIGHTING: Row[] = [
     "wallLamp",
     { heads: 1, mount: "wall", y3d: 1.8, h3d: 0.24, beam: "updown" },
   ],
+  // Two bulbs, each its own light: up (the entity) and down (a second).
+  [
+    "cylinder_updown_twin",
+    "Cylinder up & down sconce (2 lights)",
+    12,
+    14,
+    "wallLamp",
+    {
+      heads: 1,
+      mount: "wall",
+      y3d: 1.8,
+      h3d: 0.34,
+      beam: "updown",
+      twin: true,
+    },
+  ],
   [
     "flood_light",
     "Flood light",

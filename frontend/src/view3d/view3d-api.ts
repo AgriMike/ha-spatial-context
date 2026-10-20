@@ -99,7 +99,8 @@ export interface Slab3d {
 export type FloorFinish =
   "wood" | "tile" | "carpet" | "concrete" | "stone" | "deck" | "plain";
 
-export type LightBeam = "spot" | "flood" | "updown" | "down" | "omni" | "glow";
+export type LightBeam =
+  "spot" | "flood" | "updown" | "up" | "down" | "omni" | "glow";
 
 export interface Item3d {
   id: string;
@@ -138,6 +139,9 @@ export interface Item3d {
    * `y0` and the light's `y` are above the ground there, not the floor's
    * level. */
   grounded?: boolean;
+  /** A two-light up & down sconce's down light, while it's on (`light` is
+   * then its up light). */
+  light2?: Item3d["light"];
   /** A ground spotlight's tilt (degrees from straight up), aimed at the
    * wall it faces (its model's head and its beam both). */
   tilt?: number;
