@@ -700,6 +700,11 @@ _ROOF_PART_SCHEMA = vol.Schema(
                                     [vol.All(str, vol.Length(max=200))],
                                     vol.Length(max=200),
                                 ),
+                                # LED colours in turn, repeating.
+                                vol.Optional("pattern"): vol.All(
+                                    [vol.Match(r"^#[0-9a-fA-F]{6}$")],
+                                    vol.Length(max=64),
+                                ),
                             },
                             extra=vol.REMOVE_EXTRA,
                         )

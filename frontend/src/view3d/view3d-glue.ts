@@ -878,19 +878,21 @@ function buildRoofLights(strips: RoofLights3d[]): THREE.Group {
     }
     const level = Math.max(0.15, Math.min(1, strip.level));
     const lit = new THREE.Color(strip.color);
+    // Each LED's colour: the pattern's in turn, else the light's.
+    const colours = (strip.pattern?.length ? strip.pattern : [strip.color]).map(
+      (c) => new THREE.Color(c),
+    );
+    const white = new THREE.Color("#ffffff");
     const beads = instanced(
       new THREE.SphereGeometry(0.01, 8, 6),
-      new THREE.MeshBasicMaterial({
-        color: lit.clone().lerp(new THREE.Color("#ffffff"), 0.25 * level),
-        toneMapped: false,
-      }),
+      new THREE.MeshBasicMaterial({ color: "#ffffff", toneMapped: false }),
       strip.points,
     );
     beads.name = strip.name;
     const halo = instanced(
       new THREE.SphereGeometry(0.03, 8, 6),
       new THREE.MeshBasicMaterial({
-        color: lit,
+        color: "#ffffff",
         transparent: true,
         opacity: 0.12 + 0.18 * level,
         blending: THREE.AdditiveBlending,
@@ -900,6 +902,13 @@ function buildRoofLights(strips: RoofLights3d[]): THREE.Group {
       strip.points,
     );
     halo.name = `${strip.name} glow`;
+    for (let k = 0; k < beads.count; k++) {
+      const c = colours[k % colours.length] ?? lit;
+      beads.setColorAt(k, c.clone().lerp(white, 0.25 * level));
+      halo.setColorAt(k, c);
+    }
+    if (beads.instanceColor) beads.instanceColor.needsUpdate = true;
+    if (halo.instanceColor) halo.instanceColor.needsUpdate = true;
     group.add(beads, halo);
   }
   return group;

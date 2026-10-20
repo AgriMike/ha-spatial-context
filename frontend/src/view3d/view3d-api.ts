@@ -250,6 +250,8 @@ export interface RoofLights3d {
   points: number[];
   color: string | null;
   level: number;
+  /** While on: each LED's colour in turn, repeating (else all `color`). */
+  pattern?: string[];
 }
 
 /** One flat, convex piece of roof in world space, its corners in order. */

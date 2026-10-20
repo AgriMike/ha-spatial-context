@@ -630,7 +630,12 @@
     "facingS": "south",
     "facingW": "west",
     "edgeRake": "rake",
-    "edgeEave": "eave"
+    "edgeEave": "eave",
+    "roofLightsPattern": "Colour pattern: {n} LEDs, repeating",
+    "roofLightsPatternNone": "Colour pattern: the light's own colour",
+    "roofLightsPatternAdd": "Add an LED",
+    "roofLightsPatternRemove": "Remove the last",
+    "roofLightsPatternHint": "Home Assistant reports one colour per light, so a Hue scene's mix of colours can be set here: these colours run along the strip in turn, repeating, at the light's brightness while it's on."
   },
   "edit3d": {
     "edit": "Edit",

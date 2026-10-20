@@ -366,6 +366,10 @@ export interface RoofLightStrip {
    * facing them left dark. */
   edges?: string[];
   skip?: string[];
+  /** LED colours in turn, repeating along the strip (a Hue scene's mix,
+   * which HA doesn't report), shown while the light is on at its
+   * brightness; absent or empty = the light's own colour. */
+  pattern?: string[];
 }
 
 /** Ground that slopes across a building's site (a walk-out on a hill):

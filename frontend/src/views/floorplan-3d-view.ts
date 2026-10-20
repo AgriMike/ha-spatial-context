@@ -502,6 +502,18 @@ export class Floorplan3dView extends LitElement {
         display: flex;
         gap: 4px;
       }
+      .pattern {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 4px 0;
+      }
+      .pattern input {
+        width: 28px;
+        height: 24px;
+        padding: 0;
+        border: none;
+      }
       details.edges summary {
         cursor: pointer;
         padding: 2px 0;
@@ -3737,6 +3749,56 @@ export class Floorplan3dView extends LitElement {
     `;
   }
 
+  /** A strip's colour pattern: LED colours in turn, repeating; none =
+   * its light's colour. */
+  private _renderStripPattern(
+    strip: RoofLightStrip,
+    patch: (p: Partial<RoofLightStrip>) => void,
+  ) {
+    const pattern = strip.pattern ?? [];
+    const set = (next: string[]) => patch({ pattern: next });
+    return html`<details class="edges">
+      <summary>
+        ${
+          pattern.length
+            ? localize("view3d.roofLightsPattern", { n: String(pattern.length) })
+            : localize("view3d.roofLightsPatternNone")
+        }
+      </summary>
+      <div class="pattern">
+        ${pattern.map(
+          (c, k) => html`<input
+            type="color"
+            title=${String(k + 1)}
+            ?disabled=${!this.editable}
+            .value=${c}
+            @change=${(e: Event) =>
+              set(
+                pattern.map((x, j) =>
+                  j === k ? (e.target as HTMLInputElement).value : x,
+                ),
+              )}
+          />`,
+        )}
+      </div>
+      <div class="buttons">
+        <button
+          ?disabled=${!this.editable || pattern.length >= 64}
+          @click=${() => set([...pattern, pattern[pattern.length - 1] ?? "#ff9321"])}
+        >
+          ${localize("view3d.roofLightsPatternAdd")}
+        </button>
+        <button
+          ?disabled=${!this.editable || !pattern.length}
+          @click=${() => set(pattern.slice(0, -1))}
+        >
+          ${localize("view3d.roofLightsPatternRemove")}
+        </button>
+      </div>
+      <span class="hint">${localize("view3d.roofLightsPatternHint")}</span>
+    </details>`;
+  }
+
   /** A strip's edges, each ticked where it runs: unticking one it runs
    * along by its sides leaves it out; ticking another adds it. */
   private _renderStripEdges(
@@ -3893,6 +3955,7 @@ export class Floorplan3dView extends LitElement {
             <span class="unit">in</span>
           </label>
           ${this._renderStripEdges(strip, (p) => patch(i, p))}
+          ${this._renderStripPattern(strip, (p) => patch(i, p))}
           <div class="buttons">
             <button
               class="danger"

@@ -2829,10 +2829,26 @@ function plannedRoof(
         const y0 = f.baseY + (r.floor_offset_m ?? 0);
         return {
           y0,
+          ceiling: y0 + f.wallHeight,
           y1: y0 + f.wallHeight + 0.6,
           poly: r.points.map(([x, y]): Vec2 => [x * fm, y * fm]),
         };
       });
+  });
+  // How high each room's part of the house goes: up to the floor of a
+  // room stacked over it (the floor between is the house too), else its
+  // ceiling (above that, the roof).
+  const stacked = indoor.map((r) => {
+    const [cx, cz] = r.poly
+      .reduce(([sx, sz], [x, z]) => [sx + x, sz + z], [0, 0])
+      .map((v) => v / r.poly.length) as Vec2;
+    const over = indoor.filter(
+      (o) => o.y0 > r.y0 + 1 && insidePoly(o.poly, cx, cz),
+    );
+    return {
+      ...r,
+      top: over.length ? Math.min(...over.map((o) => o.y0)) : r.ceiling,
+    };
   });
   const faces = sections.flatMap((s) => {
     const eave = Math.min(s.eave0, s.eave1);
@@ -2855,7 +2871,7 @@ function plannedRoof(
     // garage's eave against the entry beside it): not there.
     const strips = [
       ...cuts.filter((c) => c.section === si),
-      ...indoorStrips(s, indoor).map((strip) => ({
+      ...indoorStrips(s, stacked).map((strip) => ({
         section: si,
         strip,
         caps: [] as RoofFace3d[],
@@ -2970,24 +2986,38 @@ function plannedRoof(
   return { ...roofColors(input.dark), grid: null, faces, edges: outside };
 }
 
+function insidePoly(poly: Vec2[], x: number, z: number): boolean {
+  let hit = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, zi] = poly[i]!;
+    const [xj, zj] = poly[j]!;
+    if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi)
+      hit = !hit;
+  }
+  return hit;
+}
+
 /** Where a section's overhang runs into a room of the house (another
  * part of it, at the overhang's height): those stretches of the strip
  * beyond its walls, as convex quads (x, z) to cut its faces by. */
 function indoorStrips(
   s: RoofSection,
-  rooms: { y0: number; y1: number; poly: Vec2[] }[],
+  rooms: { y0: number; top: number; poly: Vec2[] }[],
 ): Vec2[][] {
   const o = s.overhang;
   if (o <= 0.01) return [];
-  const low = Math.min(s.eave0, s.eave1);
-  const high = Math.max(s.eave0, s.eave1) + (s.pitch * (s.c1 - s.c0)) / 2;
-  const near = rooms.filter((r) => r.y0 < high && r.y1 > low - 0.3);
-  if (!near.length) return [];
+  // The rooms an overhang from `low` (its outer edge) up to `high` runs
+  // into: below the top of their part of the house, not in the roof
+  // space over it (where it closes a valley between two roofs).
+  const roomsAt = (low: number, high: number) =>
+    rooms.filter((r) => r.y0 < high && low < r.top - 0.05);
+  const drop = ROOF_HEEL_M - s.pitch * o;
+  const ridge = Math.max(s.eave0, s.eave1) + (s.pitch * (s.c1 - s.c0)) / 2;
   const world = (a: number, c: number): Vec2 => [
     s.origin[0] + s.along[0] * a + s.across[0] * c,
     s.origin[1] + s.along[1] * a + s.across[1] * c,
   ];
-  const inside = ([x, z]: Vec2) =>
+  const inside = ([x, z]: Vec2, near: { poly: Vec2[] }[]) =>
     near.some(({ poly }) => {
       let hit = false;
       for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -3006,16 +3036,18 @@ function indoorStrips(
   /** Runs along [t0, t1] (step 5 cm) where the strip's middle is in a
    * room, as quads through `quad(t0, t1)`. */
   const runs = (
+    near: { poly: Vec2[] }[],
     t0: number,
     t1: number,
     mid: (t: number) => Vec2,
     quad: (u0: number, u1: number) => Vec2[],
   ): Vec2[][] => {
     const out: Vec2[][] = [];
+    if (!near.length) return out;
     const step = 0.05;
     let start: number | null = null;
     for (let t = t0; t <= t1 + 1e-9; t += step) {
-      const hit = inside(mid(Math.min(t, t1)));
+      const hit = inside(mid(Math.min(t, t1)), near);
       if (hit && start === null) start = t;
       if ((!hit || t + step > t1 + 1e-9) && start !== null) {
         const end = hit ? t1 : t;
@@ -3027,16 +3059,17 @@ function indoorStrips(
   };
   const strips: Vec2[][] = [];
   // Eaves: along a, out from c0 (none on a lean-to's wall side) and c1.
-  const eaveSides: [number, number][] = s.shed
-    ? [[s.c1, C1]]
+  const eaveSides: [number, number, number][] = s.shed
+    ? [[s.c1, C1, s.eave1]]
     : [
-        [s.c0, C0],
-        [s.c1, C1],
+        [s.c0, C0, s.eave0],
+        [s.c1, C1, s.eave1],
       ];
-  for (const [wall, edge] of eaveSides) {
+  for (const [wall, edge, eave] of eaveSides) {
     const out = edge + (edge < wall ? -0.05 : 0.05);
     strips.push(
       ...runs(
+        roomsAt(eave + drop, eave + ROOF_HEEL_M + 0.2),
         A0,
         A1,
         (a) => world(a, (wall + edge) / 2),
@@ -3052,6 +3085,7 @@ function indoorStrips(
     const out = edge + (end === 0 ? -0.05 : 0.05);
     strips.push(
       ...runs(
+        roomsAt(Math.min(s.eave0, s.eave1) + drop, ridge),
         s.shed ? s.c0 : C0,
         C1,
         (c) => world((wall + edge) / 2, c),
@@ -3206,6 +3240,7 @@ function roofLights(input: SceneInput, roof: Roof3d | null): RoofLights3d[] {
       points,
       color,
       level: typeof brightness === "number" ? brightness / 255 : 1,
+      ...(strip.pattern?.length ? { pattern: strip.pattern } : {}),
     };
   });
 }
