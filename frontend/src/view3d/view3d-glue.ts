@@ -1533,7 +1533,6 @@ function createView3d(options: View3dOptions): View3dHandle {
     const ground = item.grounded
       ? groundAt(siteTerrain, item.x, item.z) - baseY
       : 0;
-    const pos = new THREE.Vector3(item.x, lit.y + ground, item.z);
     const k = lit.level;
     // Into the world from the item's frame (its front is local +z).
     const world = (x: number, y: number, z: number) => {
@@ -1541,6 +1540,11 @@ function createView3d(options: View3dOptions): View3dHandle {
       const sn = Math.sin(item.angle);
       return new THREE.Vector3(x * c + z * sn, y, -x * sn + z * c).normalize();
     };
+    const pos = new THREE.Vector3(
+      item.x,
+      lit.y + ground,
+      item.z,
+    ).addScaledVector(world(0, 0, 1), lit.forward ?? 0);
     const spot = (
       dir: THREE.Vector3,
       intensity: number,
@@ -3072,7 +3076,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       editOverlay = overlay;
       applyOverlay();
     },
-    previewItem(id, x, z, angle) {
+    previewItem(id, x, z, angle, y) {
       const obj = editEntry()?.furniture.children.find(
         (c) => c.userData["itemId"] === id,
       );
@@ -3080,7 +3084,9 @@ function createView3d(options: View3dOptions): View3dHandle {
       obj.position.x = x;
       obj.position.z = z;
       obj.rotation.y = angle;
-      if (obj.userData["grounded"])
+      // Hung at a height (a wall light slid up or down its wall).
+      if (y !== undefined) obj.position.y = y;
+      else if (obj.userData["grounded"])
         obj.position.y =
           groundAt(siteTerrain, x, z) -
           (editEntry()?.spec.baseY ?? 0) +

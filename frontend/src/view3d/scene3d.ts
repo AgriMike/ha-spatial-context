@@ -189,14 +189,19 @@ function itemShape(
  * its wash starts near the ground and climbs the wall: steeper the closer it stands; null with no wall within reach. */
 const SPOT_RISE_M = 1.1;
 const SPOT_REACH_M = 8;
-function spotTilt(
+/** A spotlight within this of the wall it faces washes it as one set a
+ * few inches off it does: its light comes from GRAZE_M in front of the
+ * wall, so the wash starts just above the fixture and climbs. */
+const GRAZE_REACH_M = 1.2;
+const GRAZE_M = 0.12;
+function spotAim(
   walls: Wall[],
   m: number,
   x: number,
   z: number,
   angle: number,
   rise: number,
-): number | null {
+): { tilt: number; forward: number } | null {
   const dx = Math.sin(angle);
   const dz = Math.cos(angle);
   let best = SPOT_REACH_M;
@@ -214,8 +219,9 @@ function spotTilt(
       if (t > 0.05 && t < best && u >= 0 && u <= 1) best = t;
     }
   if (best >= SPOT_REACH_M) return null;
-  const deg = (Math.atan2(best, rise) * 180) / Math.PI;
-  return Math.max(8, Math.min(70, deg));
+  const forward = best < GRAZE_REACH_M ? Math.max(0, best - GRAZE_M) : 0;
+  const deg = (Math.atan2(best - forward, rise) * 180) / Math.PI;
+  return { tilt: Math.max(4, Math.min(70, deg)), forward };
 }
 
 /** A catalog item on its own, as the 3D view would model it (lit, if it's
@@ -2133,16 +2139,21 @@ function buildFloor(
     // SPOT_RISE_M); its catalog tilt else. A flood on a wall tilts down to
     // reach `aim_m` out across the ground.
     const aim = item.aim_m ?? null;
-    const aimTilt =
+    const spotWall =
       beam === "spot" && grounded
-        ? (spotTilt(
+        ? spotAim(
             layout.walls,
             m,
             item.x * m,
             item.y * m,
             (-item.rotation_deg * Math.PI) / 180,
             aim ?? SPOT_RISE_M,
-          ) ?? (aim !== null ? (Math.atan2(1.5, aim) * 180) / Math.PI : null))
+          )
+        : null;
+    const aimTilt =
+      beam === "spot" && grounded
+        ? (spotWall?.tilt ??
+          (aim !== null ? (Math.atan2(1.5, aim) * 180) / Math.PI : null))
         : beam === "flood" && aim !== null
           ? (Math.atan2(Math.max(0.3, y0 + sourceY), aim) * 180) / Math.PI
           : null;
@@ -2237,6 +2248,7 @@ function buildFloor(
               beam: (twin ? "up" : beam) as LightBeam,
               tilt,
               spread,
+              ...(spotWall?.forward ? { forward: spotWall.forward } : {}),
             }
           : {
               color: live.color ?? "#ffd54f",

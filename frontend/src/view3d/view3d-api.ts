@@ -134,6 +134,9 @@ export interface Item3d {
     beam?: LightBeam;
     tilt?: number;
     spread?: number;
+    /** How far in front of the fixture (toward its front) its light
+     * comes from: a ground spot near a wall washes it from close by. */
+    forward?: number;
   } | null;
   /** Stands on the ground (out in the yard, in none of the floor's rooms):
    * `y0` and the light's `y` are above the ground there, not the floor's
@@ -438,7 +441,13 @@ export interface View3dHandle {
   previewGrade(grid: GroundGrid | null): void;
   /** Shows a furniture item at a new spot and turn while it's dragged
    * (edit-floor frame, metres; angle as Item3d's), before it's saved. */
-  previewItem(id: string, x: number, z: number, angle: number): void;
+  previewItem(
+    id: string,
+    x: number,
+    z: number,
+    angle: number,
+    y?: number,
+  ): void;
   setScene(scene: Scene3d): void;
   /** Adds, updates and removes scans to match the list. */
   setScans(scans: ScanPlacement3d[]): void;

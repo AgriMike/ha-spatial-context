@@ -379,15 +379,26 @@ export interface SnapWall {
   a: Pt;
   b: Pt;
   level: number;
+  /** An edge of a yard piece (a path, a bed, a fence) rather than a wall:
+   * its guides are drawn on the ground. */
+  yard?: boolean | undefined;
 }
 
 /** A guide to draw for a snap (plan units, the levels it spans). */
 export interface SnapGuide {
-  kind: "align" | "wall" | "plumb";
+  /** align: lined up with a corner; wall: onto a line; plumb: onto another
+   * floor's corner; corner: onto a yard corner (connected); extend: on a
+   * line's extension (in line); square / parallel: the new edge at right
+   * angles to, or alongside, a line nearby. */
+  kind:
+    "align" | "wall" | "plumb" | "corner" | "extend" | "square" | "parallel";
   own: boolean;
   a: Pt;
   b: Pt;
   level: number;
+  yard?: boolean | undefined;
+  /** Where it meets (the snapped point), for a marker. */
+  at?: Pt;
 }
 
 /** A point snapped the way a drawing program does it, against the walls
@@ -406,7 +417,12 @@ export function smartSnap(
   },
 ): { p: Pt; guides: SnapGuide[] } {
   const { reach } = opts;
-  const corners: { p: Pt; own: boolean; level: number }[] = [];
+  const corners: {
+    p: Pt;
+    own: boolean;
+    level: number;
+    yard?: boolean | undefined;
+  }[] = [];
   const seen = new Set<string>();
   for (const w of walls)
     for (const c of [w.a, w.b]) {
@@ -414,7 +430,7 @@ export function smartSnap(
       const key = `${c[0].toFixed(2)},${c[1].toFixed(2)},${w.level.toFixed(2)}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      corners.push({ p: c, own: w.own, level: w.level });
+      corners.push({ p: c, own: w.own, level: w.level, yard: w.yard });
     }
   // A corner right there (this floor's first).
   let best: (typeof corners)[number] | null = null;
@@ -429,19 +445,157 @@ export function smartSnap(
   if (best)
     return {
       p: [best.p[0], best.p[1]],
-      guides: best.own
-        ? []
-        : [
+      guides: best.yard
+        ? [
             {
-              kind: "plumb",
-              own: false,
+              kind: "corner",
+              own: true,
               a: best.p,
               b: best.p,
-              level: best.level,
+              level: 0,
+              yard: true,
+              at: best.p,
             },
-          ],
+          ]
+        : best.own
+          ? []
+          : [
+              {
+                kind: "plumb",
+                own: false,
+                a: best.p,
+                b: best.p,
+                level: best.level,
+              },
+            ],
     };
-  let q: Pt = opts.from && opts.angle ? snapAngle(opts.from, p) : p;
+  // Onto a yard piece's edge, meeting it (a path laid against a bed): and
+  // square to it from the corner before, where that's nearly so.
+  {
+    let ys: SnapWall | null = null;
+    let ysAt: Pt | null = null;
+    let ysD = reach * 0.6;
+    for (const w of walls) {
+      if (!w.yard) continue;
+      const len2 = (w.b[0] - w.a[0]) ** 2 + (w.b[1] - w.a[1]) ** 2;
+      if (len2 <= 0) continue;
+      const t = Math.max(
+        0,
+        Math.min(
+          1,
+          ((p[0] - w.a[0]) * (w.b[0] - w.a[0]) +
+            (p[1] - w.a[1]) * (w.b[1] - w.a[1])) /
+            len2,
+        ),
+      );
+      const at: Pt = [
+        w.a[0] + (w.b[0] - w.a[0]) * t,
+        w.a[1] + (w.b[1] - w.a[1]) * t,
+      ];
+      const d = distance(p[0], p[1], at[0], at[1]);
+      if (d < ysD) {
+        ysD = d;
+        ys = w;
+        ysAt = at;
+      }
+    }
+    if (ys && ysAt) {
+      const guides: SnapGuide[] = [
+        {
+          kind: "wall",
+          own: true,
+          a: ys.a,
+          b: ys.b,
+          level: 0,
+          yard: true,
+          at: ysAt,
+        },
+      ];
+      let at = ysAt;
+      if (opts.from && opts.angle) {
+        const from = opts.from;
+        const len2 = (ys.b[0] - ys.a[0]) ** 2 + (ys.b[1] - ys.a[1]) ** 2;
+        const t =
+          ((from[0] - ys.a[0]) * (ys.b[0] - ys.a[0]) +
+            (from[1] - ys.a[1]) * (ys.b[1] - ys.a[1])) /
+          len2;
+        const foot: Pt = [
+          ys.a[0] + (ys.b[0] - ys.a[0]) * t,
+          ys.a[1] + (ys.b[1] - ys.a[1]) * t,
+        ];
+        if (
+          t >= 0 &&
+          t <= 1 &&
+          distance(foot[0], foot[1], at[0], at[1]) < reach * 2
+        ) {
+          at = foot;
+          guides[0]!.at = foot;
+          guides.push({
+            kind: "square",
+            own: true,
+            a: from,
+            b: foot,
+            level: 0,
+            yard: true,
+            at: foot,
+          });
+        }
+      }
+      return { p: at, guides };
+    }
+  }
+  // Square to, or alongside, a line near the corner it starts from (a
+  // yard edge at an angle): before the 45° steps.
+  let q: Pt = p;
+  let squared: SnapGuide | null = null;
+  if (opts.from && opts.angle) {
+    const from = opts.from;
+    const len = distance(from[0], from[1], p[0], p[1]);
+    const dir = Math.atan2(p[1] - from[1], p[0] - from[0]);
+    let bestA = (4 * Math.PI) / 180;
+    for (const w of walls) {
+      const wl = distance(w.a[0], w.a[1], w.b[0], w.b[1]);
+      if (wl <= 0 || len <= 0) continue;
+      // Only lines close to where the edge starts.
+      const t = Math.max(
+        0,
+        Math.min(
+          1,
+          ((from[0] - w.a[0]) * (w.b[0] - w.a[0]) +
+            (from[1] - w.a[1]) * (w.b[1] - w.a[1])) /
+            (wl * wl),
+        ),
+      );
+      const fx = w.a[0] + (w.b[0] - w.a[0]) * t;
+      const fy = w.a[1] + (w.b[1] - w.a[1]) * t;
+      if (distance(from[0], from[1], fx, fy) > reach * 4) continue;
+      const wa = Math.atan2(w.b[1] - w.a[1], w.b[0] - w.a[0]);
+      for (const [turn, kind] of [
+        [0, "parallel"],
+        [Math.PI / 2, "square"],
+      ] as const) {
+        let diff = (dir - wa - turn) % Math.PI;
+        if (diff > Math.PI / 2) diff -= Math.PI;
+        if (diff < -Math.PI / 2) diff += Math.PI;
+        if (Math.abs(diff) < bestA) {
+          bestA = Math.abs(diff);
+          const at = dir - diff;
+          q = [from[0] + Math.cos(at) * len, from[1] + Math.sin(at) * len];
+          squared = {
+            kind,
+            own: w.own,
+            a: w.a,
+            b: w.b,
+            level: w.level,
+            yard: w.yard,
+            at: from,
+          };
+        }
+      }
+    }
+    // Axis-aligned lines are the 45° steps' anyway.
+    if (!squared) q = snapAngle(from, p);
+  }
   // Lined up with a corner, across (x) and along (y).
   const along = reach * 0.6;
   let ax: (typeof corners)[number] | null = null;
@@ -463,10 +617,12 @@ export function smartSnap(
           a: c.p,
           b: q,
           level: c.level,
+          yard: c.yard,
         });
     return { p: q, guides };
   }
-  if (opts.from && opts.angle) return { p: q, guides };
+  if (opts.from && opts.angle && squared) return { p: q, guides: [squared] };
+  if (opts.from && opts.angle && !squared) return { p: q, guides };
   // Onto a wall's line.
   let seg: SnapWall | null = null;
   let segAt: Pt | null = null;
@@ -494,7 +650,51 @@ export function smartSnap(
     return {
       p: segAt,
       guides: [
-        { kind: "wall", own: seg.own, a: seg.a, b: seg.b, level: seg.level },
+        {
+          kind: "wall",
+          own: seg.own,
+          a: seg.a,
+          b: seg.b,
+          level: seg.level,
+          yard: seg.yard,
+          at: segAt,
+        },
+      ],
+    };
+  // In line with a line, past its end.
+  let ext: { at: Pt; end: Pt; w: SnapWall } | null = null;
+  let extD = reach * 0.5;
+  for (const w of walls) {
+    const len2 = (w.b[0] - w.a[0]) ** 2 + (w.b[1] - w.a[1]) ** 2;
+    if (len2 <= 0) continue;
+    const t =
+      ((q[0] - w.a[0]) * (w.b[0] - w.a[0]) +
+        (q[1] - w.a[1]) * (w.b[1] - w.a[1])) /
+      len2;
+    if (t >= 0 && t <= 1) continue;
+    const at: Pt = [
+      w.a[0] + (w.b[0] - w.a[0]) * t,
+      w.a[1] + (w.b[1] - w.a[1]) * t,
+    ];
+    const d = distance(q[0], q[1], at[0], at[1]);
+    if (d < extD) {
+      extD = d;
+      ext = { at, end: t < 0 ? w.a : w.b, w };
+    }
+  }
+  if (ext)
+    return {
+      p: ext.at,
+      guides: [
+        {
+          kind: "extend",
+          own: ext.w.own,
+          a: ext.end,
+          b: ext.at,
+          level: ext.w.level,
+          yard: ext.w.yard,
+          at: ext.at,
+        },
       ],
     };
   if (opts.grid > 0)
