@@ -57,6 +57,33 @@ function inside(poly: [number, number][], x: number, z: number): boolean {
   return hit;
 }
 
+/** Each outline's bounds (min x, min z, max x, max z), worked out once
+ * per list: a point outside them can't be inside it. */
+const COVER_BOUNDS = new WeakMap<
+  [number, number][][],
+  [number, number, number, number][]
+>();
+
+function coverBounds(
+  cover: [number, number][][],
+): [number, number, number, number][] {
+  let out = COVER_BOUNDS.get(cover);
+  if (!out) {
+    out = cover.map((poly) => {
+      let [x0, z0, x1, z1] = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const [x, z] of poly) {
+        x0 = Math.min(x0, x);
+        z0 = Math.min(z0, z);
+        x1 = Math.max(x1, x);
+        z1 = Math.max(z1, z);
+      }
+      return [x0, z0, x1, z1];
+    });
+    COVER_BOUNDS.set(cover, out);
+  }
+  return out;
+}
+
 /** gridOffset, but nothing under the building (`cover`, its rooms'
  * outlines): it stands on its foundation, the grading round it. */
 export function gradeAt(
@@ -68,7 +95,12 @@ export function gradeAt(
   if (!g) return 0;
   const v = gridOffset(g, x, z);
   if (v === 0 || !cover) return v;
-  for (const poly of cover) if (inside(poly, x, z)) return 0;
+  const bounds = coverBounds(cover);
+  for (let k = 0; k < cover.length; k++) {
+    const [x0, z0, x1, z1] = bounds[k]!;
+    if (x < x0 || x > x1 || z < z0 || z > z1) continue;
+    if (inside(cover[k]!, x, z)) return 0;
+  }
   return v;
 }
 

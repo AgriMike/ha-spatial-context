@@ -242,6 +242,149 @@ class Parts {
   }
 }
 
+/** How finely a surface's top is cut (metres): no piece wider than
+ * this, so it follows the ground's rise and fall. */
+const SURFACE_CELL_M = 0.45;
+
+/** The part of a polygon on one side of an axis line: x (axis 0) or z
+ * (axis 1) at least `at` (keep "above"), else at most. */
+function clipAxis(
+  poly: Vec2[],
+  axis: 0 | 1,
+  at: number,
+  above: boolean,
+): Vec2[] {
+  const out: Vec2[] = [];
+  const inside = (p: Vec2) => (above ? p[axis] >= at : p[axis] <= at);
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i]!;
+    const q = poly[(i + 1) % poly.length]!;
+    const pin = inside(p);
+    if (pin) out.push(p);
+    if (pin !== inside(q)) {
+      const t = (at - p[axis]) / (q[axis] - p[axis]);
+      out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
+    }
+  }
+  return out;
+}
+
+function polyArea(poly: Vec2[]): number {
+  let a = 0;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++)
+    a += poly[j]![0] * poly[i]![1] - poly[i]![0] * poly[j]![1];
+  return a / 2;
+}
+
+/** An outline filled with triangles no wider than `cell`: cut along a
+ * grid of that size, each whole square two triangles and each piece the
+ * outline crosses triangulated as it is. Each counter-clockwise in
+ * (x, z); by rows of the grid, the first from z = `z0`. */
+function cellTriangles(
+  outline: Vec2[],
+  cell: number,
+): { z0: number; rows: [Vec2, Vec2, Vec2][][] } {
+  let out: [Vec2, Vec2, Vec2][] = [];
+  const rows: [Vec2, Vec2, Vec2][][] = [];
+  const push = (a: Vec2, b: Vec2, c: Vec2) => {
+    const turn = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    if (Math.abs(turn) < 1e-12) return;
+    out.push(turn > 0 ? [a, b, c] : [a, c, b]);
+  };
+  const xs = outline.map((p) => p[0]);
+  const zs = outline.map((p) => p[1]);
+  const i0 = Math.floor(Math.min(...xs) / cell);
+  const i1 = Math.ceil(Math.max(...xs) / cell);
+  const j0 = Math.floor(Math.min(...zs) / cell);
+  const j1 = Math.ceil(Math.max(...zs) / cell);
+  const full = cell * cell * (1 - 1e-6);
+  for (let j = j0; j < j1; j++) {
+    const za = j * cell;
+    const zb = (j + 1) * cell;
+    out = [];
+    rows.push(out);
+    const row = clipAxis(clipAxis(outline, 1, za, true), 1, zb, false);
+    if (row.length < 3) continue;
+    for (let i = i0; i < i1; i++) {
+      const xa = i * cell;
+      const xb = (i + 1) * cell;
+      const piece = clipAxis(clipAxis(row, 0, xa, true), 0, xb, false);
+      if (piece.length < 3) continue;
+      const area = Math.abs(polyArea(piece));
+      if (area < 1e-9) continue;
+      if (area >= full) {
+        push([xa, za], [xb, za], [xb, zb]);
+        push([xa, za], [xb, zb], [xa, zb]);
+        continue;
+      }
+      const ring = piece.map(([x, z]) => new THREE.Vector2(x, z));
+      for (const [a, b, c] of THREE.ShapeUtils.triangulateShape(ring, []))
+        push(piece[a!]!, piece[b!]!, piece[c!]!);
+    }
+  }
+  return { z0: j0 * cell, rows };
+}
+
+/** A surface's top, picked only among the rows of its grid the ray
+ * passes over (see cellTriangles) rather than every triangle: the same
+ * hits, found in a fraction of the time. `userData.rows` holds where each
+ * row starts (in triangles), from z = `z0`, `cell` apart. */
+function rowRaycast(
+  this: THREE.Mesh,
+  raycaster: THREE.Raycaster,
+  hits: THREE.Intersection[],
+): void {
+  const rows = this.userData["rows"] as
+    { z0: number; cell: number; starts: number[] } | undefined;
+  const g = this.geometry;
+  if (!rows) return THREE.Mesh.prototype.raycast.call(this, raycaster, hits);
+  if (!g.boundingBox) g.computeBoundingBox();
+  const box = g.boundingBox!;
+  const ray = raycaster.ray
+    .clone()
+    .applyMatrix4(this.matrixWorld.clone().invert());
+  // The stretch of the ray inside the bounds, on each axis in turn.
+  let t0 = 0;
+  let t1 = Infinity;
+  for (const k of ["x", "y", "z"] as const) {
+    const o = ray.origin[k];
+    const d = ray.direction[k];
+    if (Math.abs(d) < 1e-12) {
+      if (o < box.min[k] || o > box.max[k]) return;
+      continue;
+    }
+    let a = (box.min[k] - o) / d;
+    let b = (box.max[k] - o) / d;
+    if (a > b) [a, b] = [b, a];
+    t0 = Math.max(t0, a);
+    t1 = Math.min(t1, b);
+  }
+  if (t0 > t1) return;
+  const za = ray.origin.z + ray.direction.z * t0;
+  const zb = ray.origin.z + ray.direction.z * t1;
+  const n = rows.starts.length - 1;
+  const first = Math.max(
+    0,
+    Math.floor((Math.min(za, zb) - rows.z0) / rows.cell) - 1,
+  );
+  const last = Math.min(
+    n - 1,
+    Math.floor((Math.max(za, zb) - rows.z0) / rows.cell) + 1,
+  );
+  if (first > last) return;
+  const range = g.drawRange;
+  const [start, count] = [range.start, range.count];
+  g.setDrawRange(
+    rows.starts[first]! * 3,
+    (rows.starts[last + 1]! - rows.starts[first]!) * 3,
+  );
+  try {
+    THREE.Mesh.prototype.raycast.call(this, raycaster, hits);
+  } finally {
+    g.setDrawRange(start, count);
+  }
+}
+
 /** A surface (a driveway, a lawn) over the ground: its outline filled,
  * finely subdivided so it follows the ground's slope, and edged down to
  * the ground. */
@@ -264,10 +407,11 @@ function surface(
     const [wx, wz] = toWorld(x, z);
     return cut(wx, wz);
   };
+  let picked: {
+    material: THREE.Material;
+    rows: { z0: number; cell: number; starts: number[] };
+  } | null = null;
   if (outline.length >= 3) {
-    const contour = outline.map(([x, z]) => new THREE.Vector2(x, z));
-    if (THREE.ShapeUtils.isClockWise(contour)) contour.reverse();
-    const tris = THREE.ShapeUtils.triangulateShape(contour, []);
     const pos: number[] = [];
     const uv: number[] = [];
     const emit = (p: Vec2) => {
@@ -275,37 +419,21 @@ function surface(
       const [wx, wz] = toWorld(p[0], p[1]);
       uv.push(wx / spec.tile, wz / spec.tile);
     };
-    const split = (a: Vec2, b: Vec2, c: Vec2, depth: number) => {
-      const ab = Math.hypot(a[0] - b[0], a[1] - b[1]);
-      const bc = Math.hypot(b[0] - c[0], b[1] - c[1]);
-      const ca = Math.hypot(c[0] - a[0], c[1] - a[1]);
-      if (depth > 7 || Math.max(ab, bc, ca) < 0.7) {
-        if (dugOut((a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3)) return;
-        // Facing up: the contour runs counter-clockwise in (x, z), which
-        // is clockwise seen from above (+y) — so emit a, c, b.
+    const cells = cellTriangles(outline, SURFACE_CELL_M);
+    const starts: number[] = [];
+    for (const row of cells.rows) {
+      starts.push(pos.length / 9);
+      for (const [a, b, c] of row) {
+        if (dugOut((a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3))
+          continue;
+        // Facing up: counter-clockwise in (x, z) is clockwise seen from
+        // above (+y) — so emit a, c, b.
         emit(a);
         emit(c);
         emit(b);
-        return;
       }
-      const m = (p: Vec2, q: Vec2): Vec2 => [
-        (p[0] + q[0]) / 2,
-        (p[1] + q[1]) / 2,
-      ];
-      const mab = m(a, b);
-      const mbc = m(b, c);
-      const mca = m(c, a);
-      split(a, mab, mca, depth + 1);
-      split(mab, b, mbc, depth + 1);
-      split(mca, mbc, c, depth + 1);
-      split(mab, mbc, mca, depth + 1);
-    };
-    for (const tri of tris) {
-      const a = contour[tri[0]!]!;
-      const b = contour[tri[1]!]!;
-      const c = contour[tri[2]!]!;
-      split([a.x, a.y], [b.x, b.y], [c.x, c.y], 0);
     }
+    starts.push(pos.length / 9);
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
@@ -316,6 +444,10 @@ function surface(
       map: surfaceTexture(kind),
     });
     parts.add(g, m);
+    picked = {
+      material: m,
+      rows: { z0: cells.z0, cell: SURFACE_CELL_M, starts },
+    };
     // The slab's edge, down into the ground — in short steps, so it
     // follows the ground between the corners as the top does.
     const edge: number[] = [];
@@ -423,7 +555,16 @@ function surface(
       });
     }
   }
-  return parts.group();
+  const out = parts.group();
+  // Its top, picked by rows of the grid it was cut along.
+  if (picked)
+    for (const c of out.children) {
+      const mesh = c as THREE.Mesh;
+      if (mesh.material !== picked.material) continue;
+      mesh.userData["rows"] = picked.rows;
+      mesh.raycast = rowRaycast;
+    }
+  return out;
 }
 
 /** A fence (or wall, hedge, edging) along the line: posts at its corners

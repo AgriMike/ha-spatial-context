@@ -1010,40 +1010,233 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
     1,
   );
   const nx = xs.length;
-  const positions = new Float32Array(nx * zs.length * 3);
-  zs.forEach((z, j) =>
-    xs.forEach((x, i) => {
-      const k = (j * nx + i) * 3;
-      positions[k] = x;
-      positions[k + 1] = height(x, z);
-      positions[k + 2] = z;
-    }),
-  );
-  const inHole = (x: number, z: number) =>
-    x >= box.min.x - 0.5 &&
-    x <= box.max.x + 0.5 &&
-    z >= box.min.z - 0.5 &&
-    z <= box.max.z + 0.5 &&
-    t.holes.some((poly) => insidePolygon(poly, x, z));
+  const nz = zs.length;
+  const cols = nx - 1;
+  const rows = nz - 1;
+  // The cells whose middle is in a hole (near the building only), a row
+  // at a time: where each outline crosses the row's middle line, and a
+  // point inside while an odd number of crossings lie beyond it (as
+  // insidePolygon has it).
+  const hole = new Uint8Array(cols * rows);
+  for (let j = 0; j < rows; j++) {
+    const z = (zs[j]! + zs[j + 1]!) / 2;
+    if (z < box.min.z - 0.5 || z > box.max.z + 0.5) continue;
+    for (const poly of t.holes) {
+      const cuts: number[] = [];
+      for (let a = 0, b = poly.length - 1; a < poly.length; b = a++) {
+        const [xa, za] = poly[a]!;
+        const [xb, zb] = poly[b]!;
+        if (za > z !== zb > z)
+          cuts.push(xa + ((z - za) * (xb - xa)) / (zb - za));
+      }
+      if (!cuts.length) continue;
+      cuts.sort((p, q) => p - q);
+      let k = 0;
+      for (let i = 0; i < cols; i++) {
+        const x = (xs[i]! + xs[i + 1]!) / 2;
+        if (x < box.min.x - 0.5 || x > box.max.x + 0.5) continue;
+        while (k < cuts.length && cuts[k]! <= x) k++;
+        if ((cuts.length - k) % 2 === 1) hole[j * cols + i] = 1;
+      }
+    }
+  }
+  // Blocks of B by B cells where the ground is one plane (no grading, no
+  // fold of the hillside, no hole), one cell round them included so their
+  // edges' normals are the plane's too: each drawn as a few big
+  // triangles instead.
+  const B = 16;
+  const bcols = Math.floor((cols - 2) / B);
+  const brows = Math.floor((rows - 2) / B);
+  const [dx, dz] = t.dir;
+  const [lo, hi] = t.range;
+  const fold = (x: number, z: number) => {
+    if (hi <= lo || t.level >= 1) return 0;
+    const k = Math.min(1, Math.max(0, (x * dx + z * dz - lo) / (hi - lo)));
+    return k <= t.level ? 0 : k >= 1 ? 2 : 1;
+  };
+  const graded = (x0: number, x1: number, z0: number, z1: number) => {
+    const g = t.grid;
+    if (!g || !g.cols || !g.rows || g.step <= 0) return false;
+    // Every point the smoothing reaches for (see gridOffset).
+    const ia = Math.max(0, Math.floor((x0 - g.x0) / g.step) - 1);
+    const ib = Math.min(g.cols - 1, Math.floor((x1 - g.x0) / g.step) + 2);
+    const ja = Math.max(0, Math.floor((z0 - g.z0) / g.step) - 1);
+    const jb = Math.min(g.rows - 1, Math.floor((z1 - g.z0) / g.step) + 2);
+    for (let j = ja; j <= jb; j++)
+      for (let i = ia; i <= ib; i++) if (g.h[j * g.cols + i]) return true;
+    return false;
+  };
+  const flat = new Uint8Array(bcols * brows);
+  for (let bj = 0; bj < brows; bj++)
+    for (let bi = 0; bi < bcols; bi++) {
+      // Its cells, from i0, j0, and one more each side.
+      const i0 = 1 + bi * B;
+      const j0 = 1 + bj * B;
+      let ok = true;
+      for (let j = j0 - 1; ok && j <= j0 + B; j++)
+        for (let i = i0 - 1; ok && i <= i0 + B; i++)
+          if (hole[j * cols + i]) ok = false;
+      if (!ok) continue;
+      const x0 = xs[i0 - 1]!;
+      const x1 = xs[i0 + B + 1]!;
+      const z0 = zs[j0 - 1]!;
+      const z1 = zs[j0 + B + 1]!;
+      const f = fold(x0, z0);
+      if (
+        fold(x1, z0) === f &&
+        fold(x0, z1) === f &&
+        fold(x1, z1) === f &&
+        !graded(x0, x1, z0, z1)
+      )
+        flat[bj * bcols + bi] = 1;
+    }
+  const flatAt = (bi: number, bj: number) =>
+    bi >= 0 && bj >= 0 && bi < bcols && bj < brows && !!flat[bj * bcols + bi];
+  /** The flat block a cell is in, as its index, or -1. */
+  const blockOf = (i: number, j: number) => {
+    if (i < 1 || j < 1) return -1;
+    const bi = Math.floor((i - 1) / B);
+    const bj = Math.floor((j - 1) / B);
+    return flatAt(bi, bj) ? bj * bcols + bi : -1;
+  };
+  // The heights, as needed (not inside a flat block).
+  const positions = new Float32Array(nx * nz * 3);
+  const known = new Uint8Array(nx * nz);
+  const point = (v: number) => {
+    if (known[v]) return;
+    known[v] = 1;
+    const x = xs[v % nx]!;
+    const z = zs[Math.floor(v / nx)]!;
+    positions[v * 3] = x;
+    positions[v * 3 + 1] = height(x, z);
+    positions[v * 3 + 2] = z;
+  };
+  /** A cell whose shading reaches a point that's drawn. */
+  const shaded = (i: number, j: number) => {
+    if (hole[j * cols + i]) return false;
+    const b = blockOf(i, j);
+    if (b < 0) return true;
+    const bi = b % bcols;
+    const bj = Math.floor(b / bcols);
+    const si = i - (1 + bi * B);
+    const sj = j - (1 + bj * B);
+    // A flat block's corners, its edge where a finer neighbour shares
+    // its points, and the four cells round its middle point.
+    const end = (s: number) => s === 0 || s === B - 1;
+    const mid = (s: number) => s === B / 2 - 1 || s === B / 2;
+    return (
+      (end(si) && end(sj)) ||
+      (si === 0 && !flatAt(bi - 1, bj)) ||
+      (si === B - 1 && !flatAt(bi + 1, bj)) ||
+      (sj === 0 && !flatAt(bi, bj - 1)) ||
+      (sj === B - 1 && !flatAt(bi, bj + 1)) ||
+      (mid(si) && mid(sj))
+    );
+  };
+  // Smooth normals, as computeVertexNormals would give the whole grid, so
+  // merging the flat stretches changes no shading.
+  const normals = new Float32Array(positions.length);
+  const add = (p: number, q: number, r: number) => {
+    const P = positions;
+    // (c - b) × (a - b)
+    const ux = P[r * 3]! - P[q * 3]!;
+    const uy = P[r * 3 + 1]! - P[q * 3 + 1]!;
+    const uz = P[r * 3 + 2]! - P[q * 3 + 2]!;
+    const vx = P[p * 3]! - P[q * 3]!;
+    const vy = P[p * 3 + 1]! - P[q * 3 + 1]!;
+    const vz = P[p * 3 + 2]! - P[q * 3 + 2]!;
+    const cx = uy * vz - uz * vy;
+    const cy = uz * vx - ux * vz;
+    const cz = ux * vy - uy * vx;
+    const N = normals;
+    N[p * 3] = N[p * 3]! + cx;
+    N[p * 3 + 1] = N[p * 3 + 1]! + cy;
+    N[p * 3 + 2] = N[p * 3 + 2]! + cz;
+    N[q * 3] = N[q * 3]! + cx;
+    N[q * 3 + 1] = N[q * 3 + 1]! + cy;
+    N[q * 3 + 2] = N[q * 3 + 2]! + cz;
+    N[r * 3] = N[r * 3]! + cx;
+    N[r * 3 + 1] = N[r * 3 + 1]! + cy;
+    N[r * 3 + 2] = N[r * 3 + 2]! + cz;
+  };
+  // Each cell's two triangles: a c b, b c d.
   const index: number[] = [];
-  for (let j = 0; j < zs.length - 1; j++) {
-    for (let i = 0; i < nx - 1; i++) {
-      const x0 = xs[i]!;
-      const x1 = xs[i + 1]!;
-      const z0 = zs[j]!;
-      const z1 = zs[j + 1]!;
-      if (inHole((x0 + x1) / 2, (z0 + z1) / 2)) continue;
+  for (let j = 0; j < rows; j++)
+    for (let i = 0; i < cols; i++) {
+      if (!shaded(i, j)) continue;
       const a = j * nx + i;
       const b = a + 1;
       const c = a + nx;
       const d = c + 1;
-      index.push(a, c, b, b, c, d);
+      point(a);
+      point(b);
+      point(c);
+      point(d);
+      add(a, c, b);
+      add(b, c, d);
+      if (blockOf(i, j) < 0) index.push(a, c, b, b, c, d);
+    }
+  // A flat block: a fan round its middle point, through every point of
+  // its edge a finer neighbour shares (just the corners beside another
+  // flat block), so no seam opens.
+  const at = (i: number, j: number) => j * nx + i;
+  for (let bj = 0; bj < brows; bj++)
+    for (let bi = 0; bi < bcols; bi++) {
+      if (!flat[bj * bcols + bi]) continue;
+      const i0 = 1 + bi * B;
+      const j0 = 1 + bj * B;
+      const i1 = i0 + B;
+      const j1 = j0 + B;
+      const ring: number[] = [];
+      const side = (fine: boolean, p: (s: number) => number) => {
+        for (let s = 0; s < B; s += fine ? 1 : B) ring.push(p(s));
+      };
+      side(!flatAt(bi, bj - 1), (s) => at(i0 + s, j0));
+      side(!flatAt(bi + 1, bj), (s) => at(i1, j0 + s));
+      side(!flatAt(bi, bj + 1), (s) => at(i1 - s, j1));
+      side(!flatAt(bi - 1, bj), (s) => at(i0, j1 - s));
+      const mid = at(i0 + B / 2, j0 + B / 2);
+      const mx = positions[mid * 3]!;
+      const mz = positions[mid * 3 + 2]!;
+      for (let k = 0; k < ring.length; k++) {
+        const u = ring[k]!;
+        const v = ring[(k + 1) % ring.length]!;
+        // Facing up, as the cells' triangles do.
+        const turn =
+          (positions[u * 3 + 2]! - mz) * (positions[v * 3]! - mx) -
+          (positions[u * 3]! - mx) * (positions[v * 3 + 2]! - mz);
+        if (turn > 0) index.push(mid, u, v);
+        else index.push(mid, v, u);
+      }
+    }
+  // Just the points drawn, their normals normalised.
+  const used = new Int32Array(nx * nz).fill(-1);
+  let n = 0;
+  for (const v of index) if (used[v]! < 0) used[v] = n++;
+  const pos = new Float32Array(n * 3);
+  const nor = new Float32Array(n * 3);
+  for (let v = 0; v < nx * nz; v++) {
+    const w = used[v]!;
+    if (w < 0) continue;
+    const len = Math.hypot(
+      normals[v * 3]!,
+      normals[v * 3 + 1]!,
+      normals[v * 3 + 2]!,
+    );
+    for (let k = 0; k < 3; k++) {
+      pos[w * 3 + k] = positions[v * 3 + k]!;
+      nor[w * 3 + k] = len > 0 ? normals[v * 3 + k]! / len : 0;
     }
   }
   const geom = new THREE.BufferGeometry();
-  geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geom.setIndex(index);
-  geom.computeVertexNormals();
+  geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geom.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
+  geom.setIndex(
+    new THREE.BufferAttribute(
+      Uint32Array.from(index, (v) => used[v]!),
+      1,
+    ),
+  );
   return geom;
 }
 
@@ -1337,6 +1530,8 @@ function createView3d(options: View3dOptions): View3dHandle {
   let siteTerrain: Terrain3d | null = null;
   /** What the terrain was last built around. */
   let terrainBox: THREE.Box3 | null = null;
+  /** The ground and box it was built from (see setScene). */
+  let builtTerrainKey = "";
   /** The building's roof, shown while the floors stand together. */
   let roof: THREE.Mesh | null = null;
   /** The roof's light strips (see RoofLights3d). */
@@ -1366,27 +1561,68 @@ function createView3d(options: View3dOptions): View3dHandle {
   let destroyed = false;
 
   // --- rendering on demand ------------------------------------------------
+  // The shadow maps are redrawn only when the scene changes, not when
+  // just the camera moves (they don't depend on it).
+  renderer.shadowMap.autoUpdate = false;
   let raf = 0;
   let dirty = true;
+  /** What a rebuild replaced: freed once the new scene has been drawn, so
+   * the shader programs both share are kept rather than recompiled. */
+  let retired: THREE.Object3D[] = [];
   const draw = () => {
     raf = 0;
     if (destroyed) return;
+    // The pointer's latest move, at most once a frame and before drawing.
+    flushPointer();
     const moved = controls.update();
     if (moved || dirty) {
       dirty = false;
       sizeHandles();
       renderer.render(scene, camera);
+      if (retired.length) freeRetired();
     }
     if (moved) schedule();
   };
   const schedule = () => {
     if (!raf && !destroyed) raf = requestAnimationFrame(draw);
   };
-  const invalidate = () => {
+  /** Redraws the view: the camera moved, or only the editor's overlay. */
+  const redraw = () => {
     dirty = true;
     schedule();
   };
-  controls.addEventListener("change", invalidate);
+  /** Redraws the scene, which changed: its shadows too. */
+  const invalidate = () => {
+    renderer.shadowMap.needsUpdate = true;
+    redraw();
+  };
+  controls.addEventListener("change", redraw);
+
+  /** Frees what's retired, except what the scene still uses (a cached
+   * site model, a shared material). */
+  function freeRetired(): void {
+    const live = new Set<unknown>();
+    scene.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh && !(o as THREE.Line).isLine) return;
+      live.add(mesh.geometry);
+      for (const m of Array.isArray(mesh.material)
+        ? mesh.material
+        : [mesh.material])
+        live.add(m);
+    });
+    for (const obj of retired)
+      obj.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh && !(o as THREE.Line).isLine) return;
+        if (!live.has(mesh.geometry)) mesh.geometry?.dispose();
+        for (const m of Array.isArray(mesh.material)
+          ? mesh.material
+          : [mesh.material])
+          if (m && !live.has(m)) m.dispose();
+      });
+    retired = [];
+  }
 
   const resize = () => {
     const w = Math.max(1, container.clientWidth);
@@ -1453,26 +1689,60 @@ function createView3d(options: View3dOptions): View3dHandle {
     return obj;
   }
 
+  /** Built models by item id, with what each was built from: kept
+   * between rebuilds while the item (and, for a site model, the ground)
+   * stays the same, so a rebuild builds only what changed. Site models
+   * (lawns, drives) are the slowest part of one. */
+  type Kept = Map<string, { key: string; obj: THREE.Group }>;
+  let siteModels: Kept = new Map();
+  let siteModelsNext: Kept = new Map();
+  let itemModels: Kept = new Map();
+  let itemModelsNext: Kept = new Map();
+  /** The ground the site models were built over (its Terrain3d, as JSON). */
+  let siteModelsGround = "";
+
+  function keptModel(
+    was: Kept,
+    next: Kept,
+    id: string,
+    key: string,
+    build: () => THREE.Group | null,
+  ): THREE.Group | null {
+    const kept = was.get(id);
+    if (kept && kept.key === key) {
+      next.set(id, kept);
+      return kept.obj;
+    }
+    const obj = build();
+    if (obj) next.set(id, { key, obj });
+    return obj;
+  }
+
   function buildItemObject(item: Item3d, baseY: number): THREE.Object3D {
     // On the ground: the terrain's height (or the flat ground's), in the
     // item's floor's frame.
+    const key = JSON.stringify(item);
     const site = item.site
-      ? siteModel(
-          item,
-          (x, z) => groundAt(siteTerrain, x, z) - baseY,
-          siteTerrain?.holes.length
-            ? (x, z) =>
-                siteTerrain!.holes.some((poly) => insidePolygon(poly, x, z))
-            : null,
+      ? keptModel(siteModels, siteModelsNext, item.id, `${baseY}|${key}`, () =>
+          siteModel(
+            item,
+            (x, z) => groundAt(siteTerrain, x, z) - baseY,
+            siteTerrain?.holes.length
+              ? (x, z) =>
+                  siteTerrain!.holes.some((poly) => insidePolygon(poly, x, z))
+              : null,
+          ),
         )
       : null;
     const furniture = site
       ? site
       : item.shape !== "block"
         ? null
-        : item.counter
-          ? counterModel(item.footprint, item.height, item.tint ?? null)
-          : (outdoorModel(item) ?? furnitureModel(item));
+        : keptModel(itemModels, itemModelsNext, item.id, key, () =>
+            item.counter
+              ? counterModel(item.footprint, item.height, item.tint ?? null)
+              : (outdoorModel(item) ?? furnitureModel(item)),
+          );
     if (furniture) {
       furniture.name = item.name;
       furniture.position.set(item.x, itemY(item, baseY), item.z);
@@ -1783,9 +2053,15 @@ function createView3d(options: View3dOptions): View3dHandle {
     for (const s of scans.values()) s.group.removeFromParent();
     for (const f of floors.values()) {
       f.group.removeFromParent();
-      disposeObject(f.group);
+      retired.push(f.group);
     }
     floors.clear();
+    // The site models are kept only over the same ground.
+    const groundKey = JSON.stringify(spec.terrain);
+    if (groundKey !== siteModelsGround) siteModels = new Map();
+    siteModelsGround = groundKey;
+    siteModelsNext = new Map();
+    itemModelsNext = new Map();
     // The brightest linked lights get a real point light; outdoor
     // fixtures theirs, from a budget of their own.
     const level = (i: Item3d) =>
@@ -1816,6 +2092,8 @@ function createView3d(options: View3dOptions): View3dHandle {
       floors.set(f.floorId, entry);
       root.add(entry.group);
     });
+    siteModels = siteModelsNext;
+    itemModels = itemModelsNext;
     placeFloors();
     for (const s of scans.values()) attachScan(s);
     applyWallHiding();
@@ -1823,11 +2101,10 @@ function createView3d(options: View3dOptions): View3dHandle {
     // The same roof back (the building didn't change): keep its mesh.
     if (roof && roofSpec !== spec.roof) {
       roof.removeFromParent();
-      roof.geometry.dispose();
-      for (const m of roof.material as THREE.MeshStandardMaterial[]) {
+      // Its own shingle texture (the rest is freed once drawn without it).
+      for (const m of roof.material as THREE.MeshStandardMaterial[])
         m.map?.dispose();
-        m.dispose();
-      }
+      retired.push(roof);
       roof = null;
     }
     roofSpec = spec.roof;
@@ -1859,11 +2136,7 @@ function createView3d(options: View3dOptions): View3dHandle {
     }
     if (roofLightGroup) {
       roofLightGroup.removeFromParent();
-      roofLightGroup.traverse((o) => {
-        const mesh = o as THREE.Mesh;
-        mesh.geometry?.dispose();
-        (mesh.material as THREE.Material | undefined)?.dispose();
-      });
+      retired.push(roofLightGroup);
       roofLightGroup = null;
     }
     if (spec.roofLights?.length) {
@@ -1874,18 +2147,21 @@ function createView3d(options: View3dOptions): View3dHandle {
     fixtureShadows();
     applyWallHiding();
 
-    if (terrain) {
+    ground.visible = !spec.terrain;
+    // The same ground round the same building: keep its mesh.
+    const box = spec.terrain ? bounds() : null;
+    const terrainKey = box
+      ? `${groundKey}|${[...box.min.toArray(), ...box.max.toArray()].map((v) => v.toFixed(3))}`
+      : "";
+    if (terrain && terrainKey !== builtTerrainKey) {
       terrain.removeFromParent();
       terrain.geometry.dispose();
       terrain = null;
     }
-    ground.visible = !spec.terrain;
-    if (spec.terrain) {
-      terrainBox = bounds();
-      terrain = new THREE.Mesh(
-        terrainGeometry(spec.terrain, terrainBox),
-        groundMat,
-      );
+    builtTerrainKey = terrainKey;
+    if (spec.terrain && box && !terrain) {
+      terrainBox = box;
+      terrain = new THREE.Mesh(terrainGeometry(spec.terrain, box), groundMat);
       terrain.name = "Ground";
       terrain.receiveShadow = true;
       scene.add(terrain);
@@ -2566,6 +2842,18 @@ function createView3d(options: View3dOptions): View3dHandle {
   let editDown: { x: number; y: number; id: number; moved: boolean } | null =
     null;
   let hoverQueued: PointerEvent | null = null;
+  let dragQueued: PointerEvent | null = null;
+
+  /** Hands the editor the pointer's latest move, if one is waiting. */
+  function flushPointer(): void {
+    const drag = dragQueued;
+    const hover = hoverQueued;
+    dragQueued = null;
+    hoverQueued = null;
+    if (!editFloorId) return;
+    if (drag && editDragId === drag.pointerId) sendEdit("drag", drag);
+    else if (hover) sendEdit("move", hover);
+  }
 
   const SELECT_COLOR = "#1e88e5";
   const HOVER_COLOR = "#ffb300";
@@ -2664,6 +2952,7 @@ function createView3d(options: View3dOptions): View3dHandle {
 
   const onEditDown = (e: PointerEvent) => {
     if (!editFloorId || e.button !== 0) return;
+    hoverQueued = null;
     editDown = { x: e.clientX, y: e.clientY, id: e.pointerId, moved: false };
     if (sendEdit("down", e)) {
       editDragId = e.pointerId;
@@ -2680,25 +2969,24 @@ function createView3d(options: View3dOptions): View3dHandle {
       Math.hypot(e.clientX - editDown.x, e.clientY - editDown.y) > 4
     )
       editDown.moved = true;
+    // A drag step (or hover) at most once a frame, just before it's drawn
+    // (see draw): a mouse can move several times a frame, and each step
+    // picks, snaps and redraws the guides.
     if (editDragId === e.pointerId) {
-      sendEdit("drag", e);
+      dragQueued = e;
+      schedule();
       return;
     }
     if (e.buttons !== 0) return;
-    // Hover at most once a frame.
-    const queued = hoverQueued;
     hoverQueued = e;
-    if (!queued)
-      requestAnimationFrame(() => {
-        const last = hoverQueued;
-        hoverQueued = null;
-        if (last && editFloorId) sendEdit("move", last);
-      });
+    schedule();
   };
   const onEditUp = (e: PointerEvent) => {
     if (!editFloorId) return;
     const wasDrag = editDragId === e.pointerId;
     if (wasDrag) {
+      // Its last step first, where it was let go.
+      flushPointer();
       sendEdit("up", e);
       editDragId = null;
       controls.enabled = true;
@@ -2712,15 +3000,40 @@ function createView3d(options: View3dOptions): View3dHandle {
     sendEdit("dblclick", e);
   };
 
+  /** The overlay's materials, one per look and kept: it's redrawn on
+   * every pointer move, and a material freed takes its compiled shader
+   * with it. */
+  const overlayMats = new Map<string, THREE.Material>();
+  function overlayMat<M extends THREE.Material>(m: M): M {
+    const o = m as unknown as Record<string, unknown>;
+    const key = [
+      m.type,
+      (o["color"] as THREE.Color | undefined)?.getHexString(),
+      m.opacity,
+      m.transparent,
+      m.depthTest,
+      m.depthWrite,
+      m.side,
+      m.visible,
+      o["dashSize"],
+      o["gapSize"],
+    ].join("|");
+    const kept = overlayMats.get(key);
+    if (kept) {
+      m.dispose();
+      return kept as M;
+    }
+    overlayMats.set(key, m);
+    return m;
+  }
+
   function clearOverlay(): void {
     for (const child of [...overlayGroup.children]) {
       overlayGroup.remove(child);
       child.traverse((o) => {
         const mesh = o as THREE.Mesh;
+        // Its materials are kept (see overlayMat).
         mesh.geometry?.dispose();
-        const mat = mesh.material as THREE.Material | THREE.Material[];
-        if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-        else mat?.dispose();
       });
     }
     handleMeshes = [];
@@ -2740,24 +3053,28 @@ function createView3d(options: View3dOptions): View3dHandle {
       const g = boxGeometry(grown);
       const edges = new THREE.LineSegments(
         new THREE.EdgesGeometry(g),
-        new THREE.LineBasicMaterial({
-          color,
-          depthTest: false,
-          transparent: true,
-          opacity: 0.95,
-        }),
+        overlayMat(
+          new THREE.LineBasicMaterial({
+            color,
+            depthTest: false,
+            transparent: true,
+            opacity: 0.95,
+          }),
+        ),
       );
       edges.renderOrder = 1000;
       overlayGroup.add(edges);
       if (fill > 0) {
         const mesh = new THREE.Mesh(
           g,
-          new THREE.MeshBasicMaterial({
-            color,
-            transparent: true,
-            opacity: fill,
-            depthWrite: false,
-          }),
+          overlayMat(
+            new THREE.MeshBasicMaterial({
+              color,
+              transparent: true,
+              opacity: fill,
+              depthWrite: false,
+            }),
+          ),
         );
         mesh.renderOrder = 999;
         overlayGroup.add(mesh);
@@ -2848,11 +3165,13 @@ function createView3d(options: View3dOptions): View3dHandle {
         pts.push(at(x, z));
       });
       const geom = new THREE.BufferGeometry().setFromPoints(pts);
-      const lineMat = new THREE.LineBasicMaterial({
-        color,
-        depthTest: false,
-        transparent: true,
-      });
+      const lineMat = overlayMat(
+        new THREE.LineBasicMaterial({
+          color,
+          depthTest: false,
+          transparent: true,
+        }),
+      );
       const line = new THREE.Line(geom, lineMat);
       line.renderOrder = 1000;
       overlayGroup.add(line);
@@ -2866,11 +3185,13 @@ function createView3d(options: View3dOptions): View3dHandle {
       );
       const line = new THREE.LineLoop(
         new THREE.BufferGeometry().setFromPoints(pts),
-        new THREE.LineBasicMaterial({
-          color,
-          depthTest: false,
-          transparent: true,
-        }),
+        overlayMat(
+          new THREE.LineBasicMaterial({
+            color,
+            depthTest: false,
+            transparent: true,
+          }),
+        ),
       );
       line.renderOrder = 1000;
       overlayGroup.add(line);
@@ -2883,13 +3204,15 @@ function createView3d(options: View3dOptions): View3dHandle {
         g.translate(0, slab.y + 0.015, 0);
         const mesh = new THREE.Mesh(
           g,
-          new THREE.MeshBasicMaterial({
-            color,
-            transparent: true,
-            opacity: fill,
-            depthWrite: false,
-            side: THREE.DoubleSide,
-          }),
+          overlayMat(
+            new THREE.MeshBasicMaterial({
+              color,
+              transparent: true,
+              opacity: fill,
+              depthWrite: false,
+              side: THREE.DoubleSide,
+            }),
+          ),
         );
         overlayGroup.add(mesh);
       }
@@ -2898,11 +3221,12 @@ function createView3d(options: View3dOptions): View3dHandle {
     outlineBoxes(refBoxes(entry, ref), color, fill);
   }
 
+  // The overlay casts no shadows: redrawn without them.
   function applyOverlay(): void {
     clearOverlay();
     const entry = editEntry();
     if (!entry) {
-      invalidate();
+      redraw();
       return;
     }
     overlayGroup.position.y = entry.group.position.y;
@@ -2914,12 +3238,14 @@ function createView3d(options: View3dOptions): View3dHandle {
       for (const b of o.ghost) {
         const mesh = new THREE.Mesh(
           boxGeometry(b),
-          new THREE.MeshBasicMaterial({
-            color: "#43a047",
-            transparent: true,
-            opacity: 0.45,
-            depthWrite: false,
-          }),
+          overlayMat(
+            new THREE.MeshBasicMaterial({
+              color: "#43a047",
+              transparent: true,
+              opacity: 0.45,
+              depthWrite: false,
+            }),
+          ),
         );
         mesh.renderOrder = 998;
         overlayGroup.add(mesh);
@@ -2932,13 +3258,15 @@ function createView3d(options: View3dOptions): View3dHandle {
         new THREE.BufferGeometry().setFromPoints(
           guide.points.map(([x, y, z]) => new THREE.Vector3(x, y, z)),
         ),
-        new THREE.LineDashedMaterial({
-          color: guide.color,
-          dashSize: 0.12,
-          gapSize: 0.08,
-          depthTest: false,
-          transparent: true,
-        }),
+        overlayMat(
+          new THREE.LineDashedMaterial({
+            color: guide.color,
+            dashSize: 0.12,
+            gapSize: 0.08,
+            depthTest: false,
+            transparent: true,
+          }),
+        ),
       );
       l.computeLineDistances();
       l.renderOrder = 1001;
@@ -2950,12 +3278,14 @@ function createView3d(options: View3dOptions): View3dHandle {
         new THREE.BufferGeometry().setFromPoints(
           path.points.map(([x, y, z]) => new THREE.Vector3(x, y, z)),
         ),
-        new THREE.LineBasicMaterial({
-          color: path.color,
-          depthTest: false,
-          transparent: true,
-          opacity: 0.9,
-        }),
+        overlayMat(
+          new THREE.LineBasicMaterial({
+            color: path.color,
+            depthTest: false,
+            transparent: true,
+            opacity: 0.9,
+          }),
+        ),
       );
       l.renderOrder = 1001;
       overlayGroup.add(l);
@@ -2966,11 +3296,13 @@ function createView3d(options: View3dOptions): View3dHandle {
         new THREE.BufferGeometry().setFromPoints(
           line.map(([x, y, z]) => new THREE.Vector3(x, y, z)),
         ),
-        new THREE.LineBasicMaterial({
-          color: "#e53935",
-          depthTest: false,
-          transparent: true,
-        }),
+        overlayMat(
+          new THREE.LineBasicMaterial({
+            color: "#e53935",
+            depthTest: false,
+            transparent: true,
+          }),
+        ),
       );
       l.renderOrder = 1001;
       overlayGroup.add(l);
@@ -2980,31 +3312,35 @@ function createView3d(options: View3dOptions): View3dHandle {
       const minor = o.minorFrom != null && k >= o.minorFrom;
       const dot = new THREE.Mesh(
         new THREE.SphereGeometry(minor ? 0.05 : 0.075, 16, 12),
-        new THREE.MeshBasicMaterial({
-          color: active ? "#ff7043" : minor ? SELECT_COLOR : "#ffffff",
-          depthTest: false,
-          transparent: true,
-          opacity: minor ? 0.75 : 1,
-        }),
+        overlayMat(
+          new THREE.MeshBasicMaterial({
+            color: active ? "#ff7043" : minor ? SELECT_COLOR : "#ffffff",
+            depthTest: false,
+            transparent: true,
+            opacity: minor ? 0.75 : 1,
+          }),
+        ),
       );
       dot.position.set(x, y, z);
       dot.renderOrder = 1002;
       const ring = new THREE.Mesh(
         new THREE.SphereGeometry(0.1, 16, 12),
-        new THREE.MeshBasicMaterial({
-          color: SELECT_COLOR,
-          depthTest: false,
-          transparent: true,
-          opacity: 0.9,
-          side: THREE.BackSide,
-        }),
+        overlayMat(
+          new THREE.MeshBasicMaterial({
+            color: SELECT_COLOR,
+            depthTest: false,
+            transparent: true,
+            opacity: 0.9,
+            side: THREE.BackSide,
+          }),
+        ),
       );
       ring.position.set(x, y, z);
       ring.renderOrder = 1001;
       // A larger, unseen sphere to grab it by.
       const pick = new THREE.Mesh(
         new THREE.SphereGeometry(0.18, 8, 6),
-        new THREE.MeshBasicMaterial({ visible: false }),
+        overlayMat(new THREE.MeshBasicMaterial({ visible: false })),
       );
       pick.position.set(x, y, z);
       overlayGroup.add(ring, dot, pick);
@@ -3014,7 +3350,7 @@ function createView3d(options: View3dOptions): View3dHandle {
     });
     overlayGroup.updateMatrixWorld(true);
     sizeHandles();
-    invalidate();
+    redraw();
   }
 
   function sameRef(a: EditRef, b: EditRef): boolean {
@@ -3074,6 +3410,8 @@ function createView3d(options: View3dOptions): View3dHandle {
     previewGrade(grid) {
       if (!siteTerrain || !terrain || !terrainBox) return;
       siteTerrain = { ...siteTerrain, grid };
+      // Not what it was built from: the next scene builds it afresh.
+      builtTerrainKey = "";
       const old = terrain.geometry;
       terrain.geometry = terrainGeometry(siteTerrain, terrainBox);
       old.dispose();
@@ -3098,6 +3436,8 @@ function createView3d(options: View3dOptions): View3dHandle {
           groundAt(siteTerrain, x, z) -
           (editEntry()?.spec.baseY ?? 0) +
           Number(obj.userData["y0"] ?? 0);
+      // Its shadow moves with it.
+      renderer.shadowMap.needsUpdate = true;
       applyOverlay();
     },
     setScanMode(mode) {
@@ -3150,6 +3490,9 @@ function createView3d(options: View3dOptions): View3dHandle {
       canvasEl.removeEventListener("pointercancel", onEditUp);
       canvasEl.removeEventListener("dblclick", onEditDblClick);
       controls.dispose();
+      for (const obj of retired) disposeObject(obj);
+      retired = [];
+      for (const m of overlayMats.values()) m.dispose();
       disposeObject(scene, false);
       for (const t of textures.values()) t.dispose();
       renderer.dispose();

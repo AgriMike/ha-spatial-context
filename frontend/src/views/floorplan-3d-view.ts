@@ -1177,7 +1177,12 @@ export class Floorplan3dView extends LitElement {
     const layoutsChanged =
       this._lastLayouts.length !== context.length ||
       context.some((f, i) => this._lastLayouts[i] !== f.layout);
-    if (sig !== this._sceneSig || layoutsChanged) {
+    // Not mid-drag (the sun's minute, a light switched): what's dragged is
+    // only previewed, and a rebuild would put it back. Done on release.
+    const changed = sig !== this._sceneSig || layoutsChanged;
+    if (changed && this._drag) this._rebuildHeld = true;
+    if (changed && !this._drag) {
+      this._rebuildHeld = false;
       this._sceneSig = sig;
       this._lastLayouts = context.map((f) => f.layout);
       const scene = buildScene({
@@ -1241,6 +1246,8 @@ export class Floorplan3dView extends LitElement {
     );
   };
   private _lastLayouts: FloorLayout[] = [];
+  /** A rebuild waits for the drag to end. */
+  private _rebuildHeld = false;
 
   /** The roof goes on the whole building, never a single floor; it's off
    * while editing (the rooms are what's edited). */
@@ -3086,6 +3093,8 @@ export class Floorplan3dView extends LitElement {
         );
       }
       this._pushOverlay();
+      // Once the edit (if any) has reached the layout.
+      if (this._rebuildHeld) setTimeout(() => this._rebuild(), 0);
       return false;
     }
     if (e.type === "click") {
