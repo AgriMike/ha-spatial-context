@@ -246,6 +246,18 @@ class Parts {
  * this, so it follows the ground's rise and fall. */
 const SURFACE_CELL_M = 0.45;
 
+/** How many times finer a surface is cut where the ground bends (graded,
+ * or over the hillside's fold): its pieces about as wide as the terrain's
+ * own (0.2 m), so it follows the same curves. */
+const SURFACE_SUB = 2;
+
+/** The terrain mesh's widest triangle (its 0.2 m cells' diagonal). */
+const TERRAIN_SPAN_M = 0.2 * Math.SQRT2;
+
+/** Whether the ground bends anywhere over a stretch (world x0..x1,
+ * z0..z1); where it doesn't, it's one flat or sloping plane. */
+export type Bends = (x0: number, z0: number, x1: number, z1: number) => boolean;
+
 /** The part of a polygon on one side of an axis line: x (axis 0) or z
  * (axis 1) at least `at` (keep "above"), else at most. */
 function clipAxis(
@@ -276,20 +288,52 @@ function polyArea(poly: Vec2[]): number {
   return a / 2;
 }
 
+/** A cell's piece of an outline (a polygon inside the square from xa, za
+ * to xb, zb) as triangles, each counter-clockwise in (x, z): a whole
+ * square as two, else triangulated as it is. */
+function pieceTriangles(
+  piece: Vec2[],
+  xa: number,
+  za: number,
+  xb: number,
+  zb: number,
+  push: (a: Vec2, b: Vec2, c: Vec2) => void,
+): void {
+  if (piece.length < 3) return;
+  const area = Math.abs(polyArea(piece));
+  if (area < 1e-9) return;
+  if (area >= (xb - xa) * (zb - za) * (1 - 1e-6)) {
+    push([xa, za], [xb, za], [xb, zb]);
+    push([xa, za], [xb, zb], [xa, zb]);
+    return;
+  }
+  const ring = piece.map(([x, z]) => new THREE.Vector2(x, z));
+  for (const [a, b, c] of THREE.ShapeUtils.triangulateShape(ring, []))
+    push(piece[a!]!, piece[b!]!, piece[c!]!);
+}
+
 /** An outline filled with triangles no wider than `cell`: cut along a
  * grid of that size, each whole square two triangles and each piece the
- * outline crosses triangulated as it is. Each counter-clockwise in
- * (x, z); by rows of the grid, the first from z = `z0`. */
+ * outline crosses triangulated as it is. The cells `split` names (by
+ * column and row) are cut `sub` times finer again. Each triangle
+ * counter-clockwise in (x, z); by rows of the grid, the first from
+ * z = `z0`; `fine` marks those from split cells. */
 function cellTriangles(
   outline: Vec2[],
   cell: number,
-): { z0: number; rows: [Vec2, Vec2, Vec2][][] } {
-  let out: [Vec2, Vec2, Vec2][] = [];
-  const rows: [Vec2, Vec2, Vec2][][] = [];
+  split: ((i: number, j: number) => boolean) | null = null,
+  sub = 1,
+): {
+  z0: number;
+  rows: { tri: [Vec2, Vec2, Vec2]; fine: boolean }[][];
+} {
+  let out: { tri: [Vec2, Vec2, Vec2]; fine: boolean }[] = [];
+  const rows: (typeof out)[] = [];
+  let fine = false;
   const push = (a: Vec2, b: Vec2, c: Vec2) => {
     const turn = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
     if (Math.abs(turn) < 1e-12) return;
-    out.push(turn > 0 ? [a, b, c] : [a, c, b]);
+    out.push({ tri: turn > 0 ? [a, b, c] : [a, c, b], fine });
   };
   const xs = outline.map((p) => p[0]);
   const zs = outline.map((p) => p[1]);
@@ -297,7 +341,6 @@ function cellTriangles(
   const i1 = Math.ceil(Math.max(...xs) / cell);
   const j0 = Math.floor(Math.min(...zs) / cell);
   const j1 = Math.ceil(Math.max(...zs) / cell);
-  const full = cell * cell * (1 - 1e-6);
   for (let j = j0; j < j1; j++) {
     const za = j * cell;
     const zb = (j + 1) * cell;
@@ -310,16 +353,37 @@ function cellTriangles(
       const xb = (i + 1) * cell;
       const piece = clipAxis(clipAxis(row, 0, xa, true), 0, xb, false);
       if (piece.length < 3) continue;
-      const area = Math.abs(polyArea(piece));
-      if (area < 1e-9) continue;
-      if (area >= full) {
-        push([xa, za], [xb, za], [xb, zb]);
-        push([xa, za], [xb, zb], [xa, zb]);
+      fine = sub > 1 && !!split?.(i, j);
+      if (!fine) {
+        pieceTriangles(piece, xa, za, xb, zb, push);
         continue;
       }
-      const ring = piece.map(([x, z]) => new THREE.Vector2(x, z));
-      for (const [a, b, c] of THREE.ShapeUtils.triangulateShape(ring, []))
-        push(piece[a!]!, piece[b!]!, piece[c!]!);
+      // On bending ground: the same, a finer grid's cells at a time.
+      const s = cell / sub;
+      if (Math.abs(polyArea(piece)) >= cell * cell * (1 - 1e-6)) {
+        for (let b = 0; b < sub; b++)
+          for (let a = 0; a < sub; a++) {
+            const xc = xa + a * s;
+            const zc = za + b * s;
+            const xd = a === sub - 1 ? xb : xc + s;
+            const zd = b === sub - 1 ? zb : zc + s;
+            push([xc, zc], [xd, zc], [xd, zd]);
+            push([xc, zc], [xd, zd], [xc, zd]);
+          }
+        continue;
+      }
+      for (let b = 0; b < sub; b++) {
+        const zc = za + b * s;
+        const zd = b === sub - 1 ? zb : za + (b + 1) * s;
+        const strip = clipAxis(clipAxis(piece, 1, zc, true), 1, zd, false);
+        if (strip.length < 3) continue;
+        for (let a = 0; a < sub; a++) {
+          const xc = xa + a * s;
+          const xd = a === sub - 1 ? xb : xa + (a + 1) * s;
+          const bit = clipAxis(clipAxis(strip, 0, xc, true), 0, xd, false);
+          pieceTriangles(bit, xc, zc, xd, zd, push);
+        }
+      }
     }
   }
   return { z0: j0 * cell, rows };
@@ -394,12 +458,136 @@ function surface(
   ground: Ground,
   toWorld: (x: number, z: number) => Vec2,
   cut: ((x: number, z: number) => boolean) | null = null,
+  bends: Bends | null = null,
 ): THREE.Group {
   const site = item.site!;
   const spec = SURFACES[kind] ?? SURFACES["concrete"]!;
   const outline = site.points;
   const parts = new Parts();
-  const top = (x: number, z: number) => ground(x, z) + spec.lift;
+  const cell = SURFACE_CELL_M;
+  /** A cell (by column and row) on bending ground, or beside it: cut
+   * finer, and lifted clear of the terrain over its curves. One cell
+   * round counts too, so where a finer cell meets a coarse one the ground
+   * is flat and their edges agree. */
+  const ox = outline.map((p) => p[0]);
+  const oz = outline.map((p) => p[1]);
+  const ci0 = Math.floor(Math.min(...ox) / cell) - 2;
+  const cj0 = Math.floor(Math.min(...oz) / cell) - 2;
+  const ccols = Math.ceil(Math.max(...ox) / cell) + 3 - ci0;
+  const crows = Math.ceil(Math.max(...oz) / cell) + 3 - cj0;
+  /** Each cell's answer, once worked out: 1 coarse, 2 fine. */
+  const fineCells = new Uint8Array(bends ? ccols * crows : 0);
+  const fineAt = (i: number, j: number): boolean => {
+    if (!bends) return false;
+    const a = i - ci0;
+    const b = j - cj0;
+    const k = a >= 0 && b >= 0 && a < ccols && b < crows ? b * ccols + a : -1;
+    if (k >= 0 && fineCells[k]) return fineCells[k] === 2;
+    const corners = [
+      toWorld((i - 1) * cell, (j - 1) * cell),
+      toWorld((i + 2) * cell, (j - 1) * cell),
+      toWorld((i - 1) * cell, (j + 2) * cell),
+      toWorld((i + 2) * cell, (j + 2) * cell),
+    ];
+    const wx = corners.map((c) => c[0]);
+    const wz = corners.map((c) => c[1]);
+    const v = bends(
+      Math.min(...wx),
+      Math.min(...wz),
+      Math.max(...wx),
+      Math.max(...wz),
+    );
+    if (k >= 0) fineCells[k] = v ? 2 : 1;
+    return v;
+  };
+  /** How far the terrain can rise above a straight line between two of
+   * the surface's points on curved ground (both meshes are straight
+   * between their points): the bend there times the two spans. */
+  const subCell = cell / SURFACE_SUB;
+  const SPAN = (1.3 * ((subCell * Math.SQRT2) ** 2 + TERRAIN_SPAN_M ** 2)) / 8;
+  // Per-point values, worked out once, in flat arrays over the finer
+  // grid's points (the cells round a point share it; the bends and slopes
+  // sample its neighbours); points off that grid (on the outline) are
+  // simply worked out each time.
+  const li0 = Math.floor(Math.min(...ox) / subCell) - 4;
+  const lj0 = Math.floor(Math.min(...oz) / subCell) - 4;
+  const lcols = Math.ceil(Math.max(...ox) / subCell) + 5 - li0;
+  const lrows = Math.ceil(Math.max(...oz) / subCell) + 5 - lj0;
+  /** A point's slot in the arrays, or -1 off the finer grid's points. */
+  const slot = (x: number, z: number): number => {
+    const fx = x / subCell;
+    const fz = z / subCell;
+    const i = Math.round(fx);
+    const j = Math.round(fz);
+    if (Math.abs(fx - i) > 1e-6 || Math.abs(fz - j) > 1e-6) return -1;
+    const a = i - li0;
+    const b = j - lj0;
+    if (a < 0 || b < 0 || a >= lcols || b >= lrows) return -1;
+    return b * lcols + a;
+  };
+  const cache = () => new Float32Array(lcols * lrows).fill(NaN);
+  const heights = cache();
+  const tops = cache();
+  const slopeX = bends ? cache() : null;
+  const slopeZ = bends ? cache() : null;
+  const groundAt = (x: number, z: number) => {
+    const k = slot(x, z);
+    if (k < 0) return ground(x, z);
+    let y = heights[k]!;
+    if (y !== y) y = heights[k] = ground(x, z);
+    return y;
+  };
+  const extraLift = (x: number, z: number): number => {
+    const g = 2 * groundAt(x, z);
+    const f = subCell;
+    // Along each axis (f apart) and each diagonal (f√2 apart).
+    const most = Math.max(
+      Math.abs(groundAt(x + f, z) + groundAt(x - f, z) - g),
+      Math.abs(groundAt(x, z + f) + groundAt(x, z - f) - g),
+      Math.abs(groundAt(x + f, z + f) + groundAt(x - f, z - f) - g) / 2,
+      Math.abs(groundAt(x + f, z - f) + groundAt(x - f, z + f) - g) / 2,
+    );
+    return Math.min(0.08, (most / (f * f)) * SPAN);
+  };
+  /** The top's height at a point. */
+  const topAt = (x: number, z: number) => {
+    let y = groundAt(x, z) + spec.lift;
+    // The point's own cell, or on a cell line the cells either side.
+    const fx = x / cell;
+    const fz = z / cell;
+    const ia = Math.floor(fx - 1e-6);
+    const ib = Math.floor(fx + 1e-6);
+    const ja = Math.floor(fz - 1e-6);
+    const jb = Math.floor(fz + 1e-6);
+    if (fineAt(ia, ja) || fineAt(ib, ja) || fineAt(ia, jb) || fineAt(ib, jb))
+      y += extraLift(x, z);
+    return y;
+  };
+  const top = (x: number, z: number) => {
+    const k = slot(x, z);
+    if (k < 0) return topAt(x, z);
+    let y = tops[k]!;
+    if (y !== y) y = tops[k] = topAt(x, z);
+    return y;
+  };
+  /** The ground's own normal at a point (smooth shading over curves),
+   * pushed onto `out`. */
+  const pushSlopeNormal = (out: number[], x: number, z: number) => {
+    const k = slot(x, z);
+    let gx = k < 0 ? NaN : slopeX![k]!;
+    let gz = k < 0 ? NaN : slopeZ![k]!;
+    if (gx !== gx) {
+      const e = subCell;
+      gx = (groundAt(x + e, z) - groundAt(x - e, z)) / (2 * e);
+      gz = (groundAt(x, z + e) - groundAt(x, z - e)) / (2 * e);
+      if (k >= 0) {
+        slopeX![k] = gx;
+        slopeZ![k] = gz;
+      }
+    }
+    const l = Math.hypot(gx, 1, gz);
+    out.push(-gx / l, 1 / l, -gz / l);
+  };
   /** Where the ground is dug out for the house (a walk-out's lower level,
    * a garage a step down): no surface there, or it'd cover their floors. */
   const dugOut = (x: number, z: number) => {
@@ -414,16 +602,21 @@ function surface(
   if (outline.length >= 3) {
     const pos: number[] = [];
     const uv: number[] = [];
+    const nor: number[] = [];
     const emit = (p: Vec2) => {
       pos.push(p[0], top(p[0], p[1]), p[1]);
       const [wx, wz] = toWorld(p[0], p[1]);
       uv.push(wx / spec.tile, wz / spec.tile);
     };
-    const cells = cellTriangles(outline, SURFACE_CELL_M);
+    const cells = cellTriangles(outline, cell, fineAt, SURFACE_SUB);
     const starts: number[] = [];
+    const n = new THREE.Vector3();
+    const u = new THREE.Vector3();
+    const w = new THREE.Vector3();
     for (const row of cells.rows) {
       starts.push(pos.length / 9);
-      for (const [a, b, c] of row) {
+      for (const { tri, fine } of row) {
+        const [a, b, c] = tri;
         if (dugOut((a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3))
           continue;
         // Facing up: counter-clockwise in (x, z) is clockwise seen from
@@ -431,13 +624,34 @@ function surface(
         emit(a);
         emit(c);
         emit(b);
+        if (fine) {
+          // Smooth over the curves, as the terrain is shaded.
+          pushSlopeNormal(nor, a[0], a[1]);
+          pushSlopeNormal(nor, c[0], c[1]);
+          pushSlopeNormal(nor, b[0], b[1]);
+        } else {
+          // One plane: its face's own.
+          const k = pos.length - 9;
+          u.set(
+            pos[k + 3]! - pos[k]!,
+            pos[k + 4]! - pos[k + 1]!,
+            pos[k + 5]! - pos[k + 2]!,
+          );
+          w.set(
+            pos[k + 6]! - pos[k]!,
+            pos[k + 7]! - pos[k + 1]!,
+            pos[k + 8]! - pos[k + 2]!,
+          );
+          n.crossVectors(u, w).normalize();
+          for (let q = 0; q < 3; q++) nor.push(n.x, n.y, n.z);
+        }
       }
     }
     starts.push(pos.length / 9);
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
-    g.computeVertexNormals();
+    g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
     const m = new THREE.MeshStandardMaterial({
       color: site.tint ?? spec.color,
       roughness: spec.rough,
@@ -446,7 +660,7 @@ function surface(
     parts.add(g, m);
     picked = {
       material: m,
-      rows: { z0: cells.z0, cell: SURFACE_CELL_M, starts },
+      rows: { z0: cells.z0, cell, starts },
     };
     // The slab's edge, down into the ground — in short steps, so it
     // follows the ground between the corners as the top does.
@@ -456,7 +670,12 @@ function surface(
       const q = outline[(i + 1) % outline.length]!;
       const n = Math.max(
         1,
-        Math.min(400, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) / 0.3)),
+        Math.min(
+          800,
+          Math.ceil(
+            Math.hypot(q[0] - p[0], q[1] - p[1]) / (bends ? 0.15 : 0.3),
+          ),
+        ),
       );
       for (let s = 0; s < n; s++) {
         const a: Vec2 = [
@@ -778,6 +997,7 @@ export function siteModel(
   item: Item3d,
   ground: Ground,
   cut: ((x: number, z: number) => boolean) | null = null,
+  bends: Bends | null = null,
 ): THREE.Group | null {
   const site = item.site;
   if (!site || site.points.length < 2) return null;
@@ -790,7 +1010,8 @@ export function siteModel(
     const [wx, wz] = toWorld(x, z);
     return ground(wx, wz) - item.y0;
   };
-  if (site.surface) return surface(item, site.surface, local, toWorld, cut);
+  if (site.surface)
+    return surface(item, site.surface, local, toWorld, cut, bends);
   if (site.fence) return fence(item, site.fence, local);
   return null;
 }

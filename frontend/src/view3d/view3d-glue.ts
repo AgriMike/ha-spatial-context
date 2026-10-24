@@ -972,6 +972,82 @@ function groundAt(t: Terrain3d | null, x: number, z: number): number {
   );
 }
 
+/** Whether a spot is in one of the terrain's holes (where the ground is
+ * dug out for the house), each outline's bounds checked first. */
+const HOLE_BOUNDS = new WeakMap<Vec2[][], [number, number, number, number][]>();
+
+function inHole(holes: Vec2[][], x: number, z: number): boolean {
+  let bounds = HOLE_BOUNDS.get(holes);
+  if (!bounds) {
+    bounds = holes.map((poly) => {
+      const xs = poly.map((p) => p[0]);
+      const zs = poly.map((p) => p[1]);
+      return [
+        Math.min(...xs),
+        Math.min(...zs),
+        Math.max(...xs),
+        Math.max(...zs),
+      ];
+    });
+    HOLE_BOUNDS.set(holes, bounds);
+  }
+  for (let k = 0; k < holes.length; k++) {
+    const [x0, z0, x1, z1] = bounds[k]!;
+    if (x < x0 || x > x1 || z < z0 || z > z1) continue;
+    if (insidePolygon(holes[k]!, x, z)) return true;
+  }
+  return false;
+}
+
+/** Which stretch of the hillside a spot is on: 0 level, 1 falling, 2
+ * past its low edge (each one plane; it folds between them). */
+function terrainFold(t: Terrain3d, x: number, z: number): number {
+  const [dx, dz] = t.dir;
+  const [lo, hi] = t.range;
+  if (hi <= lo || t.level >= 1) return 0;
+  const k = Math.min(1, Math.max(0, (x * dx + z * dz - lo) / (hi - lo)));
+  return k <= t.level ? 0 : k >= 1 ? 2 : 1;
+}
+
+/** Whether any of the grading reaches a stretch (world x0..x1, z0..z1):
+ * every grid point the smoothing reaches for (see gridOffset). */
+function terrainGraded(
+  t: Terrain3d,
+  x0: number,
+  x1: number,
+  z0: number,
+  z1: number,
+): boolean {
+  const g = t.grid;
+  if (!g || !g.cols || !g.rows || g.step <= 0) return false;
+  const ia = Math.max(0, Math.floor((x0 - g.x0) / g.step) - 1);
+  const ib = Math.min(g.cols - 1, Math.floor((x1 - g.x0) / g.step) + 2);
+  const ja = Math.max(0, Math.floor((z0 - g.z0) / g.step) - 1);
+  const jb = Math.min(g.rows - 1, Math.floor((z1 - g.z0) / g.step) + 2);
+  for (let j = ja; j <= jb; j++)
+    for (let i = ia; i <= ib; i++) if (g.h[j * g.cols + i]) return true;
+  return false;
+}
+
+/** Whether the drawn ground bends anywhere over a stretch: graded there,
+ * or across one of the hillside's folds. */
+function terrainBends(
+  t: Terrain3d | null,
+  x0: number,
+  z0: number,
+  x1: number,
+  z1: number,
+): boolean {
+  if (!t) return false;
+  const f = terrainFold(t, x0, z0);
+  return (
+    terrainFold(t, x1, z0) !== f ||
+    terrainFold(t, x0, z1) !== f ||
+    terrainFold(t, x1, z1) !== f ||
+    terrainGraded(t, x0, x1, z0, z1)
+  );
+}
+
 /** A hillside under the building (see Terrain3d): level at `uphill`
  * before the building's high face and across its first `level` share,
  * falling linearly across the rest to
@@ -1047,25 +1123,6 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
   const B = 16;
   const bcols = Math.floor((cols - 2) / B);
   const brows = Math.floor((rows - 2) / B);
-  const [dx, dz] = t.dir;
-  const [lo, hi] = t.range;
-  const fold = (x: number, z: number) => {
-    if (hi <= lo || t.level >= 1) return 0;
-    const k = Math.min(1, Math.max(0, (x * dx + z * dz - lo) / (hi - lo)));
-    return k <= t.level ? 0 : k >= 1 ? 2 : 1;
-  };
-  const graded = (x0: number, x1: number, z0: number, z1: number) => {
-    const g = t.grid;
-    if (!g || !g.cols || !g.rows || g.step <= 0) return false;
-    // Every point the smoothing reaches for (see gridOffset).
-    const ia = Math.max(0, Math.floor((x0 - g.x0) / g.step) - 1);
-    const ib = Math.min(g.cols - 1, Math.floor((x1 - g.x0) / g.step) + 2);
-    const ja = Math.max(0, Math.floor((z0 - g.z0) / g.step) - 1);
-    const jb = Math.min(g.rows - 1, Math.floor((z1 - g.z0) / g.step) + 2);
-    for (let j = ja; j <= jb; j++)
-      for (let i = ia; i <= ib; i++) if (g.h[j * g.cols + i]) return true;
-    return false;
-  };
   const flat = new Uint8Array(bcols * brows);
   for (let bj = 0; bj < brows; bj++)
     for (let bi = 0; bi < bcols; bi++) {
@@ -1081,14 +1138,7 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
       const x1 = xs[i0 + B + 1]!;
       const z0 = zs[j0 - 1]!;
       const z1 = zs[j0 + B + 1]!;
-      const f = fold(x0, z0);
-      if (
-        fold(x1, z0) === f &&
-        fold(x0, z1) === f &&
-        fold(x1, z1) === f &&
-        !graded(x0, x1, z0, z1)
-      )
-        flat[bj * bcols + bi] = 1;
+      if (!terrainBends(t, x0, z0, x1, z1)) flat[bj * bcols + bi] = 1;
     }
   const flatAt = (bi: number, bj: number) =>
     bi >= 0 && bj >= 0 && bi < bcols && bj < brows && !!flat[bj * bcols + bi];
@@ -1728,8 +1778,10 @@ function createView3d(options: View3dOptions): View3dHandle {
             item,
             (x, z) => groundAt(siteTerrain, x, z) - baseY,
             siteTerrain?.holes.length
-              ? (x, z) =>
-                  siteTerrain!.holes.some((poly) => insidePolygon(poly, x, z))
+              ? (x, z) => inHole(siteTerrain!.holes, x, z)
+              : null,
+            siteTerrain
+              ? (x0, z0, x1, z1) => terrainBends(siteTerrain, x0, z0, x1, z1)
               : null,
           ),
         )

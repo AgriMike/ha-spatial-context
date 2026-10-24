@@ -776,7 +776,10 @@ export class Floorplan3dView extends LitElement {
   @state() private _gradeMode: GradeMode | "point" = "raise";
   /** The roof's edges as last built (see RoofEdge3d). */
   @state() private _roofEdges: RoofEdge3d[] = [];
-  @state() private _gradeRadius = 2.5;
+  /** The brush's full-strength radius, and how far past it (metres) a
+   * dab eases off into the ground round it. */
+  @state() private _gradeRadius = 1.5;
+  @state() private _gradeFeather = 2;
   @state() private _gradeStrength = 0.1;
   @state() private _gradeStep = 1;
   @state() private _gradeNode: { i: number; j: number } | null = null;
@@ -1623,15 +1626,21 @@ export class Floorplan3dView extends LitElement {
           activeHandle = handles.length - 1;
         }
       } else {
-        const r = this._gradeRadius;
-        const ring: [number, number, number][] = [];
-        for (let k = 0; k <= 48; k++) {
-          const a = (k / 48) * Math.PI * 2;
-          const x = cx + Math.cos(a) * r;
-          const z = cz + Math.sin(a) * r;
-          ring.push([x, gy(x, z), z]);
-        }
-        paths.push({ points: ring, color: "#ff7043" });
+        const r = this._gradeRadius + this._gradeFeather;
+        const circle = (radius: number) => {
+          const ring: [number, number, number][] = [];
+          for (let k = 0; k <= 48; k++) {
+            const a = (k / 48) * Math.PI * 2;
+            const x = cx + Math.cos(a) * radius;
+            const z = cz + Math.sin(a) * radius;
+            ring.push([x, gy(x, z), z]);
+          }
+          return ring;
+        };
+        // Full strength inside; the feathered edge out to the outer ring.
+        paths.push({ points: circle(this._gradeRadius), color: "#ff7043" });
+        if (this._gradeFeather > 0)
+          paths.push({ points: circle(r), color: "#ffb74d" });
         // The grid's lines within the brush, draped over the ground.
         const x0 = (grid?.x0 ?? 0) % step;
         const z0 = (grid?.z0 ?? 0) % step;
@@ -2395,9 +2404,11 @@ export class Floorplan3dView extends LitElement {
     const tool = this._tool;
 
     // --- another floor's thing, in the dollhouse: go and edit it there ---
+    // (Not through a handle's dot: that's grabbed, whatever's behind it.)
     if (
       tool === "select" &&
       !this._drag &&
+      e.hit.handle === null &&
       e.hit.floorId &&
       e.hit.floorId !== this.floorId
     ) {
@@ -2506,11 +2517,14 @@ export class Floorplan3dView extends LitElement {
         return false;
       }
       const r = this._gradeRadius;
+      const feather = this._gradeFeather;
+      // As far as a dab reaches, its feathered edge included.
+      const outer = r + feather;
       if (e.type === "down") {
         if (!this._ground) this._setGround({});
         const saved = this._ground?.grid ?? null;
         const step = saved?.step ?? this._gradeStep;
-        const reachOut = this._gradeMode === "point" ? step : r + step;
+        const reachOut = this._gradeMode === "point" ? step : outer + step;
         const grown = growGrid(
           saved,
           g[0] - reachOut,
@@ -2546,6 +2560,7 @@ export class Floorplan3dView extends LitElement {
           this._gradeStrength,
           this._gradeMode,
           level,
+          feather,
         );
         this._drag = { kind: "grade", grid: dabbed, last: [g[0], g[2]], level };
         this._handle?.previewGrade(dabbed);
@@ -2554,17 +2569,17 @@ export class Floorplan3dView extends LitElement {
       }
       if (e.type === "drag" && drag?.kind === "grade") {
         // A dab every quarter of the brush along the stroke.
-        if (Math.hypot(g[0] - drag.last[0], g[2] - drag.last[1]) < r / 4) {
+        if (Math.hypot(g[0] - drag.last[0], g[2] - drag.last[1]) < outer / 4) {
           this._pushOverlay();
           return false;
         }
         const step = drag.grid.step;
         const grown = growGrid(
           drag.grid,
-          g[0] - r - step,
-          g[2] - r - step,
-          g[0] + r + step,
-          g[2] + r + step,
+          g[0] - outer - step,
+          g[2] - outer - step,
+          g[0] + outer + step,
+          g[2] + outer + step,
           step,
         );
         drag.grid = brushGrid(
@@ -2575,6 +2590,7 @@ export class Floorplan3dView extends LitElement {
           this._gradeStrength,
           this._gradeMode === "point" ? "raise" : this._gradeMode,
           drag.level,
+          feather,
         );
         drag.last = [g[0], g[2]];
         this._handle?.previewGrade(drag.grid);
@@ -3739,7 +3755,7 @@ export class Floorplan3dView extends LitElement {
                 <span>${localize("edit3d.brushSize")}</span>
                 <input
                   type="range"
-                  min="0.5"
+                  min="0"
                   max="12"
                   step="0.5"
                   .value=${String(this._gradeRadius)}
@@ -3751,6 +3767,23 @@ export class Floorplan3dView extends LitElement {
                   }}
                 />
                 <span class="unit">${this._gradeRadius} m</span>
+              </label>
+              <label class="row" title=${localize("edit3d.brushFeatherHint")}>
+                <span>${localize("edit3d.brushFeather")}</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="10"
+                  step="0.5"
+                  .value=${String(this._gradeFeather)}
+                  @input=${(e: Event) => {
+                    this._gradeFeather = Number(
+                      (e.target as HTMLInputElement).value,
+                    );
+                    this._pushOverlay();
+                  }}
+                />
+                <span class="unit">${this._gradeFeather} m</span>
               </label>
               <label class="row">
                 <span>${localize("edit3d.brushStrength")}</span>

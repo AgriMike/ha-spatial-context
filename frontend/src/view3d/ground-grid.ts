@@ -140,9 +140,26 @@ export function growGrid(
 
 export type GradeMode = "raise" | "lower" | "flatten" | "smooth";
 
+/** How much of a dab a spot `d` metres from its middle gets: all of it
+ * within `radius`, easing to none across `feather` beyond it — with no
+ * crease where it meets the ground round it (smootherstep). */
+export function brushWeight(
+  d: number,
+  radius: number,
+  feather: number,
+): number {
+  if (d <= radius) return 1;
+  if (feather <= 0 || d >= radius + feather) return 0;
+  const t = 1 - (d - radius) / feather;
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
+/** A binomial blur's weights: a soft average of a point and those round. */
+const BLUR = [1, 2, 1];
+
 /** A brush stroke's dab at a spot: raises, lowers, levels (toward
- * `level`, a raise) or smooths the points within `radius`, most at the
- * middle and fading to nothing at the edge. */
+ * `level`, a raise) or smooths the points within `radius`, fully, and
+ * fading to nothing across `feather` metres beyond. */
 export function brushGrid(
   g: GroundGrid,
   x: number,
@@ -151,19 +168,20 @@ export function brushGrid(
   amount: number,
   mode: GradeMode,
   level = 0,
+  feather = 0,
 ): GroundGrid {
   const h = g.h.slice();
   const r = Math.max(radius, g.step * 0.5);
-  const i0 = Math.max(0, Math.floor((x - r - g.x0) / g.step));
-  const i1 = Math.min(g.cols - 1, Math.ceil((x + r - g.x0) / g.step));
-  const j0 = Math.max(0, Math.floor((z - r - g.z0) / g.step));
-  const j1 = Math.min(g.rows - 1, Math.ceil((z + r - g.z0) / g.step));
+  const reach = r + Math.max(0, feather);
+  const i0 = Math.max(0, Math.floor((x - reach - g.x0) / g.step));
+  const i1 = Math.min(g.cols - 1, Math.ceil((x + reach - g.x0) / g.step));
+  const j0 = Math.max(0, Math.floor((z - reach - g.z0) / g.step));
+  const j1 = Math.min(g.rows - 1, Math.ceil((z + reach - g.z0) / g.step));
   for (let j = j0; j <= j1; j++)
     for (let i = i0; i <= i1; i++) {
       const d = Math.hypot(g.x0 + i * g.step - x, g.z0 + j * g.step - z);
-      if (d >= r) continue;
-      // Smooth falloff (1 at the middle, 0 at the edge).
-      const f = 0.5 + 0.5 * Math.cos((Math.PI * d) / r);
+      const f = brushWeight(d, r, feather);
+      if (f <= 0) continue;
       const k = j * g.cols + i;
       const v = g.h[k] ?? 0;
       let next: number;
@@ -172,16 +190,19 @@ export function brushGrid(
       else if (mode === "flatten")
         next = v + (level - v) * Math.min(1, f * 0.5);
       else {
+        // A little toward a soft average of the points round: lumps a
+        // point across iron out, while a bank or berm keeps its shape.
         let sum = 0;
         let n = 0;
         for (let b = -1; b <= 1; b++)
           for (let a = -1; a <= 1; a++) {
             if (i + a < 0 || j + b < 0 || i + a >= g.cols || j + b >= g.rows)
               continue;
-            sum += g.h[(j + b) * g.cols + i + a] ?? 0;
-            n++;
+            const w = BLUR[a + 1]! * BLUR[b + 1]!;
+            sum += (g.h[(j + b) * g.cols + i + a] ?? 0) * w;
+            n += w;
           }
-        next = v + (sum / n - v) * Math.min(1, f * 0.6);
+        next = v + (sum / n - v) * f * 0.5;
       }
       h[k] = Math.round(Math.max(-20, Math.min(20, next)) * 1000) / 1000;
     }
