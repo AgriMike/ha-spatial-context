@@ -200,6 +200,142 @@ class Parts {
     g.translate((a[0] + b[0]) / 2, y0 + h / 2, (a[1] + b[1]) / 2);
     this.add(g, m);
   }
+  /** A wall along a line (back round to its start when `closed`),
+   * `thick` across with its corners mitred, from `bottom` up to `top` at
+   * each point: one piece, its sides shaded smooth round gentle bends, so
+   * a curve reads as a curve. */
+  strip(
+    line: Vec2[],
+    closed: boolean,
+    thick: number,
+    bottom: (p: Vec2) => number,
+    top: (p: Vec2) => number,
+    m: THREE.Material,
+  ): void {
+    const pts: Vec2[] = [];
+    for (const q of line) {
+      const last = pts[pts.length - 1];
+      if (!last || Math.hypot(q[0] - last[0], q[1] - last[1]) > 1e-4)
+        pts.push(q);
+    }
+    if (closed && pts.length > 2) {
+      const [a, b] = [pts[0]!, pts[pts.length - 1]!];
+      if (Math.hypot(a[0] - b[0], a[1] - b[1]) <= 1e-4) pts.pop();
+    }
+    const n = pts.length;
+    if (n < 2) return;
+    const segs = closed ? n : n - 1;
+    // Each segment's left-hand normal (x, z).
+    const segN = Array.from({ length: segs }, (_, i) => {
+      const a = pts[i]!;
+      const b = pts[(i + 1) % n]!;
+      const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      return [-(b[1] - a[1]) / l, (b[0] - a[0]) / l] as Vec2;
+    });
+    const half = thick / 2;
+    const left: Vec2[] = [];
+    const right: Vec2[] = [];
+    /** Each point's side normal, and whether the sides bend smoothly there. */
+    const side: Vec2[] = [];
+    const smooth: boolean[] = [];
+    for (let i = 0; i < n; i++) {
+      const nin = closed || i > 0 ? segN[(i - 1 + segs) % segs]! : segN[0]!;
+      const nout = closed || i < n - 1 ? segN[i % segs]! : segN[segs - 1]!;
+      let mx = nin[0] + nout[0];
+      let mz = nin[1] + nout[1];
+      const ml = Math.hypot(mx, mz) || 1;
+      mx /= ml;
+      mz /= ml;
+      // Mitred: out along the bisector, far enough to keep the thickness
+      // (but not into a spike at a hairpin).
+      const k = half / Math.max(0.35, mx * nout[0] + mz * nout[1]);
+      const p = pts[i]!;
+      left.push([p[0] + mx * k, p[1] + mz * k]);
+      right.push([p[0] - mx * k, p[1] - mz * k]);
+      side.push([mx, mz]);
+      smooth.push(nin[0] * nout[0] + nin[1] * nout[1] > 0.8);
+    }
+    const yb = pts.map(bottom);
+    const yt = pts.map(top);
+    const pos: number[] = [];
+    const nor: number[] = [];
+    type V = [number, number, number];
+    /** A triangle, turned to face along `n`, each corner its own normal. */
+    const tri = (a: V, b: V, c: V, na: V, nb: V, nc: V, n: V) => {
+      const ux = b[0] - a[0];
+      const uy = b[1] - a[1];
+      const uz = b[2] - a[2];
+      const vx = c[0] - a[0];
+      const vy = c[1] - a[1];
+      const vz = c[2] - a[2];
+      const cx = uy * vz - uz * vy;
+      const cy = uz * vx - ux * vz;
+      const cz = ux * vy - uy * vx;
+      if (cx * n[0] + cy * n[1] + cz * n[2] < 0) {
+        [b, c] = [c, b];
+        [nb, nc] = [nc, nb];
+      }
+      pos.push(...a, ...b, ...c);
+      nor.push(...na, ...nb, ...nc);
+    };
+    const quad = (a: V, b: V, c: V, d: V, na: V, nb: V, n: V) => {
+      tri(a, b, c, na, nb, nb, n);
+      tri(a, c, d, na, nb, na, n);
+    };
+    const up: V = [0, 1, 0];
+    for (let i = 0; i < segs; i++) {
+      const j = (i + 1) % n;
+      const f = segN[i]!;
+      for (const s of [1, -1]) {
+        const e = s > 0 ? left : right;
+        const face: V = [f[0] * s, 0, f[1] * s];
+        const ni: V = smooth[i] ? [side[i]![0] * s, 0, side[i]![1] * s] : face;
+        const nj: V = smooth[j] ? [side[j]![0] * s, 0, side[j]![1] * s] : face;
+        quad(
+          [e[i]![0], yb[i]!, e[i]![1]],
+          [e[j]![0], yb[j]!, e[j]![1]],
+          [e[j]![0], yt[j]!, e[j]![1]],
+          [e[i]![0], yt[i]!, e[i]![1]],
+          ni,
+          nj,
+          face,
+        );
+      }
+      quad(
+        [left[i]![0], yt[i]!, left[i]![1]],
+        [left[j]![0], yt[j]!, left[j]![1]],
+        [right[j]![0], yt[j]!, right[j]![1]],
+        [right[i]![0], yt[i]!, right[i]![1]],
+        up,
+        up,
+        up,
+      );
+    }
+    // The ends of an open line.
+    if (!closed)
+      for (const [i, s] of [
+        [0, -1],
+        [n - 1, 1],
+      ] as const) {
+        const a = pts[i]!;
+        const b = pts[i - s]!;
+        const l = Math.hypot(a[0] - b[0], a[1] - b[1]) || 1;
+        const out: V = [(a[0] - b[0]) / l, 0, (a[1] - b[1]) / l];
+        quad(
+          [left[i]![0], yb[i]!, left[i]![1]],
+          [right[i]![0], yb[i]!, right[i]![1]],
+          [right[i]![0], yt[i]!, right[i]![1]],
+          [left[i]![0], yt[i]!, left[i]![1]],
+          out,
+          out,
+          out,
+        );
+      }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+    this.add(g, m);
+  }
   post(
     p: Vec2,
     y0: number,
@@ -894,26 +1030,9 @@ function fence(item: Item3d, kind: string, ground: Ground): THREE.Group {
           );
         break;
       }
-      case "retaining": {
-        parts.along(
-          a,
-          b,
-          lo - 0.1,
-          mid - lo + h + 0.1,
-          Math.max(0.2, site.thick),
-          mat(tint ?? "#9b968c", 0.9),
-          0.01,
-        );
-        parts.along(
-          a,
-          b,
-          mid + h,
-          0.06,
-          Math.max(0.2, site.thick) + 0.04,
-          mat("#b8b3a8", 0.85),
-        );
+      case "retaining":
+        // Built in one piece below.
         break;
-      }
       case "hedge":
         break;
       case "edging": {
@@ -928,6 +1047,43 @@ function fence(item: Item3d, kind: string, ground: Ground): THREE.Group {
         break;
       }
     }
+  }
+  // A retaining wall: one piece along its line (round its curves too),
+  // its top following the ground half a metre at a time, and a cap.
+  if (kind === "retaining") {
+    const line: Vec2[] = [];
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const a = pts[i]!;
+      const b = pts[i + 1]!;
+      const n = Math.max(
+        1,
+        Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 0.5),
+      );
+      for (let k = 0; k < n; k++)
+        line.push([
+          a[0] + ((b[0] - a[0]) * k) / n,
+          a[1] + ((b[1] - a[1]) * k) / n,
+        ]);
+    }
+    line.push(pts[pts.length - 1]!);
+    const thick = Math.max(0.2, site.thick);
+    const topAt = (q: Vec2) => g0(q) + h;
+    parts.strip(
+      line,
+      site.closed,
+      thick,
+      (q) => g0(q) - 0.15,
+      topAt,
+      mat(tint ?? "#9b968c", 0.9),
+    );
+    parts.strip(
+      line,
+      site.closed,
+      thick + 0.05,
+      topAt,
+      (q) => topAt(q) + 0.06,
+      mat("#b8b3a8", 0.85),
+    );
   }
   // A hedge: one clipped run per stretch of its line, leafy on top.
   if (kind === "hedge") {
