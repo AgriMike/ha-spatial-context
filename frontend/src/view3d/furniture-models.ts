@@ -1539,6 +1539,169 @@ const car: Builder = (m, _o, tint) => {
   m.box(W * 0.4, 0.12, 0.02, 0, 0.36, len / 2, trim);
 };
 
+/** A tapered box (wider at the top), standing on y. */
+function taper(
+  m: Model,
+  wBot: number,
+  dBot: number,
+  wTop: number,
+  dTop: number,
+  h: number,
+  x: number,
+  y: number,
+  z: number,
+  material: THREE.Material,
+): void {
+  const g = new THREE.CylinderGeometry(Math.SQRT1_2, Math.SQRT1_2, h, 4, 1);
+  g.rotateY(Math.PI / 4);
+  const pos = g.getAttribute("position") as THREE.BufferAttribute;
+  for (let i = 0; i < pos.count; i++) {
+    const top = pos.getY(i) > 0;
+    pos.setX(i, pos.getX(i) * (top ? wTop : wBot));
+    pos.setZ(i, pos.getZ(i) * (top ? dTop : dBot));
+  }
+  g.computeVertexNormals();
+  g.translate(x, y + h / 2, z);
+  m.add(g, material);
+}
+
+/** A rolling cart for rubbish or recycling (front at +z): a tapered body,
+ * a flip lid hinged at the back (`lid`, its colour), the handle and two
+ * wheels at the back. */
+const wheelieBin: Builder = (m, o, tint) => {
+  const { W, D, H } = m;
+  const body = mat(tint ?? "#30353a", 0.7);
+  const lid = mat(typeof o["lid"] === "string" ? o["lid"] : "#2a2e32", 0.6);
+  const rubber = mat(C.rubber, 0.9);
+  const wr = Math.min(0.15, H * 0.14);
+  const lidH = 0.045;
+  const top = H - lidH;
+  // The body, its back a little in from the wheels.
+  taper(m, W * 0.8, D * 0.72, W * 0.94, D * 0.9, top, 0, 0.03, 0.02, body);
+  // A rim under the lid, and the lid itself, a touch proud all round.
+  m.box(W * 0.96, 0.03, D * 0.92, 0, top - 0.03, 0.02, body);
+  m.soft(W, lidH, D * 0.96, 0, top, 0.01, lid, 0.015);
+  m.box(W * 0.3, 0.025, 0.04, 0, top + 0.005, D * 0.49, lid);
+  // Handle bar across the back, on two lugs.
+  const hz = -D / 2 + 0.03;
+  m.cyl(0.018, 0.018, W * 0.86, 0, top - 0.06, hz, body, 10, "x");
+  for (const s of [-1, 1])
+    m.box(0.04, 0.12, 0.06, s * W * 0.4, top - 0.14, hz + 0.03, body);
+  // Wheels and axle at the back; a foot at the front.
+  const wz = -D / 2 + wr * 0.9;
+  for (const s of [-1, 1]) {
+    m.cyl(wr, wr, 0.06, s * (W / 2 - 0.04), wr, wz, rubber, 18, "x");
+    m.cyl(
+      wr * 0.45,
+      wr * 0.45,
+      0.065,
+      s * (W / 2 - 0.04),
+      wr,
+      wz,
+      body,
+      12,
+      "x",
+    );
+  }
+  m.cyl(0.012, 0.012, W - 0.1, 0, wr, wz, mat(C.steel, 0.4, 0.7), 8, "x");
+  m.box(W * 0.6, 0.04, 0.06, 0, 0, D * 0.36, body);
+};
+
+/** A car hauler trailer (front at +z): a planked deck between fenders on
+ * steel rails, tandem axles, an A-frame tongue out to the hitch with its
+ * jack, and lights at the corners. */
+const carHauler: Builder = (m, _o, tint) => {
+  const { W, D } = m;
+  const steel = mat(tint ?? "#2b2d30", 0.5, 0.6);
+  const wood = mat("#8a6a46", 0.85);
+  const rubber = mat(C.rubber, 0.9);
+  const hub = mat(C.chrome, 0.3, 0.8);
+  const tongue = Math.min(1.3, D * 0.18);
+  const len = D - tongue;
+  const zc = -D / 2 + len / 2;
+  const fw = 0.24;
+  const deckW = W - 2 * fw;
+  const deckY = 0.5;
+  // Side rails and cross members under the deck, then the planks.
+  for (const s of [-1, 1])
+    m.box(0.08, 0.15, len, s * (deckW / 2 - 0.04), deckY - 0.15, zc, steel);
+  for (let k = 0; k <= 8; k++)
+    m.box(
+      deckW,
+      0.08,
+      0.06,
+      0,
+      deckY - 0.12,
+      -D / 2 + 0.05 + (k * (len - 0.1)) / 8,
+      steel,
+    );
+  m.box(deckW, 0.04, len, 0, deckY, zc, wood);
+  // Wheels, two a side, under fenders level with the deck.
+  const wr = 0.36;
+  const az = zc - len * 0.08;
+  for (const s of [-1, 1]) {
+    const x = s * (W / 2 - fw / 2);
+    for (const dz of [-0.45, 0.45]) {
+      m.cyl(wr, wr, 0.2, x, wr, az + dz, rubber, 24, "x");
+      m.cyl(wr * 0.55, wr * 0.55, 0.21, x, wr, az + dz, hub, 16, "x");
+    }
+    m.cyl(0.03, 0.03, 0.9, s * (deckW / 2 - 0.1), wr, az, steel, 8, "z");
+    m.box(fw + 0.02, 0.03, 2.0, x, wr * 2 + 0.06, az, steel);
+    for (const dz of [-1, 1])
+      m.box(fw + 0.02, 0.3, 0.03, x, wr * 2 - 0.24, az + dz * 1.0, steel);
+  }
+  // The tongue: an A-frame from the deck's front corners to the hitch.
+  const front = -D / 2 + len;
+  const hitchZ = D / 2 - 0.08;
+  for (const s of [-1, 1]) {
+    const x0 = s * (deckW / 2 - 0.04);
+    const dx = -x0;
+    const dz = hitchZ - front;
+    const l = Math.hypot(dx, dz);
+    const g = new THREE.BoxGeometry(0.08, 0.1, l);
+    g.rotateY(Math.atan2(dx, dz));
+    g.translate(x0 + dx / 2, deckY - 0.12, front + dz / 2);
+    m.add(g, steel);
+  }
+  m.box(0.14, 0.08, 0.2, 0, deckY - 0.1, hitchZ, steel);
+  m.sphere(0.04, 0, deckY - 0.1, hitchZ + 0.06, mat(C.chrome, 0.3, 0.8));
+  // The jack, on the tongue's side, its foot on the ground.
+  m.cyl(
+    0.035,
+    0.035,
+    deckY + 0.25,
+    0.18,
+    0.04,
+    front + tongue * 0.45,
+    steel,
+    10,
+  );
+  m.cyl(0.08, 0.08, 0.04, 0.18, 0, front + tongue * 0.45, steel, 12);
+  // Lights: red at the back corners, amber markers at the front.
+  const red = mat("#9b1c1c", 0.3, 0, { glow: "#ff2a2a", glowLevel: 0.1 });
+  const amber = mat("#d98a1c", 0.3, 0, { glow: "#ffb030", glowLevel: 0.1 });
+  for (const s of [-1, 1]) {
+    m.box(
+      0.14,
+      0.08,
+      0.04,
+      s * (deckW / 2 - 0.1),
+      deckY - 0.1,
+      -D / 2 - 0.02,
+      red,
+    );
+    m.box(
+      0.04,
+      0.05,
+      0.06,
+      s * (deckW / 2 + 0.01),
+      deckY - 0.08,
+      front - 0.1,
+      amber,
+    );
+  }
+};
+
 const tv: Builder = (m, _o, _tint, item) => {
   const { W, H } = m;
   const h = Math.min(H, W * 0.58);
@@ -1709,6 +1872,8 @@ const BY_DRAW: Record<string, Builder> = {
 };
 
 const BY_KIND: [RegExp, Builder][] = [
+  [/^trailer_/, carHauler],
+  [/wheelie_bin|^garbage_bin$|^garbage_cart|^recycling_cart/, wheelieBin],
   [/^tv_|_tv$|^tv\d/, tv],
   [/^car_/, car],
   [/desk_chair|office_chair|task_chair|gaming_chair/, deskChair],

@@ -2417,6 +2417,27 @@ const T: Record<string, Template> = {
     rect(0, d * 0.3, w * 0.06, d * 0.05, 1),
     rect(w * 0.94, d * 0.3, w * 0.06, d * 0.05, 1),
   ],
+  trailer: (w, d) => {
+    // Seen from above, the tongue at the front (top): the deck between
+    // its fenders, the A-frame out to the hitch, the wheels at the sides.
+    const t = Math.min(d * 0.18, 130);
+    const f = w * 0.1;
+    return [
+      rect(f, t, w - 2 * f, d - t, 2),
+      ...dividers(t, d, 8).map((y) => line(f, y, w - f, y, true)),
+      poly(
+        [
+          [f + 4, t],
+          [w / 2, 4],
+          [w - f - 4, t],
+        ],
+        false,
+      ),
+      circ(w / 2, 5, 4),
+      rect(0, d * 0.52, f, d * 0.24, 2),
+      rect(w - f, d * 0.52, f, d * 0.24, 2),
+    ];
+  },
   motorcycle: (w, d) => [
     ell(w / 2, d / 2, w * 0.18, d / 2),
     line(0, d * 0.22, w, d * 0.22),
