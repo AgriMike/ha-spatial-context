@@ -38,6 +38,8 @@ export interface RoofSection {
   eave0: number;
   eave1: number;
   pitch: number;
+  /** A hipped end's pitch (the sides' when absent). */
+  hipPitch?: number;
   ends: [RoofEnd, RoofEnd];
   overhang: number;
   /** Gable ends are sided down to here (world Y). */
@@ -93,10 +95,9 @@ function planes(s: RoofSection): Plane[] {
   if (!s.shed)
     out.push({ ka: 0, kc: s.pitch, k: s.eave0 + HEEL_M - s.pitch * s.c0 });
   const low = Math.min(s.eave0, s.eave1) + HEEL_M;
-  if (s.ends[0] === "hip")
-    out.push({ ka: s.pitch, kc: 0, k: low - s.pitch * s.a0 });
-  if (s.ends[1] === "hip")
-    out.push({ ka: -s.pitch, kc: 0, k: low + s.pitch * s.a1 });
+  const hp = s.hipPitch ?? s.pitch;
+  if (s.ends[0] === "hip") out.push({ ka: hp, kc: 0, k: low - hp * s.a0 });
+  if (s.ends[1] === "hip") out.push({ ka: -hp, kc: 0, k: low + hp * s.a1 });
   return out;
 }
 
@@ -432,6 +433,7 @@ export function partSection(part: RoofPart, m: number): RoofSection {
     eave0: e0,
     eave1: e1,
     pitch: part.pitch,
+    ...(part.hip_pitch ? { hipPitch: part.hip_pitch } : {}),
     ends: part.ends ?? ["gable", "gable"],
     overhang: part.overhang ?? ROOF_OVERHANG_M,
     base: part.base ?? Math.min(e0, e1),

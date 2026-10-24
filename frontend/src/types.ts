@@ -361,6 +361,9 @@ export interface RoofPart {
   eave: number | [number, number];
   /** Rise per metre of run (0.5 is a 6/12 roof). */
   pitch: number;
+  /** A hipped end's own pitch, when steeper (or shallower) than the
+   * sides' — so a ridge can run on further before it hips down. */
+  hip_pitch?: number;
   /** At the low- then the high-coordinate end; gables by default. */
   ends?: [RoofEnd, RoofEnd];
   /** Metres the roof reaches past the walls; 0.35 by default. */

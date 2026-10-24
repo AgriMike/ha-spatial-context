@@ -5228,6 +5228,7 @@ function parseRoofParts(raw: string): RoofPart[] | null {
     const r = p as Record<string, unknown>;
     return (
       ["x0", "y0", "x1", "y1", "pitch"].every((k) => num(r[k])) &&
+      (r["hip_pitch"] === undefined || num(r["hip_pitch"])) &&
       (r["ridge"] === "x" || r["ridge"] === "y") &&
       (num(r["eave"]) || pair(r["eave"], num)) &&
       (r["ends"] === undefined || pair(r["ends"], end)) &&

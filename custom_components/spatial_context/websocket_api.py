@@ -690,6 +690,10 @@ _ROOF_PART_SCHEMA = vol.Schema(
             _ROOF_HEIGHT, vol.All([_ROOF_HEIGHT], vol.Length(min=2, max=2))
         ),
         vol.Required("pitch"): vol.All(vol.Coerce(float), vol.Range(min=0.05, max=4)),
+        # A hipped end's own pitch, when it differs from the sides'.
+        vol.Optional("hip_pitch"): vol.All(
+            vol.Coerce(float), vol.Range(min=0.05, max=4)
+        ),
         vol.Optional("ends"): vol.All([_ROOF_END], vol.Length(min=2, max=2)),
         vol.Optional("overhang"): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=3)

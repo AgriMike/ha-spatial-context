@@ -738,6 +738,9 @@ function buildFloor(
     roofOver: (x: number, z: number) => number | null;
     /** What stands on the floors below, on this floor's plane. */
     below: Below;
+    /** The highest ceiling (its walls' top, metres above this floor's
+     * level) of a lower floor's indoor room over a spot, else null. */
+    lowerCeiling: (x: number, z: number) => number | null;
     /** The highest planned roof surface at a spot that lies below `y`
      * (metres above this floor's level), else null. */
     roofBelow: (x: number, z: number, y: number) => number | null;
@@ -2769,6 +2772,55 @@ function buildFloor(
     });
   }
 
+  // An outside wall standing beside a lower floor's room whose ceiling
+  // reaches above this floor (a storey over a garage a few steps down,
+  // next to an office on the floor below): along that room, up to its
+  // ceiling, it's the room's wall, painted, and only above it sided.
+  for (let k = walls.length - 1; k >= 0; k--) {
+    const b = walls[k]!;
+    if (!b.outside || b.color || b.stone) continue;
+    const sn = Math.sin(b.angle);
+    const cs = Math.cos(b.angle);
+    const reach = b.depth / 2 + 0.15;
+    const n = Math.max(1, Math.min(200, Math.ceil(b.length / 0.25)));
+    const step = b.length / n;
+    // The lower room's ceiling beside each stretch (null: none above
+    // this wall's foot).
+    const ceils = Array.from({ length: n }, (_, i) => {
+      const f = -b.length / 2 + step * (i + 0.5);
+      const c = exterior.lowerCeiling(
+        b.x + cs * f + sn * b.outside! * reach,
+        b.z - sn * f + cs * b.outside! * reach,
+      );
+      return c !== null && c > b.y0 + 0.05 ? Math.min(c, b.y1) : null;
+    });
+    if (ceils.every((c) => c === null)) continue;
+    const { outside: _side, ...inner } = b;
+    const slice = (i0: number, i1: number, part: Box3d): Box3d => {
+      const mid = -b.length / 2 + step * ((i0 + i1) / 2);
+      return {
+        ...part,
+        x: b.x + cs * mid,
+        z: b.z - sn * mid,
+        length: step * (i1 - i0),
+      };
+    };
+    const parts: Box3d[] = [];
+    let i0 = 0;
+    for (let i = 1; i <= n; i++) {
+      if (i < n && (ceils[i] === null) === (ceils[i0] === null)) continue;
+      const run = ceils.slice(i0, i).filter((c): c is number => c !== null);
+      if (!run.length) parts.push(slice(i0, i, b));
+      else {
+        const top = Math.min(...run);
+        parts.push(slice(i0, i, { ...inner, y1: top }));
+        if (b.y1 > top + 0.005) parts.push(slice(i0, i, { ...b, y0: top }));
+      }
+      i0 = i;
+    }
+    walls.splice(k, 1, ...parts);
+  }
+
   return {
     floorId: input.floorId,
     name: input.name,
@@ -2931,6 +2983,23 @@ export function buildScene(input: SceneInput): Scene3d {
             );
           }),
         below: belowOf(f, input.context ?? input.floors),
+        lowerCeiling: (x, z) => {
+          let best: number | null = null;
+          for (const g of input.context ?? input.floors) {
+            if (g.baseY >= f.baseY - 0.3) continue;
+            const gm = metersPerUnit(g.layout.scale);
+            const inside = g.layout.rooms.some(
+              (r) =>
+                !r.outdoor &&
+                r.points.length >= 3 &&
+                pointInPolygon(x / gm, z / gm, r.points),
+            );
+            if (!inside) continue;
+            const c = g.baseY + g.wallHeight - f.baseY;
+            if (best === null || c > best) best = c;
+          }
+          return best;
+        },
         roofBelow: (x, z, y) => {
           let best: number | null = null;
           for (const s of sections) {
