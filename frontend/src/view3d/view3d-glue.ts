@@ -1457,7 +1457,14 @@ function createView3d(options: View3dOptions): View3dHandle {
     // On the ground: the terrain's height (or the flat ground's), in the
     // item's floor's frame.
     const site = item.site
-      ? siteModel(item, (x, z) => groundAt(siteTerrain, x, z) - baseY)
+      ? siteModel(
+          item,
+          (x, z) => groundAt(siteTerrain, x, z) - baseY,
+          siteTerrain?.holes.length
+            ? (x, z) =>
+                siteTerrain!.holes.some((poly) => insidePolygon(poly, x, z))
+            : null,
+        )
       : null;
     const furniture = site
       ? site

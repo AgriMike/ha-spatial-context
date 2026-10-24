@@ -250,12 +250,20 @@ function surface(
   kind: string,
   ground: Ground,
   toWorld: (x: number, z: number) => Vec2,
+  cut: ((x: number, z: number) => boolean) | null = null,
 ): THREE.Group {
   const site = item.site!;
   const spec = SURFACES[kind] ?? SURFACES["concrete"]!;
   const outline = site.points;
   const parts = new Parts();
   const top = (x: number, z: number) => ground(x, z) + spec.lift;
+  /** Where the ground is dug out for the house (a walk-out's lower level,
+   * a garage a step down): no surface there, or it'd cover their floors. */
+  const dugOut = (x: number, z: number) => {
+    if (!cut) return false;
+    const [wx, wz] = toWorld(x, z);
+    return cut(wx, wz);
+  };
   if (outline.length >= 3) {
     const contour = outline.map(([x, z]) => new THREE.Vector2(x, z));
     if (THREE.ShapeUtils.isClockWise(contour)) contour.reverse();
@@ -272,6 +280,7 @@ function surface(
       const bc = Math.hypot(b[0] - c[0], b[1] - c[1]);
       const ca = Math.hypot(c[0] - a[0], c[1] - a[1]);
       if (depth > 7 || Math.max(ab, bc, ca) < 0.7) {
+        if (dugOut((a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3)) return;
         // Facing up: the contour runs counter-clockwise in (x, z), which
         // is clockwise seen from above (+y) — so emit a, c, b.
         emit(a);
@@ -326,6 +335,7 @@ function surface(
           p[0] + ((q[0] - p[0]) * (s + 1)) / n,
           p[1] + ((q[1] - p[1]) * (s + 1)) / n,
         ];
+        if (dugOut((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)) continue;
         const ya = top(a[0], a[1]);
         const yb = top(b[0], b[1]);
         const ga = ground(a[0], a[1]) - 0.05;
@@ -360,7 +370,7 @@ function surface(
         for (let z = z0 + step / 2; z < z1; z += step) {
           const jx = x + (rand() - 0.5) * step * 0.6;
           const jz = z + (rand() - 0.5) * step * 0.6;
-          if (pointIn(outline, jx, jz)) fn(jx, jz);
+          if (pointIn(outline, jx, jz) && !dugOut(jx, jz)) fn(jx, jz);
         }
     };
     if (kind === "flowers") {
@@ -623,7 +633,11 @@ function fence(item: Item3d, kind: string, ground: Ground): THREE.Group {
 }
 
 /** The site feature an item stands for, or null where it isn't one. */
-export function siteModel(item: Item3d, ground: Ground): THREE.Group | null {
+export function siteModel(
+  item: Item3d,
+  ground: Ground,
+  cut: ((x: number, z: number) => boolean) | null = null,
+): THREE.Group | null {
   const site = item.site;
   if (!site || site.points.length < 2) return null;
   const a = item.angle;
@@ -635,7 +649,7 @@ export function siteModel(item: Item3d, ground: Ground): THREE.Group | null {
     const [wx, wz] = toWorld(x, z);
     return ground(wx, wz) - item.y0;
   };
-  if (site.surface) return surface(item, site.surface, local, toWorld);
+  if (site.surface) return surface(item, site.surface, local, toWorld, cut);
   if (site.fence) return fence(item, site.fence, local);
   return null;
 }

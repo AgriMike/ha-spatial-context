@@ -2788,10 +2788,13 @@ function buildFloor(
     // this wall's foot).
     const ceils = Array.from({ length: n }, (_, i) => {
       const f = -b.length / 2 + step * (i + 0.5);
-      const c = exterior.lowerCeiling(
-        b.x + cs * f + sn * b.outside! * reach,
-        b.z - sn * f + cs * b.outside! * reach,
-      );
+      const px = b.x + cs * f + sn * b.outside! * reach;
+      const pz = b.z - sn * f + cs * b.outside! * reach;
+      let c = exterior.lowerCeiling(px, pz);
+      // No higher than the roof over it (a garage standing out in front,
+      // under its own lower roof: the wall above that roof is outdoors).
+      const roof = exterior.roofOver(px, pz);
+      if (c !== null && roof !== null) c = Math.min(c, roof - ROOF_HEEL_M);
       return c !== null && c > b.y0 + 0.05 ? Math.min(c, b.y1) : null;
     });
     if (ceils.every((c) => c === null)) continue;
