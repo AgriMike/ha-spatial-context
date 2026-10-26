@@ -647,13 +647,13 @@ function stairsModel(
   const run = D / n;
   const tread = modelMaterial("#a5774f");
   const paint = modelMaterial("#efebe4");
-  const white = modelMaterial("#f4f1eb");
   const wood = modelMaterial("#7d5536");
   // Deck stairs: open plank treads on stringers, a wood handrail and
   // newels, dark balusters (as the deck's railing).
   const out = !!st.outdoor;
-  const newel = out ? modelMaterial("#6e4a30") : white;
-  const spindle = out ? modelMaterial("#2e2e2e") : white;
+  // Inside, the banister is wood too, a shade darker than the treads.
+  const newel = out ? modelMaterial("#6e4a30") : wood;
+  const spindle = out ? modelMaterial("#2e2e2e") : wood;
   const plank = modelMaterial("#9a6a44");
   const box = (
     w: number,
@@ -732,9 +732,9 @@ function stairsModel(
       if (!on) return;
       const top = rise + 0.95;
       const ends = [-D / 2 + 0.05, D / 2 - 0.05];
-      for (const z of ends) box(0.09, 1.0, 0.09, x, rise + 0.5, z, white);
+      for (const z of ends) box(0.09, 1.0, 0.09, x, rise + 0.5, z, newel);
       box(0.07, 0.05, D, x, top - 0.025, 0, wood);
-      box(0.05, 0.04, D, x, rise + 0.08, 0, white);
+      box(0.05, 0.04, D, x, rise + 0.08, 0, newel);
       const count = Math.floor(D / 0.11);
       for (let k = 1; k < count; k++) {
         const z = -D / 2 + (D * k) / count;
@@ -747,7 +747,7 @@ function stairsModel(
           x,
           (top - 0.05 + rise + 0.1) / 2,
           z,
-          white,
+          spindle,
         );
       }
     });
@@ -767,12 +767,19 @@ function stairsModel(
     // Where it runs into a wall it stops in that wall's face (a little
     // into it), with no newel; elsewhere a newel post ends it.
     const [lowCut, highCut] = st.railEnds?.[i] ?? [0, 0];
-    const za = lowCut > 0 ? z0 + dir * (lowCut - 0.04) : zLow;
-    const zb = highCut > 0 ? z0 + dir * (D - highCut + 0.04) : zHigh;
-    if (lowCut <= 0)
-      box(0.09, railH + 0.12, 0.09, x, (railH + 0.12) / 2, zLow, newel);
-    if (highCut <= 0)
-      box(0.09, railH + 0.12, 0.09, x, rise + (railH + 0.12) / 2, zHigh, newel);
+    // At a newel it dies into the post's face, a hand below its cap: the
+    // post stands that much above where the rail meets it.
+    const face = 0.045;
+    const za = lowCut > 0 ? z0 + dir * (lowCut - 0.04) : zLow + dir * face;
+    const zb =
+      highCut > 0 ? z0 + dir * (D - highCut + 0.04) : zHigh - dir * face;
+    const post = (z: number, foot: number, meet: number) => {
+      const tall = meet + 0.15 - foot;
+      box(0.09, tall, 0.09, x, foot + tall / 2, z, newel);
+      box(0.12, 0.03, 0.12, x, foot + tall + 0.015, z, newel);
+    };
+    if (lowCut <= 0) post(zLow, 0, railY(za));
+    if (highCut <= 0) post(zHigh, rise, railY(zb));
     const ya = railY(za);
     const yb = railY(zb);
     const rail = box(
