@@ -101,13 +101,19 @@ export class FurnitureLibrarySidebar extends LitElement {
         color: var(--sc-fg);
         font: inherit;
       }
+      /* Wrapped, or (--sc-chip-wrap: nowrap, where the panel is short) one
+         row that scrolls sideways, so the list keeps the room. */
       .chips {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: var(--sc-chip-wrap, wrap);
         gap: 4px;
         padding: 0 12px 8px;
+        overflow-x: auto;
+        scrollbar-width: thin;
       }
       .chip {
+        flex: 0 0 auto;
+        white-space: nowrap;
         display: inline-flex;
         align-items: center;
         gap: 4px;
@@ -409,6 +415,18 @@ export class FurnitureLibrarySidebar extends LitElement {
     </svg>`;
   }
 
+  /** A wheel over a one-row chip strip scrolls it sideways. */
+  private _chipsWheel = (e: WheelEvent): void => {
+    const el = e.currentTarget as HTMLElement;
+    if (
+      el.scrollWidth <= el.clientWidth ||
+      Math.abs(e.deltaX) > Math.abs(e.deltaY)
+    )
+      return;
+    el.scrollLeft += e.deltaY;
+    e.preventDefault();
+  };
+
   override render() {
     const items = this._items;
     return html`
@@ -454,7 +472,7 @@ export class FurnitureLibrarySidebar extends LitElement {
           />
         </label>
       </div>
-      <div class="chips">
+      <div class="chips" @wheel=${this._chipsWheel}>
         <button
           class="chip ${this._category === null ? "active" : ""}"
           @click=${() => (this._category = null)}

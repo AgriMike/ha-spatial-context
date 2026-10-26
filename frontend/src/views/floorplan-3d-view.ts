@@ -688,10 +688,11 @@ export class Floorplan3dView extends LitElement {
         color: var(--sc-danger);
       }
       .editor furniture-library-sidebar {
+        --sc-chip-wrap: nowrap;
         position: static;
         width: auto;
-        max-height: 60vh;
-        min-height: 320px;
+        max-height: 70vh;
+        min-height: 440px;
         flex: 1;
       }
       .notice {

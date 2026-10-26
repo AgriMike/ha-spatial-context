@@ -930,8 +930,16 @@ function fence(
   const parts = new Parts();
   const h = site.height;
   const pts = site.closed ? [...site.points, site.points[0]!] : site.points;
-  // Posts: at each corner, and in between no more than `span` apart.
-  const span = kind === "rail" ? 2.4 : kind === "chainlink" ? 3 : 2.4;
+  // Posts: at each corner, and in between no more than `span` apart (a
+  // hog panel fence: a panel from each placed point to the next).
+  const span =
+    kind === "hog"
+      ? Infinity
+      : kind === "rail"
+        ? 2.4
+        : kind === "chainlink"
+          ? 3
+          : 2.4;
   const posts: Vec2[] = [];
   for (let i = 0; i + 1 < pts.length; i++) {
     const a = pts[i]!;
@@ -950,6 +958,7 @@ function fence(
   const white = mat(tint ?? "#f2f2ef", 0.6);
   const black = mat(tint ?? "#2e3236", 0.5);
   const grey = mat(tint ?? "#8a9096", 0.5);
+  const wire = mat("#b4b9bd", 0.45, 0.7);
   const g0 = (p: Vec2) => ground(p[0], p[1]);
   for (let i = 0; i + 1 < posts.length; i++) {
     const a = posts[i]!;
@@ -1028,6 +1037,20 @@ function fence(
             0.016,
             black,
           );
+        break;
+      }
+      case "hog": {
+        // A kick board on edge along the foot, a welded-wire panel (10 by
+        // 15 cm) above it, a rail on edge under a flat cap.
+        const foot = mid + 0.2;
+        const rail = mid + h - 0.12;
+        parts.along(a, b, lo - 0.05, foot - lo + 0.05, 0.04, wood);
+        for (let t = 0.1; t < len - 0.05; t += 0.1)
+          parts.post(at(t), foot, rail - foot, 0.006, wire);
+        for (let y = foot + 0.05; y < rail - 0.02; y += 0.15)
+          parts.along(a, b, y, 0.006, 0.006, wire);
+        parts.along(a, b, rail, 0.1, 0.04, wood);
+        parts.along(a, b, rail + 0.1, 0.04, 0.14, wood);
         break;
       }
       case "retaining":
@@ -1140,6 +1163,7 @@ function fence(
     chainlink: [0.05, grey, true],
     rail: [0.14, wood, true],
     metal: [0.05, black, false],
+    hog: [0.09, wood, false],
     retaining: null,
     hedge: null,
     edging: null,
@@ -1147,7 +1171,15 @@ function fence(
   const p = postFor[kind];
   if (p)
     for (const at of posts)
-      parts.post(at, g0(at) - 0.05, h + 0.1, p[0], p[1], p[2]);
+      // A hog panel fence's posts stop under its cap.
+      parts.post(
+        at,
+        g0(at) - 0.05,
+        kind === "hog" ? h + 0.03 : h + 0.1,
+        p[0],
+        p[1],
+        p[2],
+      );
   return parts.group();
 }
 

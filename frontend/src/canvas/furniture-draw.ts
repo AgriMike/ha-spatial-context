@@ -2417,6 +2417,29 @@ const T: Record<string, Template> = {
     rect(0, d * 0.3, w * 0.06, d * 0.05, 1),
     rect(w * 0.94, d * 0.3, w * 0.06, d * 0.05, 1),
   ],
+  gate: (w, d, o) => {
+    // The leaf (or two) across its opening, hinged at the end(s), each
+    // with its swing out to the front (dashed).
+    const two = num(o, "leaves", 1) >= 2;
+    const leaf = two ? w / 2 : w;
+    const out: Prim[] = [rect(0, 0, w, d, 0)];
+    const hinges: [number, number][] = two
+      ? [
+          [0, 1],
+          [w, -1],
+        ]
+      : [[0, 1]];
+    for (const [x, s] of hinges) {
+      out.push(line(x, d, x, d + leaf, true));
+      out.push(
+        path(
+          `M${x + s * leaf},${d} A${leaf},${leaf} 0 0 ${s > 0 ? 1 : 0} ${x},${d + leaf}`,
+          true,
+        ),
+      );
+    }
+    return out;
+  },
   trailer: (w, d) => {
     // Seen from above, the tongue at the front (top): the deck between
     // its fenders, the A-frame out to the hitch, the wheels at the sides.

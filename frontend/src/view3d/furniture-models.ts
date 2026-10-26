@@ -1607,6 +1607,77 @@ const wheelieBin: Builder = (m, o, tint) => {
   m.box(W * 0.6, 0.04, 0.06, 0, 0, D * 0.36, body);
 };
 
+/** A gate (front at +z): one leaf, or two meeting in the middle
+ * (`leaves`), standing a little off the ground. `style` "hog" is a wood
+ * frame with a Z brace over welded wire; "wood" is close boards on rails. */
+const gate: Builder = (m, o, tint) => {
+  const { W, D, H } = m;
+  const wood = mat(tint ?? "#8b5a3c", 0.85);
+  const iron = mat(C.black, 0.5, 0.5);
+  const wire = mat("#b4b9bd", 0.45, 0.7);
+  const two = Number(o["leaves"] ?? 1) >= 2;
+  const hog = o["style"] !== "wood";
+  const n = two ? 2 : 1;
+  const lw = W / n - 0.02;
+  const y0 = 0.05;
+  const h = H - y0;
+  const t = Math.min(0.045, D);
+  for (let k = 0; k < n; k++) {
+    const cx = -W / 2 + (W / n) * (k + 0.5);
+    // Its hinge side: the outer end.
+    const hs = n === 2 ? (k === 0 ? -1 : 1) : -1;
+    if (hog) {
+      for (const s of [-1, 1])
+        m.box(0.09, h, t, cx + s * (lw / 2 - 0.045), y0, 0, wood);
+      for (const y of [y0, y0 + h - 0.09]) m.box(lw, 0.09, t, cx, y, 0, wood);
+      m.box(lw, 0.09, t, cx, y0 + h / 2 - 0.045, 0, wood);
+      for (let x = -lw / 2 + 0.1; x < lw / 2 - 0.05; x += 0.1)
+        m.box(0.006, h - 0.18, 0.006, cx + x, y0 + 0.09, -t / 2, wire);
+      for (let y = y0 + 0.15; y < y0 + h - 0.1; y += 0.15)
+        m.box(lw - 0.1, 0.006, 0.006, cx, y, -t / 2, wire);
+    } else {
+      const boards = Math.max(3, Math.round(lw / 0.14));
+      for (let b = 0; b < boards; b++)
+        m.box(
+          lw / boards - 0.008,
+          h,
+          0.02,
+          cx - lw / 2 + (lw / boards) * (b + 0.5),
+          y0,
+          0.012,
+          wood,
+        );
+      for (const y of [y0 + 0.15, y0 + h - 0.25])
+        m.box(lw - 0.04, 0.09, 0.035, cx, y, -0.018, wood);
+    }
+    // The Z brace across the back, rising from the hinge side's foot.
+    const run = lw - 0.18;
+    const rise = h * (hog ? 0.5 : 1) - 0.25;
+    const len = Math.hypot(run, rise);
+    const brace = new THREE.BoxGeometry(len, 0.08, hog ? t * 0.8 : 0.03);
+    brace.rotateZ(Math.atan2(rise, run) * -hs);
+    brace.translate(
+      cx,
+      y0 + (hog ? 0.09 + rise / 2 : 0.2 + rise / 2),
+      hog ? 0 : -0.035,
+    );
+    m.add(brace, wood);
+    // Hinges on the hinge side, a latch on the other.
+    for (const y of [y0 + 0.2, y0 + h - 0.25])
+      m.box(0.2, 0.03, t + 0.01, cx + hs * (lw / 2 - 0.1), y, 0, iron);
+    if (n === 1 || k === 0)
+      m.box(
+        0.05,
+        0.08,
+        t + 0.03,
+        cx - hs * (lw / 2 - 0.03),
+        y0 + h * 0.6,
+        0,
+        iron,
+      );
+  }
+};
+
 /** A car hauler trailer (front at +z): a planked deck between fenders on
  * steel rails, tandem axles, an A-frame tongue out to the hitch with its
  * jack, and lights at the corners. */
@@ -1873,6 +1944,7 @@ const BY_DRAW: Record<string, Builder> = {
 
 const BY_KIND: [RegExp, Builder][] = [
   [/^trailer_/, carHauler],
+  [/^gate_(hog|wood)_/, gate],
   [/wheelie_bin|^garbage_bin$|^garbage_cart|^recycling_cart/, wheelieBin],
   [/^tv_|_tv$|^tv\d/, tv],
   [/^car_/, car],
