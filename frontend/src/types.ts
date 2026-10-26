@@ -80,7 +80,7 @@ export interface Pin {
 }
 
 export type FloorFinishKind =
-  "wood" | "tile" | "carpet" | "concrete" | "stone" | "plain";
+  "wood" | "lato" | "tile" | "carpet" | "concrete" | "stone" | "plain";
 export type WallFinishKind =
   "paint" | "tile" | "brick" | "wood" | "wallpaper" | "stone" | "shiplap";
 

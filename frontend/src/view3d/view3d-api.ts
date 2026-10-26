@@ -97,7 +97,7 @@ export interface Slab3d {
 }
 
 export type FloorFinish =
-  "wood" | "tile" | "carpet" | "concrete" | "stone" | "deck" | "plain";
+  "wood" | "lato" | "tile" | "carpet" | "concrete" | "stone" | "deck" | "plain";
 
 export type LightBeam =
   "spot" | "flood" | "updown" | "up" | "down" | "omni" | "glow";

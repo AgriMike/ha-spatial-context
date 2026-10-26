@@ -4658,6 +4658,7 @@ export class Floorplan3dView extends LitElement {
         [
           ["", localize("edit3d.auto")],
           ["wood", localize("edit3d.finishWood")],
+          ["lato", localize("edit3d.finishLato")],
           ["tile", localize("edit3d.finishTile")],
           ["carpet", localize("edit3d.finishCarpet")],
           ["stone", localize("edit3d.finishStone")],

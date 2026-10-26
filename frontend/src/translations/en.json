@@ -751,6 +751,7 @@
     "floorLevel": "Floor level",
     "roomHint": "The walls' covering and colour apply to the faces of the walls looking into this room. Floor level raises or lowers this room (a split level's landing).",
     "finishWood": "Wood",
+    "finishLato": "Flooret Lato (pale oak planks)",
     "finishTile": "Tile",
     "finishCarpet": "Carpet",
     "finishStone": "Stone",

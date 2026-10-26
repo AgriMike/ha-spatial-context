@@ -102,7 +102,8 @@ _ROOM_SCHEMA = {
     # The 3D view's finishes (see types.ts's Room): the floor's material and
     # colour, and the covering and colour of the walls facing into it.
     vol.Optional("floor_finish"): vol.Any(
-        None, vol.In(["wood", "tile", "carpet", "concrete", "stone", "plain"])
+        None,
+        vol.In(["wood", "lato", "tile", "carpet", "concrete", "stone", "plain"]),
     ),
     vol.Optional("floor_color"): vol.Any(vol.Match(r"^#[0-9a-fA-F]{6}$"), None),
     vol.Optional("wall_finish"): vol.Any(

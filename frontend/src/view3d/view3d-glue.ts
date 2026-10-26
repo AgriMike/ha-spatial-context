@@ -1710,6 +1710,8 @@ const FLOOR_TEXTURES = new Map<FloorFinish, THREE.Texture>();
 const FLOOR_TILE_M: Record<FloorFinish, number> = {
   plain: 1,
   wood: 1.6,
+  // Long, wide planks: ten 23 cm boards across a 2.3 m repeat.
+  lato: 2.3,
   tile: 1.2,
   carpet: 1.5,
   concrete: 3,
@@ -1744,17 +1746,19 @@ function floorTexture(finish: FloorFinish): THREE.Texture {
     rows: number,
     gap: string,
     gapPx: number,
+    opts: { spread?: number; long?: boolean; grain?: number } = {},
   ) => {
     const h = size / rows;
     for (let r = 0; r < rows; r++) {
       let x = -rand() * size * 0.5;
       while (x < size) {
-        const len = size * (0.35 + rand() * 0.5);
-        g.fillStyle = shade(base, 0.16);
+        const len =
+          size * (opts.long ? 0.6 + rand() * 0.3 : 0.35 + rand() * 0.5);
+        g.fillStyle = shade(base, opts.spread ?? 0.16);
         g.fillRect(x, r * h, len, h);
-        // Grain: a few faint streaks along the board.
+        // Grain: faint streaks along the board.
         g.globalAlpha = 0.12;
-        for (let k = 0; k < 4; k++) {
+        for (let k = 0; k < (opts.grain ?? 4); k++) {
           g.fillStyle = shade(base, 0.6);
           g.fillRect(x, r * h + rand() * h, len, 1);
         }
@@ -1773,6 +1777,15 @@ function floorTexture(finish: FloorFinish): THREE.Texture {
       break;
     case "deck":
       boards([150, 112, 80], 10, "rgba(35,25,18,0.9)", 4);
+      break;
+    case "lato":
+      // Flooret Lato: pale, whitewashed blonde oak in long wide planks,
+      // little change board to board, fine grain, barely-there seams.
+      boards([227, 217, 201], 10, "rgba(140,120,98,0.35)", 1, {
+        spread: 0.06,
+        long: true,
+        grain: 9,
+      });
       break;
     case "tile": {
       noise([226, 222, 214], 0.05, 6000);
