@@ -229,8 +229,37 @@ function wallCoverAtlas(): THREE.Texture {
   return tex;
 }
 
+/** Three's lighting with the spotlights (the outdoor fixtures' beams:
+ * nothing indoors is a spotlight) dimmed by `indoor` (a GLSL expression,
+ * 0 outside … 1 inside): their light never reaches a room through its
+ * walls, where no shadow stops it. */
+const INDOOR_LIGHTS = (indoor: string): string => {
+  const chunk = THREE.ShaderChunk.lights_fragment_begin;
+  const spots = chunk.indexOf("NUM_SPOT_LIGHTS > 0");
+  const at = chunk.indexOf("RE_Direct(", spots);
+  if (spots < 0 || at < 0) return chunk;
+  return (
+    chunk.slice(0, at) +
+    `directLight.color *= 1.0 - (${indoor});\n\t\t` +
+    chunk.slice(at)
+  );
+};
+
+/** A material that outdoor spotlights don't light (an indoor floor). */
+function indoorOnly<M extends THREE.Material>(mat: M): M {
+  mat.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <lights_fragment_begin>",
+      INDOOR_LIGHTS("1.0"),
+    );
+  };
+  mat.customProgramCacheKey = () => "indoor-only";
+  return mat;
+}
+
 /** The walls' material: vertex colours, and each face's covering from the
- * atlas, tiled across it in metres. */
+ * atlas, tiled across it in metres; the outdoor fixtures' spotlights
+ * light only their outside faces (`indoor` 0). */
 function wallMaterial(): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({
     vertexColors: true,
@@ -242,11 +271,18 @@ function wallMaterial(): THREE.MeshStandardMaterial {
     shader.vertexShader = shader.vertexShader
       .replace(
         "#include <common>",
-        "#include <common>\nattribute float cover;\nvarying float vCover;",
+        "#include <common>\nattribute float cover;\nvarying float vCover;\nattribute float indoor;\nvarying float vIndoor;",
       )
-      .replace("#include <uv_vertex>", "#include <uv_vertex>\nvCover = cover;");
+      .replace(
+        "#include <uv_vertex>",
+        "#include <uv_vertex>\nvCover = cover;\nvIndoor = indoor;",
+      );
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying float vCover;")
+      .replace(
+        "#include <common>",
+        "#include <common>\nvarying float vCover;\nvarying float vIndoor;",
+      )
+      .replace("#include <lights_fragment_begin>", INDOOR_LIGHTS("vIndoor"))
       .replace(
         "#include <map_fragment>",
         [
@@ -278,6 +314,7 @@ function wallGeometry(
   const count = pos.count;
   const colors = new Float32Array(count * 3);
   const cover = new Float32Array(count);
+  const inside = new Float32Array(count);
   const uv = new Float32Array(count * 2);
   // BoxGeometry's faces come +X, -X, +Y, -Y, +Z, -Z, four corners each.
   const indoor = b.outside === 1 ? 20 : b.outside === -1 ? 16 : -1;
@@ -309,6 +346,8 @@ function wallGeometry(
     colors[v * 3 + 1] = c.g;
     colors[v * 3 + 2] = c.b;
     cover[v] = cov ? cov.tile : 0;
+    // Indoors: a painted face (not one coloured its own: a porch post).
+    inside[v] = own || isOutdoor ? 0 : 1;
     const size = cov?.size ?? 1;
     const x = pos.getX(v);
     const y = pos.getY(v);
@@ -319,6 +358,7 @@ function wallGeometry(
   }
   g.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   g.setAttribute("cover", new THREE.BufferAttribute(cover, 1));
+  g.setAttribute("indoor", new THREE.BufferAttribute(inside, 1));
   g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
   return g;
 }
@@ -2225,6 +2265,8 @@ function createView3d(options: View3dOptions): View3dHandle {
         roughness: slab.lid ? 0.92 : slab.finish === "tile" ? 0.45 : 0.85,
         map: slab.finish === "plain" ? null : floorTexture(slab.finish),
       });
+      // A room's floor is out of the fixtures' reach (a deck's isn't).
+      if (!slab.outdoor) indoorOnly(mat);
       if (slab.emissive) {
         mat.emissive = new THREE.Color(slab.emissive);
         mat.emissiveIntensity = slab.emissiveIntensity;
