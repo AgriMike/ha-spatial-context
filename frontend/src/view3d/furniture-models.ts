@@ -598,6 +598,238 @@ const bed: Builder = (m, o, tint, item) => {
   }
 };
 
+/** Article's walnut, and the dark bronze of its steel legs. */
+const WALNUT = "#5b3624";
+const BRONZE = "#3f3a35";
+
+/** Article's Nera king bed (back at -z): a walnut platform on slim steel
+ * legs, set on a headboard panel wider than it (three chevron panels),
+ * a floating nightstand with a drawer each side. */
+const neraBed: Builder = (m, o, tint) => {
+  const { W, D, H } = m;
+  const wood = mat(tint ?? WALNUT, 0.55);
+  const grain = mat(shade(tint ?? WALNUT, 0.78), 0.6);
+  const steel = mat(BRONZE, 0.45, 0.7);
+  const fw = Math.min(W, num(o, "frame", 200) / 100);
+  const panelT = 0.04;
+  const back = -D / 2;
+  const face = back + panelT + 0.002;
+  // The headboard panel, the seams between its chevron panels, and a
+  // hint of the chevron: two strokes meeting down each panel's middle.
+  m.box(W, H - 0.1, panelT, 0, 0.1, back + panelT / 2, wood);
+  for (const f of [-1, 1])
+    m.box(0.006, H - 0.12, 0.004, (f * W) / 6, 0.11, face, grain);
+  for (const f of [-1, 0, 1])
+    for (const s of [-1, 1]) {
+      const g = new THREE.BoxGeometry(0.006, (H - 0.14) * 0.6, 0.004);
+      g.rotateZ(s * 0.6);
+      g.translate((f * W) / 3 + s * 0.13, (H + 0.1) / 2, face);
+      m.add(g, grain);
+    }
+  // The platform: rails 15 cm deep, clear of the floor, on slim legs.
+  const clear = 0.2;
+  const railH = 0.15;
+  const len = D - panelT;
+  const zc = back + panelT + len / 2;
+  m.box(fw, railH, len, 0, clear, zc, wood);
+  for (const s of [-1, 1])
+    for (const z of [D / 2 - 0.12, back + 0.4])
+      m.cyl(0.016, 0.014, clear, s * (fw / 2 - 0.12), 0, z, steel, 10);
+  // The mattress sitting down in it, pillows, a duvet folded back.
+  const mw = fw - 0.06;
+  const ml = len - 0.06;
+  const top = clear + railH + 0.15;
+  m.soft(mw, 0.25, ml, 0, top - 0.25, zc, mat(C.porcelain, 0.95), 0.05);
+  const dl = ml * 0.68;
+  m.soft(
+    mw + 0.02,
+    0.06,
+    dl,
+    0,
+    top - 0.03,
+    zc + ml / 2 - dl / 2,
+    mat("#e6e2da", 0.95),
+    0.03,
+  );
+  for (const k of [-1, 1])
+    m.soft(
+      mw / 2 - 0.08,
+      0.13,
+      0.4,
+      (k * mw) / 4,
+      top - 0.02,
+      back + panelT + 0.3,
+      mat(C.pillow, 0.95),
+      0.06,
+      -0.25,
+    );
+  // The nightstands: floating boxes on the panel, a drawer's finger pull.
+  const nw = Math.min(0.42, (W - fw) / 2 - 0.05);
+  if (nw > 0.15)
+    for (const s of [-1, 1]) {
+      const x = s * (fw / 2 + 0.03 + nw / 2);
+      const nd = 0.36;
+      const nz = back + panelT + nd / 2;
+      m.box(nw, 0.13, nd, x, 0.213, nz, wood);
+      m.box(
+        nw * 0.86,
+        0.008,
+        0.006,
+        x,
+        0.31,
+        nz + nd / 2 + 0.002,
+        mat(C.black, 0.6),
+      );
+    }
+};
+
+/** Article's Nera 63" low media unit (back at -z): a walnut case on slim
+ * dark legs, two drawers with bar pulls on one side, an open bay with a
+ * shelf on the other. */
+const neraMedia: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const wood = mat(tint ?? WALNUT, 0.55);
+  const inner = mat(shade(tint ?? WALNUT, 0.82), 0.65);
+  const dark = mat("#221d1a", 0.5, 0.4);
+  const legH = Math.min(0.13, H * 0.26);
+  const t = 0.02;
+  const h = H - legH;
+  for (const sx of [-1, 1])
+    for (const sz of [-1, 1])
+      m.cyl(
+        0.016,
+        0.011,
+        legH,
+        sx * (W / 2 - 0.09),
+        0,
+        sz * (D / 2 - 0.06),
+        dark,
+        10,
+      );
+  // The case: top, bottom, ends, back, and the divider at the drawers.
+  m.box(W, t, D, 0, H - t, 0, wood);
+  m.box(W, t, D, 0, legH, 0, wood);
+  for (const s of [-1, 1]) m.box(t, h, D, s * (W / 2 - t / 2), legH, 0, wood);
+  m.box(W - 2 * t, h - 2 * t, 0.01, 0, legH + t, -D / 2 + 0.005, inner);
+  const dw = W * 0.47;
+  const xd = -W / 2 + dw / 2;
+  m.box(t, h - 2 * t, D, -W / 2 + dw, legH + t, 0, wood);
+  // The drawers' fronts, flush, a pull near the top of each.
+  const fh = (h - 2 * t - 0.006) / 2;
+  for (let k = 0; k < 2; k++) {
+    const fy = legH + t + k * (fh + 0.006);
+    m.box(dw - t - 0.006, fh, 0.02, xd + t / 2, fy, D / 2 - 0.01, wood);
+    m.box(dw * 0.4, 0.012, 0.02, xd, fy + fh - 0.035, D / 2 + 0.01, dark);
+  }
+  // The open bay's shelf.
+  const bw = W - dw - t;
+  m.box(
+    bw - t,
+    t * 0.8,
+    D - 0.03,
+    W / 2 - t - bw / 2 + t / 2,
+    legH + h / 2,
+    0.01,
+    wood,
+  );
+};
+
+/** Article's Ceni base (back at -z): a walnut plinth rail round the
+ * body, shaped feet at its corners. */
+const ceniBase = (m: Model, W: number, D: number, wood: THREE.Material) => {
+  const foot = 0.13;
+  for (const z of [-1, 1])
+    m.box(W - 0.04, 0.05, 0.03, 0, foot - 0.05, z * (D / 2 - 0.035), wood);
+  for (const s of [-1, 1]) {
+    m.box(0.03, 0.05, D - 0.07, s * (W / 2 - 0.035), foot - 0.05, 0, wood);
+    for (const z of [-1, 1]) {
+      m.box(0.05, foot, 0.1, s * (W / 2 - 0.045), 0, z * (D / 2 - 0.07), wood);
+      m.box(
+        0.09,
+        0.05,
+        0.05,
+        s * (W / 2 - 0.065),
+        foot - 0.05,
+        z * (D / 2 - 0.045),
+        wood,
+      );
+    }
+  }
+};
+
+/** Article's Ceni sofa (back at -z): track arms, three seat and three
+ * back cushions on its walnut base. Quarry gray unless coloured. */
+const ceniSofa: Builder = (m, o, tint) => {
+  const { W, D, H } = m;
+  const fab = mat(tint ?? "#8b877f", 0.95);
+  const cush = mat(tint ? shade(tint, 1.05) : "#928e86", 0.95);
+  ceniBase(m, W, D, mat(WALNUT, 0.55));
+  const base = 0.13;
+  const arm = Math.min(0.17, W * 0.09);
+  const armTop = Math.min(0.61, H - 0.12);
+  const seatTop = Math.min(0.42, H * 0.53);
+  const backD = 0.2;
+  // The body under the seat, the arms, the back frame.
+  m.soft(W - 0.02, seatTop - 0.11 - base, D - 0.02, 0, base, 0, fab, 0.02);
+  for (const s of [-1, 1])
+    m.soft(arm, armTop - base, D, s * (W / 2 - arm / 2), base, 0, fab, 0.025);
+  m.soft(
+    W - 2 * arm + 0.02,
+    H - 0.08 - base,
+    backD,
+    0,
+    base,
+    -D / 2 + backD / 2,
+    fab,
+    0.025,
+  );
+  // Seat cushions; back cushions leaning back on the frame.
+  const seats = Math.max(1, num(o, "seats", 3));
+  const inner = W - 2 * arm;
+  const cw = inner / seats;
+  const sd = D - backD - 0.02;
+  for (let k = 0; k < seats; k++) {
+    const x = -inner / 2 + cw * (k + 0.5);
+    m.soft(
+      cw - 0.01,
+      0.13,
+      sd,
+      x,
+      seatTop - 0.12,
+      D / 2 - sd / 2 - 0.01,
+      cush,
+      0.04,
+    );
+    m.soft(
+      cw - 0.015,
+      H - seatTop - 0.01,
+      0.15,
+      x,
+      seatTop - 0.01,
+      -D / 2 + backD + 0.05,
+      cush,
+      0.05,
+      -0.12,
+    );
+  }
+};
+
+/** Its ottoman: an upholstered block on the same base. */
+const ceniOttoman: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  ceniBase(m, W, D, mat(WALNUT, 0.55));
+  m.soft(
+    W - 0.02,
+    H - 0.13,
+    D - 0.02,
+    0,
+    0.13,
+    0,
+    mat(tint ?? "#8b877f", 0.95),
+    0.04,
+  );
+};
+
 // --- tables and desks -------------------------------------------------------
 
 const table: Builder = (m, o, tint, item) => {
@@ -2183,6 +2415,10 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^gate_(hog|wood)_/, gate],
   [/wheelie_bin|^garbage_bin$|^garbage_cart|^recycling_cart/, wheelieBin],
   [/^tv_|_tv$|^tv\d/, tv],
+  [/^bed_nera/, neraBed],
+  [/^media_nera/, neraMedia],
+  [/^sofa_ceni/, ceniSofa],
+  [/^ottoman_ceni/, ceniOttoman],
   [/^car_land_rover_discovery/, discovery],
   [/^car_mercedes_glc/, glc],
   [/^car_/, car],

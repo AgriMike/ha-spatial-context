@@ -854,6 +854,33 @@ const T: Record<string, Template> = {
       out.push(rect(4, d * 0.15, w - 8, d * 0.8, 0, true));
     return out;
   },
+  // A bed on a headboard panel wider than it, a floating nightstand
+  // each side on the panel (`frame`: the bed's own width, cm).
+  bedPanel: (w, d, o) => {
+    const fw = min(w, num(o, "frame", w * 0.68));
+    const x0 = (w - fw) / 2;
+    const panel = 4;
+    const out = [rect(0, 0, w, panel), rect(x0, panel, fw, d - panel, 2)];
+    const pw = (fw - 24) / 2;
+    for (let i = 0; i < 2; i++)
+      out.push(
+        rect(x0 + 8 + i * (pw + 8), panel + 6, pw, min(22, d * 0.12), 5),
+      );
+    const fold = d * 0.33;
+    out.push(
+      line(x0, fold, x0 + fw, fold),
+      line(x0, fold + 5, x0 + fw, fold + 5),
+    );
+    const nw = min(42, x0 - 4);
+    const nd = min(36, d * 0.2);
+    if (nw > 10)
+      for (const x of [x0 - nw - 3, x0 + fw + 3])
+        out.push(
+          rect(x, panel, nw, nd, 1),
+          line(x + 4, panel + nd - 4, x + nw - 4, panel + nd - 4),
+        );
+    return out;
+  },
   crib: (w, d) => {
     const out = [rect(0, 0, w, d, 2), rect(4, 4, w - 8, d - 8, 2)];
     for (let x = 8; x < w - 4; x += 8)

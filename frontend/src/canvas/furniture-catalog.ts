@@ -84,6 +84,15 @@ const LIVING: Row[] = [
   ["sofa_2_compact", "Compact loveseat", 130, 82, "sofa", { seats: 2 }],
   ["sofa_3", "3-seat sofa", 210, 92, "sofa", { seats: 3 }],
   ["sofa_3_large", "Large 3-seat sofa", 235, 100, "sofa", { seats: 3 }],
+  [
+    "sofa_ceni",
+    'Ceni 83" sofa (Article)',
+    211,
+    89,
+    "sofa",
+    { seats: 3, h3d: 0.787 },
+  ],
+  ["ottoman_ceni", "Ceni ottoman (Article)", 99, 69, "ottoman", { h3d: 0.43 }],
   ["sofa_4", "4-seat sofa", 270, 100, "sofa", { seats: 4 }],
   [
     "sofa_2_seat_armless",
@@ -230,6 +239,14 @@ const LIVING: Row[] = [
   ["tv_stand_large", "TV stand (large)", 200, 45, "tvStand"],
   ["media_console", "Media console", 180, 45, "tvStand"],
   [
+    "media_nera_63",
+    'Nera 63" low media unit (Article)',
+    160,
+    41,
+    "tvStand",
+    { h3d: 0.508 },
+  ],
+  [
     "entertainment_center",
     "Entertainment center",
     250,
@@ -282,6 +299,15 @@ const BEDROOM: Row[] = [
   ["bed_super_king", "Super king bed", 180, 200, "bed"],
   ["bed_queen_frame", "Queen bed with frame", 165, 220, "bed"],
   ["bed_king_frame", "King bed with frame", 205, 220, "bed"],
+  [
+    "bed_nera_king",
+    "Nera king bed with nightstands (Article)",
+    297,
+    208,
+    "bedPanel",
+    { frame: 200, h3d: 0.965 },
+  ],
+
   ["daybed", "Daybed", 100, 200, "bed", { pillows: 1 }],
   [
     "daybed_trundle",
