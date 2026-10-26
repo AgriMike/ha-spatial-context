@@ -2703,8 +2703,22 @@ const POT = {
   sage: "#a3ad98",
 };
 
-/** A pot standing at (x, y, z): tapered, its lip, the soil; the soil's
- * height. A basket is woven in bands. */
+/** The plant being built: its pot's size (diameter, metres) and shape
+ * set on the item (null: the species' own), how full it is (1 as drawn),
+ * and the radius its pot came out at. */
+const PLANT: {
+  pot: number | null;
+  shape: string | null;
+  full: number;
+  r: number;
+} = { pot: null, shape: null, full: 1, r: 0 };
+
+/** A count of leaves, fronds or branches, scaled by the plant's fullness. */
+const more = (n: number) => Math.max(1, Math.round(n * PLANT.full));
+
+/** A pot standing at (x, y, z): tapered (or straight, a low bowl, a
+ * square planter), its lip, the soil; the soil's height. A basket is
+ * woven in bands. Its size and shape set on the item win. */
 function pot(
   m: Model,
   r: number,
@@ -2713,10 +2727,24 @@ function pot(
   opts: { x?: number; y?: number; z?: number; basket?: boolean } = {},
 ): number {
   const { x = 0, y = 0, z = 0 } = opts;
+  if (PLANT.pot) {
+    const k = PLANT.pot / 2 / r;
+    r = PLANT.pot / 2;
+    h = Math.min(h * k, m.H * 0.6);
+  }
+  const shape = PLANT.shape ?? "taper";
+  if (shape === "bowl") h = Math.min(h, r * 0.8);
+  PLANT.r = r;
   const body = mat(color, opts.basket ? 0.95 : 0.55);
-  m.cyl(r, r * 0.8, h * 0.9, x, y, z, body, 28);
-  m.cyl(r * 1.05, r * 1.02, h * 0.12, x, y + h * 0.88, z, body, 28);
-  if (opts.basket)
+  if (shape === "square") {
+    m.box(r * 1.8, h * 0.92, r * 1.8, x, y, z, body);
+    m.box(r * 1.9, h * 0.08, r * 1.9, x, y + h * 0.92, z, body);
+  } else {
+    const foot = shape === "cylinder" ? 1 : shape === "bowl" ? 0.55 : 0.8;
+    m.cyl(r, r * foot, h * 0.9, x, y, z, body, 28);
+    m.cyl(r * 1.05, r * 1.02, h * 0.12, x, y + h * 0.88, z, body, 28);
+  }
+  if (opts.basket && shape !== "square")
     for (let k = 1; k < 4; k++) {
       const rr = r * (0.8 + (0.2 * k) / 4) + 0.003;
       m.cyl(
@@ -2731,16 +2759,19 @@ function pot(
       );
     }
   const soil = y + h * 0.93;
-  m.cyl(
-    r * 0.96,
-    r * 0.96,
-    0.012,
-    x,
-    soil - 0.012,
-    z,
-    mat("#3a2a1f", 0.95),
-    24,
-  );
+  if (shape === "square")
+    m.box(r * 1.7, 0.012, r * 1.7, x, soil - 0.012, z, mat("#3a2a1f", 0.95));
+  else
+    m.cyl(
+      r * 0.96,
+      r * 0.96,
+      0.012,
+      x,
+      soil - 0.012,
+      z,
+      mat("#3a2a1f", 0.95),
+      24,
+    );
   return soil;
 }
 
@@ -2896,9 +2927,10 @@ function snakePlant(m: Model, rand: () => number, potColor: string): void {
   const { W, D, H } = m;
   const R = Math.min(W, D) / 2;
   const top = pot(m, R * 0.62, Math.min(0.24, H * 0.3), potColor);
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0, n = more(9); i < n; i++) {
     const az = i * 2.39996 + rand() * 0.4;
-    const r = R * 0.3 * rand();
+    // Spread across its pot (a big one set on it holds a wide clump).
+    const r = Math.max(R * 0.3, PLANT.r * 0.7) * Math.sqrt(rand());
     leaf(
       m,
       v3(Math.cos(az) * r, top, Math.sin(az) * r),
@@ -2917,7 +2949,7 @@ function zzPlant(m: Model, rand: () => number, potColor: string): void {
   const R = Math.min(W, D) / 2;
   const top = pot(m, R * 0.5, Math.min(0.24, H * 0.32), potColor);
   const green = "#2d5224";
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0, n = more(9); i < n; i++) {
     const az = i * 2.39996 + rand() * 0.4;
     const len = (H - top) * (0.7 + 0.35 * rand());
     const dir = aim(az, (62 + rand() * 20) * DEG);
@@ -2948,7 +2980,7 @@ function peaceLily(m: Model, rand: () => number, potColor: string): void {
   const R = Math.min(W, D) / 2;
   const top = pot(m, R * 0.5, Math.min(0.22, H * 0.32), potColor);
   const h = H - top;
-  for (let i = 0; i < 13; i++) {
+  for (let i = 0, n = more(13); i < n; i++) {
     const az = i * 2.39996 + rand() * 0.3;
     const end = v3(0, top, 0).addScaledVector(
       aim(az, (58 + rand() * 18) * DEG),
@@ -2969,7 +3001,7 @@ function peaceLily(m: Model, rand: () => number, potColor: string): void {
       },
     );
   }
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0, n = more(3); i < n; i++) {
     const az = rand() * Math.PI * 2;
     const head = v3(
       Math.cos(az) * R * 0.15,
@@ -3014,9 +3046,10 @@ function trailing(
   const { W, D, H } = m;
   const R = Math.min(W, D) / 2;
   const potH = Math.min(0.18, H * 0.3);
-  const r = R * 0.45;
+  const r0 = R * 0.45;
   const y0 = opts.hanging ? H - potH - 0.02 : 0;
-  const top = pot(m, r, potH, potColor, { y: y0 });
+  const top = pot(m, r0, potH, potColor, { y: y0 });
+  const r = PLANT.r;
   if (opts.hanging) {
     const hook = v3(0, H + 0.45, 0);
     for (let k = 0; k < 3; k++) {
@@ -3040,7 +3073,7 @@ function trailing(
       ...(opts.tip ? { tip: opts.tip } : {}),
     });
   // The mound over the soil.
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0, n = more(16); i < n; i++) {
     const az = i * 2.39996 + rand() * 0.4;
     const p = v3(
       Math.cos(az) * r * 0.6 * rand(),
@@ -3051,7 +3084,7 @@ function trailing(
     leafOf(p, aim(az, (20 + rand() * 30) * DEG), 0.07 + 0.03 * rand());
   }
   // The vines: over the rim and down, a leaf every few inches.
-  for (let v = 0; v < opts.vines; v++) {
+  for (let v = 0; v < more(opts.vines); v++) {
     const az = v * 2.39996 + rand() * 0.5;
     const out = v3(Math.cos(az), 0, Math.sin(az));
     const drop = Math.max(0.05, (top - 0.02) * (0.5 + 0.5 * rand()));
@@ -3089,7 +3122,7 @@ function monstera(m: Model, rand: () => number, potColor: string): void {
   const R = Math.min(W, D) / 2;
   const top = pot(m, R * 0.38, Math.min(0.32, H * 0.28), potColor);
   const h = H - top;
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0, n = more(9); i < n; i++) {
     const az = i * 2.39996 + rand() * 0.4;
     const out = v3(Math.cos(az), 0, Math.sin(az));
     const reach = R * (0.2 + 0.4 * rand());
@@ -3155,7 +3188,7 @@ function pottedTree(
           ),
       );
     stalk(m, pts, 0.014, "#6b5a45");
-    const n = Math.round(18 + 10 * (tall / h));
+    const n = more(Math.round(18 + 10 * (tall / h)));
     for (let i = 0; i < n; i++) {
       const t = 0.22 + 0.78 * (i / n);
       const k = Math.min(3, Math.floor(t * 4));
@@ -3261,7 +3294,7 @@ function pottedPalm(
   const R = Math.min(W, D) / 2;
   const top = pot(m, R * 0.42, Math.min(0.35, H * 0.25), potColor, { basket });
   const h = H - top;
-  const n = Math.round(9 + 4 * Math.min(1, h));
+  const n = more(Math.round(9 + 4 * Math.min(1, h)));
   for (let i = 0; i < n; i++) {
     const az = i * 2.39996 + rand() * 0.4;
     const r = R * 0.15 * rand();
@@ -3293,7 +3326,7 @@ function birdOfParadise(m: Model, rand: () => number, potColor: string): void {
     basket: true,
   });
   const h = H - top;
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0, n = more(9); i < n; i++) {
     const az = i * 2.39996 + rand() * 0.3;
     const end = v3(
       Math.cos(az) * R * 0.15,
@@ -3333,7 +3366,7 @@ function dracaena(m: Model, rand: () => number, potColor: string): void {
       .clone()
       .add(v3(0.02 * Math.cos(a), h * f - 0.12, 0.02 * Math.sin(a)));
     stalk(m, [base, head], 0.016, "#8b7355");
-    for (let i = 0; i < 18; i++) {
+    for (let i = 0, n = more(18); i < n; i++) {
       const az = i * 2.39996 + c + rand() * 0.3;
       leaf(
         m,
@@ -3379,7 +3412,7 @@ function spiderPlant(m: Model, rand: () => number, potColor: string): void {
       );
     }
   };
-  blades(v3(0, top, 0), 30, Math.max(0.25, R * 1.1));
+  blades(v3(0, top, 0), more(30), Math.max(0.25, R * 1.1));
   for (let k = 0; k < 3; k++) {
     const az = k * 2.1 + rand();
     const out = v3(Math.cos(az), 0, Math.sin(az));
@@ -3399,8 +3432,8 @@ function aloe(m: Model, rand: () => number, potColor: string): void {
   const { W, D, H } = m;
   const R = Math.min(W, D) / 2;
   const top = pot(m, R * 0.6, Math.min(0.14, H * 0.35), potColor);
-  for (let i = 0; i < 13; i++) {
-    const inner = i / 13;
+  for (let i = 0, n = more(13); i < n; i++) {
+    const inner = i / n;
     const az = i * 2.39996 + rand() * 0.2;
     leaf(
       m,
@@ -3420,7 +3453,7 @@ function echeveria(m: Model, rand: () => number, potColor: string): void {
   const { W, D, H } = m;
   const R = Math.min(W, D) / 2;
   const top = pot(m, R * 0.6, Math.min(0.08, H * 0.5), potColor);
-  const n = 22;
+  const n = more(22);
   for (let i = 0; i < n; i++) {
     const inner = i / n;
     const az = i * 2.39996;
@@ -3450,9 +3483,9 @@ function pilea(m: Model, rand: () => number, potColor: string): void {
   const h = H - top;
   const stem = [v3(0, top, 0), v3(0.005, top + h * 0.45, 0)];
   stalk(m, stem, 0.006, "#6c7d45");
-  for (let i = 0; i < 15; i++) {
+  for (let i = 0, n = more(15); i < n; i++) {
     const az = i * 2.39996 + rand() * 0.3;
-    const p = stem[0]!.clone().lerp(stem[1]!, 0.3 + 0.7 * (i / 15));
+    const p = stem[0]!.clone().lerp(stem[1]!, 0.3 + 0.7 * (i / n));
     const reach = Math.min(R * 0.8, 0.1 + 0.06 * rand());
     const end = p
       .clone()
@@ -3483,7 +3516,7 @@ function calathea(m: Model, rand: () => number, potColor: string): void {
   const R = Math.min(W, D) / 2;
   const top = pot(m, R * 0.48, Math.min(0.2, H * 0.32), potColor);
   const h = H - top;
-  for (let i = 0; i < 13; i++) {
+  for (let i = 0, n = more(13); i < n; i++) {
     const az = i * 2.39996 + rand() * 0.3;
     const end = v3(
       Math.cos(az) * R * 0.15,
@@ -3507,7 +3540,7 @@ function orchid(m: Model, rand: () => number, potColor: string): void {
   const { W, D, H } = m;
   const R = Math.min(W, D) / 2;
   const top = pot(m, R * 0.5, Math.min(0.13, H * 0.25), potColor);
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0, n = more(4); i < n; i++) {
     const az = i * Math.PI * 0.55 + rand() * 0.3;
     leaf(
       m,
@@ -3566,7 +3599,7 @@ function jade(m: Model, rand: () => number, potColor: string): void {
   const h = H - top;
   const trunk = v3(0, top + h * 0.35, 0);
   stalk(m, [v3(0, top, 0), trunk], 0.012, "#6d6a3e");
-  for (let b = 0; b < 5; b++) {
+  for (let b = 0; b < more(5); b++) {
     const az = b * 2.39996 + rand() * 0.4;
     const tip = trunk
       .clone()
@@ -3575,7 +3608,7 @@ function jade(m: Model, rand: () => number, potColor: string): void {
         h * (0.35 + 0.25 * rand()),
       );
     stalk(m, [trunk, tip], 0.008, "#6f7a3f");
-    for (let k = 0; k < 9; k++) {
+    for (let k = 0; k < more(9); k++) {
       const a = rand() * Math.PI * 2;
       const r = 0.012 + 0.03 * rand();
       clump(
@@ -3652,7 +3685,7 @@ function herbs(m: Model, rand: () => number, potColor: string): void {
     const top = pot(m, r, potH, potColor, { x });
     const h = H - top;
     if (k === -1)
-      for (let i = 0; i < 14; i++) {
+      for (let i = 0, n = more(14); i < n; i++) {
         const az = i * 2.39996;
         const p = v3(
           x + Math.cos(az) * r * 0.3,
@@ -3665,7 +3698,7 @@ function herbs(m: Model, rand: () => number, potColor: string): void {
         });
       }
     else if (k === 0)
-      for (let i = 0; i < 16; i++)
+      for (let i = 0, n = more(16); i < n; i++)
         blade(
           m,
           v3(x + (rand() - 0.5) * r, top, (rand() - 0.5) * r),
@@ -3728,7 +3761,7 @@ function bonsai(m: Model, rand: () => number, potColor: string): void {
       ),
     );
   stalk(m, pts, 0.018, "#5d4a3a");
-  for (let b = 0; b < 4; b++) {
+  for (let b = 0; b < more(4); b++) {
     const p = pts[1 + Math.min(3, b)]!;
     const az = b * 2.2 + rand();
     const end = p.clone().addScaledVector(aim(az, 15 * DEG), W * 0.3);
@@ -3777,7 +3810,7 @@ function leafy(
   const R = Math.min(W, D) / 2;
   const top = pot(m, R * 0.5, Math.min(0.22, H * 0.35), potColor);
   const h = H - top;
-  const n = small ? 16 : 14;
+  const n = more(small ? 16 : 14);
   for (let i = 0; i < n; i++) {
     const az = i * 2.39996 + rand() * 0.3;
     const end = v3(
@@ -3828,6 +3861,9 @@ function houseplant(m: Model, item: Item3d, o: Opts): boolean {
   const rand = seeded(item.id);
   const own = spec.tint ?? null;
   const p = (d: string) => own ?? d;
+  PLANT.pot = spec.plant?.pot ?? null;
+  PLANT.shape = spec.plant?.shape ?? null;
+  PLANT.full = Math.max(0.25, Math.min(3, spec.plant?.full ?? 1));
   switch (kind) {
     case "snake":
       snakePlant(m, rand, p(POT.charcoal));

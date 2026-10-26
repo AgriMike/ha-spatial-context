@@ -430,6 +430,9 @@ const ITEM_FINISH_KEYS = [
   "aim_m",
   "drawers_cm",
   "doors",
+  "pot_cm",
+  "pot_shape",
+  "fullness",
 ] as const;
 const OPENING_STYLE_KEYS = [
   "door_style",

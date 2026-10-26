@@ -2845,6 +2845,17 @@ function buildFloor(
               opts: entry.opts,
               flip,
               tint: own,
+              ...(item.pot_cm != null ||
+              item.pot_shape != null ||
+              item.fullness != null
+                ? {
+                    plant: {
+                      pot: item.pot_cm != null ? item.pot_cm / 100 : null,
+                      shape: item.pot_shape ?? null,
+                      full: item.fullness ?? null,
+                    },
+                  }
+                : {}),
               ...(item.drawers_cm != null || item.doors != null
                 ? {
                     fronts: {

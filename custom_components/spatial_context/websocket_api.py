@@ -268,6 +268,16 @@ _FURNITURE_SCHEMA = {
     vol.Optional("doors"): vol.Any(
         None, vol.All(vol.Coerce(int), vol.Range(min=0, max=4))
     ),
+    # A houseplant's pot (diameter in cm, shape) and how full it grows.
+    vol.Optional("pot_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=3, max=300))
+    ),
+    vol.Optional("pot_shape"): vol.Any(
+        None, vol.In(["taper", "cylinder", "bowl", "square"])
+    ),
+    vol.Optional("fullness"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=0.25, max=3))
+    ),
 }
 
 _SCALE_SCHEMA = vol.Any(

@@ -306,6 +306,12 @@ export interface FurnitureItem {
    * the catalog cabinet's own. */
   drawers_cm?: number[] | null;
   doors?: number | null;
+  /** A houseplant's pot: its diameter (centimetres) and shape, and how
+   * full the plant grows (1 as drawn: 2 twice the leaves and branches);
+   * unset = the species' own. */
+  pot_cm?: number | null;
+  pot_shape?: "taper" | "cylinder" | "bowl" | "square" | null;
+  fullness?: number | null;
 }
 
 /** A phone room scan (glTF/GLB) laid over a floor in the 3D view — see

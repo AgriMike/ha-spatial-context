@@ -3658,6 +3658,44 @@ export class Floorplan3dView extends LitElement {
     </div>`;
   }
 
+  /** A houseplant's pot (its colour is the item's) and how full it is. */
+  private _renderPlantPot(
+    item: FurnitureItem,
+    set: (patch: Partial<FurnitureItem>) => void,
+  ) {
+    const L = (k: string) => localize(`edit3d.${k}`);
+    return html`${this._num(
+      L("potSize"),
+      item.pot_cm ?? null,
+      (v) => set({ pot_cm: v && v >= 3 ? Math.min(300, v) : null }),
+      { unit: "cm", min: 3, placeholder: L("auto") },
+    )}
+    ${this._select<NonNullable<FurnitureItem["pot_shape"]>>(
+      L("potShape"),
+      item.pot_shape ?? null,
+      [
+        ["", L("auto")],
+        ["taper", L("potTaper")],
+        ["cylinder", L("potCylinder")],
+        ["bowl", L("potBowl")],
+        ["square", L("potSquare")],
+      ],
+      (v) => set({ pot_shape: v || null }),
+    )}
+    ${this._num(
+      L("fullness"),
+      item.fullness == null ? null : Math.round(item.fullness * 100),
+      (v) =>
+        set({
+          fullness:
+            v == null || v === 100
+              ? null
+              : Math.max(25, Math.min(300, v)) / 100,
+        }),
+      { unit: "%", min: 25, max: 300, step: 25, placeholder: "100" },
+    )}`;
+  }
+
   /** A shaker cabinet's face: one-click layouts, its drawers' heights
    * from the top down (the last one filling what's left when there are no
    * doors), and the doors below them. */
@@ -4502,6 +4540,7 @@ export class Floorplan3dView extends LitElement {
         ${this._num(localize("edit3d.height"), item.height_cm ?? null, (v) => set({ height_cm: v && v > 0 ? v : null }), { unit: "cm", placeholder: localize("edit3d.auto") })}
         ${this._num(localize("edit3d.elevation"), item.elevation_cm ?? null, (v) => set({ elevation_cm: v }), { unit: "cm", placeholder: localize("edit3d.auto") })}
         ${entry?.opts["shaker"] && entry.opts["shaker"] !== "hood" ? this._renderCabinetFronts(item, set) : nothing}
+        ${entry && (["houseplant", "plant", "cactus"].includes(entry.draw) || entry.id === "bonsai") ? this._renderPlantPot(item, set) : nothing}
         ${this._num(localize("edit3d.rotation"), item.rotation_deg, (v) => v !== null && set({ rotation_deg: ((v % 360) + 360) % 360 }), { unit: "°" })}
         ${this._color(localize("edit3d.color"), item.color, (v) => set({ color: v }))}
         <label class="row">
