@@ -1310,6 +1310,301 @@ const shaker: Builder = (m, o, tint, item) => {
   }
 };
 
+/** A tile backsplash's texture: small hexagons (5 cm across the flats)
+ * in shades of grey, dark grout between, one repeat `HEX_TILE` metres
+ * across and up (see backsplash). */
+const HEX_TILE: [number, number] = [6 * 0.052, 6 * 0.045];
+let hexTexture: THREE.Texture | null = null;
+function hexTileTexture(): THREE.Texture {
+  if (hexTexture) return hexTexture;
+  const cv = document.createElement("canvas");
+  cv.width = 512;
+  cv.height = Math.round((512 * HEX_TILE[1]) / HEX_TILE[0]);
+  const ctx = cv.getContext("2d");
+  if (ctx) {
+    ctx.fillStyle = "#3b3b3c";
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    // Pointy-top hexagons: 6 across, 6 rows (alternate rows offset).
+    const dx = cv.width / 6;
+    const dy = cv.height / 6;
+    const r = dx / Math.sqrt(3) - 2.2;
+    let seed = 7;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let row = -1; row <= 6; row++)
+      for (let col = -1; col <= 6; col++) {
+        const cx = col * dx + (row % 2 ? dx / 2 : 0) + dx / 2;
+        const cy = row * dy + dy / 2;
+        const g = Math.round(150 + 40 * rnd());
+        ctx.fillStyle = `rgb(${g},${g + 2},${g + 4})`;
+        ctx.beginPath();
+        for (let k = 0; k < 6; k++) {
+          const a = Math.PI / 6 + (k * Math.PI) / 3;
+          const x = cx + r * Math.cos(a);
+          const y = cy + r * Math.sin(a);
+          if (k) ctx.lineTo(x, y);
+          else ctx.moveTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+      }
+  }
+  hexTexture = new THREE.CanvasTexture(cv);
+  hexTexture.colorSpace = THREE.SRGBColorSpace;
+  hexTexture.wrapS = THREE.RepeatWrapping;
+  hexTexture.wrapT = THREE.RepeatWrapping;
+  hexTexture.anisotropy = 4;
+  return hexTexture;
+}
+
+const TILE_MATS = new Map<string, THREE.MeshStandardMaterial>();
+/** The tile, tinted (white: as drawn). */
+function tileMaterial(tint: string): THREE.MeshStandardMaterial {
+  let m = TILE_MATS.get(tint);
+  if (!m) {
+    m = new THREE.MeshStandardMaterial({
+      map: hexTileTexture(),
+      color: tint,
+      roughness: 0.35,
+    });
+    TILE_MATS.set(tint, m);
+  }
+  return m;
+}
+
+/** A tile backsplash (its back at -z, against the wall): a thin slab,
+ * its face tiled in small grey hexagons with dark grout at their real
+ * size however big it's drawn; a colour tints the tiles. */
+const backsplash: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const t = Math.min(D, 0.012);
+  m.box(W, H, t, 0, 0, -D / 2 + t / 2, mat("#3b3b3c", 0.8));
+  const g = new THREE.PlaneGeometry(W, H);
+  const uv = g.getAttribute("uv") as THREE.BufferAttribute;
+  for (let i = 0; i < uv.count; i++)
+    uv.setXY(i, (uv.getX(i) * W) / HEX_TILE[0], (uv.getY(i) * H) / HEX_TILE[1]);
+  g.translate(0, H / 2, -D / 2 + t + 0.0005);
+  m.add(g, tileMaterial(tint ?? "#ffffff"));
+};
+
+/** A model drawing into another turned half round (its back is the
+ * other's front): a kitchen island's cabinets face its working side. */
+class Turned extends Model {
+  constructor(private readonly into: Model) {
+    super(into.W, into.D, into.H, false);
+  }
+  override add(g: THREE.BufferGeometry, material: THREE.Material): void {
+    g.rotateY(Math.PI);
+    this.into.add(g, material);
+  }
+}
+
+/** A kitchen island (its working side at -z, seating at +z): a painted
+ * base of shaker cabinets on its working side under a quartz top that
+ * overhangs the seating side on square posts. At its far (+x) end, a
+ * cabinet with a full-width drawer over a full-width door, then a wider
+ * three-drawer cabinet, then cabinets with a drawer over doors. */
+const kitchenIsland: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const paint = mat(tint ?? "#4b5148", 0.7);
+  const panel = mat(shade(tint ?? "#4b5148", 0.9), 0.75);
+  const top = 0.04;
+  const overhang = 0.02;
+  const kick = 0.1;
+  const cd = Math.min(0.61, D - 0.3);
+  const L = W - 2 * overhang;
+  const zc = -D / 2 + overhang + cd / 2;
+  m.box(W, top, D, 0, H - top, 0, mat("#eceae5", 0.3));
+  // The cabinets' box, its recessed kick on the working side.
+  m.box(L, H - top - kick, cd, 0, kick, zc, paint);
+  m.box(
+    L - 0.01,
+    kick,
+    cd - 0.075,
+    0,
+    0,
+    zc + 0.0375,
+    mat(shade(tint ?? "#4b5148", 0.5), 0.8),
+  );
+  // The seating side: posts at its corners, aprons under the top.
+  const post = 0.09;
+  const pz = D / 2 - overhang - post / 2;
+  const px = W / 2 - overhang - post / 2;
+  for (const s of [-1, 1]) m.box(post, H - top, post, s * px, 0, pz, paint);
+  const ap = 0.1;
+  const z0 = zc + cd / 2;
+  m.box(2 * px, ap, 0.03, 0, H - top - ap, pz, paint);
+  for (const s of [-1, 1])
+    m.box(0.03, ap, pz - z0, s * px, H - top - ap, (pz + z0) / 2, paint);
+  // The fronts, on the working side (drawn turned, the far end first).
+  const f = new Turned(m);
+  const face = D / 2 - overhang;
+  const gap = 0.003;
+  const y0 = kick + gap;
+  const faceH = H - top - kick - 2 * gap;
+  const run: [number, number[], number][] = [];
+  const rest = L - 1.5;
+  run.push([0.6, [0.15], 1], [0.9, [0.15, 0.25, faceH - 0.4], 0]);
+  if (rest >= 0.3) {
+    const n = rest > 1.0 ? 2 : 1;
+    for (let k = 0; k < n; k++) {
+      const w = rest / n;
+      run.push([w, [0.15], w > 0.6 ? 2 : 1]);
+    }
+  }
+  // Turned, its far (+x) end is at -x.
+  let x = -L / 2;
+  for (const [w, drawers, doors] of run) {
+    if (x + w > L / 2 + 1e-6) break;
+    let y = y0 + faceH;
+    for (const h of drawers) {
+      shakerFront(
+        f,
+        x + w / 2,
+        y - h + gap / 2,
+        w - gap,
+        h - gap,
+        face,
+        paint,
+        panel,
+      );
+      barPull(
+        f,
+        x + w / 2,
+        y - Math.min(h / 2, 0.075),
+        face,
+        false,
+        w > 0.8 ? 0.305 : 0.192,
+      );
+      y -= h;
+    }
+    const dh = y - y0;
+    if (doors > 0 && dh > 0.1) {
+      const dw = w / doors;
+      for (let k = 0; k < doors; k++) {
+        const cx = x + dw * (k + 0.5);
+        shakerFront(
+          f,
+          cx,
+          y0 + gap / 2,
+          dw - gap,
+          dh - gap,
+          face,
+          paint,
+          panel,
+        );
+        const edge = doors === 1 ? 1 : k % 2 === 0 ? 1 : -1;
+        barPull(
+          f,
+          cx + edge * (dw / 2 - 0.045),
+          y0 + dh - 0.07 - 0.064,
+          face,
+          true,
+          0.128,
+        );
+      }
+    }
+    x += w;
+  }
+};
+
+/** A rod between two points (a stool's frame). */
+function rod(
+  m: Model,
+  a: THREE.Vector3,
+  b: THREE.Vector3,
+  r: number,
+  material: THREE.Material,
+): void {
+  const dir = b.clone().sub(a);
+  const len = dir.length();
+  if (len < 1e-5) return;
+  const g = new THREE.CylinderGeometry(r, r, len, 8);
+  g.translate(0, len / 2, 0);
+  g.applyQuaternion(
+    new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      dir.normalize(),
+    ),
+  );
+  g.translate(a.x, a.y, a.z);
+  m.add(g, material);
+}
+
+const LEATHER = new Map<string, THREE.MeshStandardMaterial>();
+/** Leather (both faces of a shell show). */
+function leather(color: string): THREE.MeshStandardMaterial {
+  let m = LEATHER.get(color);
+  if (!m) {
+    m = new THREE.MeshStandardMaterial({
+      color,
+      roughness: 0.55,
+      side: THREE.DoubleSide,
+    });
+    LEATHER.set(color, m);
+  }
+  return m;
+}
+
+/** A counter stool (back at -z): a brown leather bucket seat, its back
+ * curving round and down to the sides, on a thin black metal frame with
+ * a footrest and floor runners. */
+const bucketStool: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const hide = leather(tint ?? "#8b5a3b");
+  const black = mat("#1d1d1f", 0.45, 0.6);
+  const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+  const seatY = Math.min(0.66, H * 0.76);
+  const sx = W / 2 - 0.06;
+  const sz = D / 2 - 0.06;
+  const fx = W / 2 - 0.03;
+  const fz = D / 2 - 0.03;
+  // Legs, splayed a little, runners along the floor, the footrest.
+  const foot = 0.24;
+  for (const a of [-1, 1]) {
+    for (const b of [-1, 1])
+      rod(
+        m,
+        v(a * sx, seatY - 0.04, b * sz),
+        v(a * fx, 0.01, b * fz),
+        0.008,
+        black,
+      );
+    rod(m, v(a * fx, 0.01, -fz), v(a * fx, 0.01, fz), 0.007, black);
+  }
+  const at = (a: number, b: number) => {
+    const t = (seatY - 0.04 - foot) / (seatY - 0.05);
+    return v(a * (sx + (fx - sx) * t), foot, b * (sz + (fz - sz) * t));
+  };
+  rod(m, at(-1, 1), at(1, 1), 0.008, black);
+  for (const a of [-1, 1]) rod(m, at(a, -1), at(a, 1), 0.007, black);
+  m.box(2 * sx, 0.015, 2 * sz, 0, seatY - 0.05, 0, black);
+  // The seat cushion, and its bucket back.
+  m.soft(W - 0.04, 0.07, D - 0.06, 0, seatY - 0.04, 0.01, hide, 0.03);
+  const r = Math.min(W, D) / 2 - 0.02;
+  const backH = H - seatY;
+  const g = new THREE.CylinderGeometry(
+    r,
+    r * 0.96,
+    backH,
+    24,
+    4,
+    true,
+    Math.PI - 1.75,
+    3.5,
+  );
+  const pos = g.getAttribute("position") as THREE.BufferAttribute;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const off = Math.abs(Math.atan2(x, -z));
+    const t = (pos.getY(i) + backH / 2) / backH;
+    pos.setY(i, -backH / 2 + t * backH * (0.45 + 0.55 * Math.cos(off * 0.6)));
+  }
+  g.computeVertexNormals();
+  g.translate(0, seatY + backH / 2 - 0.01, 0.02);
+  m.add(g, hide);
+};
+
 const drawers: Builder = (m, o, tint) => {
   const { W, D, H } = m;
   const body = mat(tint ?? C.wood, 0.65);
@@ -2782,6 +3077,9 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^gate_(hog|wood)_/, gate],
   [/wheelie_bin|^garbage_bin$|^garbage_cart|^recycling_cart/, wheelieBin],
   [/^tv_|_tv$|^tv\d/, tv],
+  [/^island_shaker/, kitchenIsland],
+  [/^backsplash_/, backsplash],
+  [/^stool_leather_bucket/, bucketStool],
   [/^shaker_/, shaker],
   [/^fridge_beko/, bekoFridge],
   [/^range_beko/, bekoRange],
