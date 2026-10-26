@@ -2975,7 +2975,9 @@ function siteSpec(
       : Number(entry.opts["height"] ?? 100) / 100,
     thick: entry.d / 100,
     ...(isRetainingWall(entry) ? { depth: retainingDepth(item) } : {}),
-    ...(surface === "dig" ? { dig: digDepth(item, entry) } : {}),
+    ...(surface === "dig" || surface === "raise"
+      ? { dig: digDepth(item, entry) }
+      : {}),
     tint: own_,
   };
 }
@@ -4450,25 +4452,37 @@ function terrain(
       .filter((r) => r.points.length >= 3)
       .map((r) => r.points.map(([x, y]): Vec2 => [x * m, y * m]));
   });
-  // Dug-out areas, on any floor's plan: their outlines in the world.
+  // Dug-out and raised areas, on any floor's plan (a retaining wall
+  // closed round and filled raises its inside to its top): their outlines
+  // in the world.
   const pits: Pit3d[] = [];
+  const raised: Pit3d[] = [];
   for (const f of input.floors) {
     const m = metersPerUnit(f.layout.scale);
     for (const item of f.layout.furniture) {
       const entry = catalogItem(item.kind);
-      if (entry?.opts["site"] !== "dig" || (item.points?.length ?? 0) < 3)
-        continue;
+      if (!entry || (item.points?.length ?? 0) < 3) continue;
+      const site = entry.opts["site"];
+      const filled =
+        isRetainingWall(entry) && item.fill === true && item.closed !== false;
+      if (site !== "dig" && site !== "raise" && !filled) continue;
       const flip = !!item.mirrored !== !!entry.flip;
       const local = siteSpec(item, entry, flip, null).points;
       const a = (-item.rotation_deg * Math.PI) / 180;
       const [c, s] = [Math.cos(a), Math.sin(a)];
-      pits.push({
-        points: local.map(([x, z]): Vec2 => [
-          item.x * m + x * c + z * s,
-          item.y * m - x * s + z * c,
-        ]),
-        depth: digDepth(item, entry),
-      });
+      const points = local.map(([x, z]): Vec2 => [
+        item.x * m + x * c + z * s,
+        item.y * m - x * s + z * c,
+      ]);
+      if (site === "dig") pits.push({ points, depth: digDepth(item, entry) });
+      else if (site === "raise")
+        raised.push({ points, depth: digDepth(item, entry) });
+      else {
+        // Soil up to just under the wall's cap.
+        const h =
+          (item.height_cm ?? Number(entry.opts["height"] ?? 60)) / 100 - 0.04;
+        if (h > 0) raised.push({ points, depth: h });
+      }
     }
   }
   return {
@@ -4481,6 +4495,7 @@ function terrain(
     ...(ground.grid ? { grid: ground.grid } : {}),
     cover,
     ...(pits.length ? { pits } : {}),
+    ...(raised.length ? { raised } : {}),
   };
 }
 

@@ -1607,6 +1607,29 @@ const wheelieBin: Builder = (m, o, tint) => {
   m.box(W * 0.6, 0.04, 0.06, 0, 0, D * 0.36, body);
 };
 
+/** A propane tank on its side (along the width): a white cylinder with
+ * rounded ends on two saddle feet, the dome cover over its valves on top. */
+const propaneTank: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const white = mat(tint ?? "#ecebe6", 0.35, 0.3);
+  const steel = mat(C.charcoal, 0.6, 0.5);
+  const r = Math.min(D / 2, (H - 0.16) / 2);
+  const cy = H - 0.16 - r + 0.16;
+  const body = Math.max(0.1, W - 2 * r);
+  m.cyl(r, r, body, 0, cy, 0, white, 32, "x");
+  for (const s of [-1, 1])
+    m.sphere(r, (s * body) / 2, cy, 0, white, 0.55, 1, 1);
+  // Saddle feet under it, a quarter in from each end.
+  for (const s of [-1, 1]) {
+    const x = (s * body) / 3;
+    m.box(0.12, cy - r * 0.6, D * 0.7, x, 0, 0, steel);
+    m.box(0.3, 0.03, D * 0.8, x, 0, 0, steel);
+  }
+  // The dome cover on top, middle.
+  m.cyl(r * 0.36, r * 0.4, 0.14, 0, cy + r - 0.04, 0, white, 24);
+  m.sphere(r * 0.36, 0, cy + r + 0.1, 0, white, 1, 0.35, 1);
+};
+
 /** A gate (front at +z): one leaf, or two meeting in the middle
  * (`leaves`), standing a little off the ground. `style` "hog" is a wood
  * frame with a Z brace over welded wire; "wood" is close boards on rails. */
@@ -1944,6 +1967,7 @@ const BY_DRAW: Record<string, Builder> = {
 
 const BY_KIND: [RegExp, Builder][] = [
   [/^trailer_/, carHauler],
+  [/^propane_tank/, propaneTank],
   [/^gate_(hog|wood)_/, gate],
   [/wheelie_bin|^garbage_bin$|^garbage_cart|^recycling_cart/, wheelieBin],
   [/^tv_|_tv$|^tv\d/, tv],

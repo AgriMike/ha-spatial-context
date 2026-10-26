@@ -7,7 +7,7 @@ import { counterModel, furnitureModel } from "./furniture-models";
 import { outdoorModel } from "./outdoor-models";
 import { siteModel } from "./site-models";
 import { gradeAt } from "./ground-grid";
-import { pitDepthAt, subtractPit } from "./pits";
+import { pitDepthAt, raiseAt, splitRaised, subtractPit } from "./pits";
 import type {
   Box3d,
   EditHit,
@@ -1010,7 +1010,9 @@ function groundAt(t: Terrain3d | null, x: number, z: number): number {
 /** Where something standing at a spot rests: the ground, or a dug-out
  * area's floor. */
 function floorAt(t: Terrain3d | null, x: number, z: number): number {
-  return groundAt(t, x, z) - pitDepthAt(t?.pits, x, z);
+  return (
+    groundAt(t, x, z) - pitDepthAt(t?.pits, x, z) + raiseAt(t?.raised, x, z)
+  );
 }
 
 /** Whether a spot is in one of the terrain's holes (where the ground is
@@ -1095,7 +1097,11 @@ function terrainBends(
  * `downhill` past its low face, with the given rooms cut out. */
 function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
   // A hair under the stated grade: outdoor slabs sit just below 0.
-  const height = (x: number, z: number) => groundAt(t, x, z);
+  // Raised areas lift the grid's points inside them; the pieces of the
+  // cells their outlines cross get their own (see below).
+  const base = (x: number, z: number) => groundAt(t, x, z);
+  const height = (x: number, z: number) =>
+    groundAt(t, x, z) + raiseAt(t.raised, x, z);
   // Out to the grading's edge too.
   const g = t.grid;
   const margin = 6;
@@ -1159,7 +1165,7 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
   }
   // Dug-out areas: a cell wholly inside one is a hole; one its outline
   // crosses is cut along it exactly (what's left of it, in pieces).
-  const cutCells = new Map<number, Vec2[][]>();
+  const cutCells = new Map<number, { points: Vec2[]; up: number }[]>();
   const firstAfter = (lines: number[], v: number) => {
     let k = 0;
     while (k < lines.length - 1 && lines[k + 1]! <= v) k++;
@@ -1178,27 +1184,68 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
         if (hole[k]) continue;
         const [xa, xb, za, zb] = [xs[i]!, xs[i + 1]!, zs[j]!, zs[j + 1]!];
         const was = cutCells.get(k) ?? [
-          [
-            [xa, za],
-            [xb, za],
-            [xb, zb],
-            [xa, zb],
-          ],
+          {
+            points: [
+              [xa, za],
+              [xb, za],
+              [xb, zb],
+              [xa, zb],
+            ] as Vec2[],
+            up: 0,
+          },
         ];
-        const left = was.flatMap((piece) => subtractPit(piece, pit.points));
+        const left = was.flatMap((piece) =>
+          subtractPit(piece.points, pit.points).map((points) => ({
+            points,
+            up: piece.up,
+          })),
+        );
         if (!left.length) {
           hole[k] = 1;
           cutCells.delete(k);
           continue;
         }
         let area = 0;
-        for (const piece of left)
+        for (const { points: piece } of left)
           for (let a = 0, b = piece.length - 1; a < piece.length; b = a++)
             area +=
               (piece[b]![0] * piece[a]![1] - piece[a]![0] * piece[b]![1]) / 2;
         if (!cutCells.has(k) && Math.abs(area) >= (xb - xa) * (zb - za) - 1e-6)
           continue;
         cutCells.set(k, left);
+      }
+  }
+  // Raised areas: a cell one's outline crosses is split along it, the
+  // piece inside raised.
+  for (const r of t.raised ?? []) {
+    const px = r.points.map((p) => p[0]);
+    const pz = r.points.map((p) => p[1]);
+    const i0 = firstAfter(xs, Math.min(...px));
+    const i1 = Math.min(cols - 1, firstAfter(xs, Math.max(...px)));
+    const j0 = firstAfter(zs, Math.min(...pz));
+    const j1 = Math.min(rows - 1, firstAfter(zs, Math.max(...pz)));
+    for (let j = j0; j <= j1; j++)
+      for (let i = i0; i <= i1; i++) {
+        const k = j * cols + i;
+        if (hole[k]) continue;
+        const [xa, xb, za, zb] = [xs[i]!, xs[i + 1]!, zs[j]!, zs[j + 1]!];
+        const was = cutCells.get(k);
+        const pieces = (
+          was ?? [
+            {
+              points: [
+                [xa, za],
+                [xb, za],
+                [xb, zb],
+                [xa, zb],
+              ] as Vec2[],
+              up: 0,
+            },
+          ]
+        ).flatMap((p) => splitRaised(p.points, [r], p.up));
+        // Wholly in or out, and not cut already: as it was.
+        if (!was && pieces.length <= 1) continue;
+        cutCells.set(k, pieces);
       }
   }
   // Blocks of B by B cells where the ground is one plane (no grading, no
@@ -1371,12 +1418,12 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
   const extraIndex: number[] = [];
   const e = 0.1;
   for (const pieces of cutCells.values())
-    for (const piece of pieces) {
-      const base = n + extraPos.length / 3;
+    for (const { points: piece, up } of pieces) {
+      const first = n + extraPos.length / 3;
       for (const [x, z] of piece) {
-        extraPos.push(x, height(x, z), z);
-        const gx = (height(x + e, z) - height(x - e, z)) / (2 * e);
-        const gz = (height(x, z + e) - height(x, z - e)) / (2 * e);
+        extraPos.push(x, base(x, z) + up, z);
+        const gx = (base(x + e, z) - base(x - e, z)) / (2 * e);
+        const gz = (base(x, z + e) - base(x, z - e)) / (2 * e);
         const l = Math.hypot(gx, 1, gz);
         extraNor.push(-gx / l, 1 / l, -gz / l);
       }
@@ -1385,8 +1432,8 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
       for (let a = 0, b = piece.length - 1; a < piece.length; b = a++)
         turn += piece[b]![0] * piece[a]![1] - piece[a]![0] * piece[b]![1];
       for (let k = 1; k + 1 < piece.length; k++)
-        if (turn < 0) extraIndex.push(base, base + k, base + k + 1);
-        else extraIndex.push(base, base + k + 1, base + k);
+        if (turn < 0) extraIndex.push(first, first + k, first + k + 1);
+        else extraIndex.push(first, first + k + 1, first + k);
     }
   const allPos = new Float32Array(pos.length + extraPos.length);
   allPos.set(pos);
@@ -1437,7 +1484,7 @@ function moveTerrain(
     }
   const e = 0.1;
   for (const [w, x, z] of todo) {
-    pos.setY(w, groundAt(t, x, z));
+    pos.setY(w, groundAt(t, x, z) + raiseAt(t.raised, x, z));
     const gx = (groundAt(t, x + e, z) - groundAt(t, x - e, z)) / (2 * e);
     const gz = (groundAt(t, x, z + e) - groundAt(t, x, z - e)) / (2 * e);
     const l = Math.hypot(gx, 1, gz);
@@ -1947,6 +1994,7 @@ function createView3d(options: View3dOptions): View3dHandle {
                   groundAt({ ...siteTerrain!, grid: null }, x, z) - baseY
               : null,
             siteTerrain?.pits ?? null,
+            siteTerrain?.raised ?? null,
           ),
         )
       : null;

@@ -182,7 +182,8 @@ export interface Item3d {
     thick: number;
     /** How far a retaining wall goes below the ground (metres). */
     depth?: number;
-    /** A dug-out area's depth (metres; its `surface` is "dig"). */
+    /** A dug-out area's depth (metres; its `surface` is "dig"), or a
+     * raised area's height (its `surface` is "raise"). */
     dig?: number;
     tint: string | null;
   };
@@ -334,6 +335,9 @@ export interface Terrain3d {
   cover?: Vec2[][];
   /** Dug-out areas (see pits.ts): the ground lowered straight down. */
   pits?: Pit3d[];
+  /** Raised areas: the ground lifted straight up `depth` inside them
+   * (a raised area, or a retaining wall filled to its top). */
+  raised?: Pit3d[];
 }
 
 /** A dug-out area: its outline (x, z, metres, world) and how deep. */

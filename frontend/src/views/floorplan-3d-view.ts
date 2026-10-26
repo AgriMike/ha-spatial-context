@@ -2583,16 +2583,30 @@ export class Floorplan3dView extends LitElement {
           const step = this._gradeGrid()?.step ?? this._gradeStep;
           const w = Math.abs(drag.to[0] - drag.from[0]);
           const d = Math.abs(drag.to[1] - drag.from[1]);
-          // Too small to hold a point either way: none.
-          this._gradeArea =
-            w >= step * 0.9 && d >= step * 0.9
-              ? [
-                  Math.min(drag.from[0], drag.to[0]),
-                  Math.min(drag.from[1], drag.to[1]),
-                  Math.max(drag.from[0], drag.to[0]),
-                  Math.max(drag.from[1], drag.to[1]),
-                ]
-              : this._gradeArea;
+          if (w >= step * 0.9 && d >= step * 0.9)
+            this._gradeArea = [
+              Math.min(drag.from[0], drag.to[0]),
+              Math.min(drag.from[1], drag.to[1]),
+              Math.max(drag.from[0], drag.to[0]),
+              Math.max(drag.from[1], drag.to[1]),
+            ];
+          else if (w < step * 0.25 && d < step * 0.25) {
+            // A click, not a drag: the nearest point picked, to type its
+            // height (as before areas).
+            // The grid grown to reach it, if it doesn't yet.
+            const saved = this._ground?.grid ?? null;
+            const grown = growGrid(
+              saved,
+              drag.from[0] - step,
+              drag.from[1] - step,
+              drag.from[0] + step,
+              drag.from[1] + step,
+              step,
+            );
+            if (grown !== saved) this._setGround({ grid: grown });
+            const node = nearestNode(grown, drag.from[0], drag.from[1]);
+            if (node) this._gradeNode = node;
+          }
         }
         this._pushOverlay();
         return false;
@@ -4058,9 +4072,13 @@ export class Floorplan3dView extends LitElement {
       )}
       ${this._color(localize("edit3d.color"), item.color, (v) => set({ color: v }))}
       ${
-        entry?.opts["site"] === "dig"
+        entry?.opts["site"] === "dig" || entry?.opts["site"] === "raise"
           ? this._num(
-              localize("edit3d.digDepth"),
+              localize(
+                entry?.opts["site"] === "raise"
+                  ? "edit3d.raiseHeight"
+                  : "edit3d.digDepth",
+              ),
               height,
               (v) => set({ height_cm: v && v > 0 ? Math.min(v, 2000) : null }),
               { unit: "cm", min: 1 },
@@ -4070,6 +4088,20 @@ export class Floorplan3dView extends LitElement {
       ${
         !surface
           ? html`${this._num(localize("edit3d.height"), height, (v) => set({ height_cm: v && v > 0 ? v : null }), { unit: "cm", min: 1 })}
+              ${
+                retaining
+                  ? html`<label class="row">
+                      <span>${localize("edit3d.wallFill")}</span>
+                      <input
+                        type="checkbox"
+                        .checked=${item.fill === true}
+                        ?disabled=${item.closed === false || n < 3}
+                        @change=${(e: Event) =>
+                          set({ fill: (e.target as HTMLInputElement).checked })}
+                      />
+                    </label>`
+                  : nothing
+              }
               ${
                 retaining
                   ? this._num(

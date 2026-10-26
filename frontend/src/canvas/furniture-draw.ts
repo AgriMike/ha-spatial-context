@@ -2417,6 +2417,12 @@ const T: Record<string, Template> = {
     rect(0, d * 0.3, w * 0.06, d * 0.05, 1),
     rect(w * 0.94, d * 0.3, w * 0.06, d * 0.05, 1),
   ],
+  propaneTank: (w, d) => [
+    // A tank on its side, seen from above: rounded ends, the dome cover.
+    rect(0, 0, w, d, d / 2),
+    circ(w / 2, d / 2, Math.min(w, d) * 0.22),
+    line(d / 2, d / 2, w / 2 - Math.min(w, d) * 0.22, d / 2, true),
+  ],
   gate: (w, d, o) => {
     // The leaf (or two) across its opening, hinged at the end(s), each
     // with its swing out to the front (dashed).

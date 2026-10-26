@@ -10,7 +10,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import { subtractPit } from "./pits";
+import { raiseAt, splitRaised, subtractPit } from "./pits";
 import type { Item3d, Pit3d, Vec2 } from "./view3d-api";
 
 type Ground = (x: number, z: number) => number;
@@ -597,6 +597,7 @@ function surface(
   cut: ((x: number, z: number) => boolean) | null = null,
   bends: Bends | null = null,
   pits: Vec2[][] = [],
+  raised: Pit3d[] = [],
 ): THREE.Group {
   const site = item.site!;
   const spec = SURFACES[kind] ?? SURFACES["concrete"]!;
@@ -744,8 +745,8 @@ function surface(
     const pos: number[] = [];
     const uv: number[] = [];
     const nor: number[] = [];
-    const emit = (p: Vec2) => {
-      pos.push(p[0], top(p[0], p[1]), p[1]);
+    const emit = (p: Vec2, up = 0) => {
+      pos.push(p[0], top(p[0], p[1]) + up, p[1]);
       const [wx, wz] = toWorld(p[0], p[1]);
       uv.push(wx / spec.tile, wz / spec.tile);
     };
@@ -774,14 +775,18 @@ function surface(
             continue;
           pieces = pieces.flatMap((piece) => subtractPit(piece, p));
         }
-        for (const piece of pieces)
+        // And along any raised area's: the piece inside it lifted.
+        const lifted = raised.length
+          ? pieces.flatMap((piece) => splitRaised(piece, raised))
+          : pieces.map((points) => ({ points, up: 0 }));
+        for (const { points: piece, up } of lifted)
           for (let f = 1; f + 1 < piece.length; f++) {
             const [a, b, c] = [piece[0]!, piece[f]!, piece[f + 1]!];
             // Facing up: counter-clockwise in (x, z) is clockwise seen from
             // above (+y) — so emit a, c, b.
-            emit(a);
-            emit(c);
-            emit(b);
+            emit(a, up);
+            emit(c, up);
+            emit(b, up);
             if (fine) {
               // Smooth over the curves, as the terrain is shaded.
               pushSlopeNormal(nor, a[0], a[1]);
@@ -846,10 +851,12 @@ function surface(
           p[1] + ((q[1] - p[1]) * (s + 1)) / n,
         ];
         if (dugOut((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)) continue;
-        const ya = top(a[0], a[1]);
-        const yb = top(b[0], b[1]);
-        const ga = ground(a[0], a[1]) - 0.05;
-        const gb = ground(b[0], b[1]) - 0.05;
+        const ua = raiseAt(raised, a[0], a[1]);
+        const ub = raiseAt(raised, b[0], b[1]);
+        const ya = top(a[0], a[1]) + ua;
+        const yb = top(b[0], b[1]) + ub;
+        const ga = ground(a[0], a[1]) + ua - 0.05;
+        const gb = ground(b[0], b[1]) + ub - 0.05;
         edge.push(a[0], ya, a[1], b[0], yb, b[1], b[0], gb, b[1]);
         edge.push(a[0], ya, a[1], b[0], gb, b[1], a[0], ga, a[1]);
       }
@@ -864,7 +871,8 @@ function surface(
         0.95,
       ),
     );
-    // Planting and stones scattered inside it.
+    // Planting and stones scattered inside it (up on any raised area).
+    const topUp = (x: number, z: number) => top(x, z) + raiseAt(raised, x, z);
     const xs = outline.map((p) => p[0]);
     const zs = outline.map((p) => p[1]);
     const [x0, x1, z0, z1] = [
@@ -886,10 +894,10 @@ function surface(
     if (kind === "flowers") {
       const colors = ["#d94f70", "#f2c14e", "#9b5de5", "#f78154", "#ffffff"];
       scatter(0.3, (x, z) => {
-        parts.blob(x, top(x, z) + 0.12, z, 0.1, mat("#4f7d3a", 1));
+        parts.blob(x, topUp(x, z) + 0.12, z, 0.1, mat("#4f7d3a", 1));
         parts.blob(
           x,
-          top(x, z) + 0.22,
+          topUp(x, z) + 0.22,
           z,
           0.06,
           mat(colors[Math.floor(rand() * colors.length)]!, 0.8),
@@ -912,7 +920,7 @@ function surface(
         if (rand() < 0.6)
           parts.blob(
             x,
-            top(x, z),
+            topUp(x, z),
             z,
             0.08 + rand() * 0.1,
             mat("#8f8c86", 0.9),
@@ -923,7 +931,7 @@ function surface(
       scatter(0.6, (x, z) => {
         const g = new THREE.CylinderGeometry(0.22, 0.24, 0.05, 14);
         g.scale(1, 1, 0.8 + rand() * 0.3);
-        g.translate(x, top(x, z) + 0.02, z);
+        g.translate(x, topUp(x, z) + 0.02, z);
         parts.add(g, mat("#b7b2a8", 0.9));
       });
     }
@@ -1206,6 +1214,75 @@ function fence(
   return parts.group();
 }
 
+/** Earth faces along an outline, each stretch from `low` up to `high` at
+ * its ends, facing its inside (`inward`) or out. */
+function earthFaces(
+  outline: Vec2[],
+  low: (x: number, z: number) => number,
+  high: (x: number, z: number) => number,
+  inward: boolean,
+): THREE.BufferGeometry {
+  const side = (polyArea(outline) > 0 ? 1 : -1) * (inward ? 1 : -1);
+  const wall: number[] = [];
+  for (let i = 0; i < outline.length; i++) {
+    const p = outline[i]!;
+    const q = outline[(i + 1) % outline.length]!;
+    const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    if (len < 1e-4) continue;
+    // Left of the edge is inside, for a counter-clockwise outline.
+    const nx = (-(q[1] - p[1]) / len) * side;
+    const nz = ((q[0] - p[0]) / len) * side;
+    const n = Math.max(1, Math.ceil(len / 0.3));
+    for (let s = 0; s < n; s++) {
+      const a: Vec2 = [
+        p[0] + ((q[0] - p[0]) * s) / n,
+        p[1] + ((q[1] - p[1]) * s) / n,
+      ];
+      const b: Vec2 = [
+        p[0] + ((q[0] - p[0]) * (s + 1)) / n,
+        p[1] + ((q[1] - p[1]) * (s + 1)) / n,
+      ];
+      const quad: [number, number, number][] = [
+        [a[0], low(a[0], a[1]), a[1]],
+        [b[0], low(b[0], b[1]), b[1]],
+        [b[0], high(b[0], b[1]), b[1]],
+        [a[0], high(a[0], a[1]), a[1]],
+      ];
+      const [u, v, w] = [quad[0]!, quad[1]!, quad[2]!];
+      const cx = (v[1] - u[1]) * (w[2] - u[2]) - (v[2] - u[2]) * (w[1] - u[1]);
+      const cz = (v[0] - u[0]) * (w[1] - u[1]) - (v[1] - u[1]) * (w[0] - u[0]);
+      const order =
+        cx * nx + cz * nz >= 0 ? [0, 1, 2, 0, 2, 3] : [0, 2, 1, 0, 3, 2];
+      for (const k of order) wall.push(...quad[k]!);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(wall, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+/** A raised area: the ground lifted straight up inside its outline (the
+ * terrain and lawns are lifted there; see pits.ts), with an earth face
+ * round its edge from the ground up to it. */
+function raisedArea(item: Item3d, ground: Ground): THREE.Group {
+  const site = item.site!;
+  const up = site.dig ?? 0.5;
+  const parts = new Parts();
+  if (site.points.length < 3) return parts.group();
+  parts.add(
+    earthFaces(
+      site.points,
+      (x, z) => ground(x, z) - 0.02,
+      // Up past a lawn's lift, so no seam shows at the rim.
+      (x, z) => ground(x, z) + up + 0.02,
+      false,
+    ),
+    mat(site.tint ?? "#5e4a38", 1),
+  );
+  return parts.group();
+}
+
 /** A dug-out area: the ground lowered straight down inside its outline
  * (the terrain and lawns are cut along it; see pits.ts), with earth walls
  * and a floor following the ground's slope `depth` below it. */
@@ -1227,51 +1304,17 @@ function dig(item: Item3d, ground: Ground): THREE.Group {
   floor.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
   floor.computeVertexNormals();
   parts.add(floor, mat(site.tint ?? "#7a6450", 1));
-  // The walls, facing in, from the ground's edge straight down.
-  const inward = polyArea(outline) > 0 ? 1 : -1;
-  const wall: number[] = [];
-  for (let i = 0; i < outline.length; i++) {
-    const p = outline[i]!;
-    const q = outline[(i + 1) % outline.length]!;
-    const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
-    if (len < 1e-4) continue;
-    // Its inward side: left of the edge for a counter-clockwise outline.
-    const nx = (-(q[1] - p[1]) / len) * inward;
-    const nz = ((q[0] - p[0]) / len) * inward;
-    const n = Math.max(1, Math.ceil(len / 0.3));
-    for (let s = 0; s < n; s++) {
-      const a: Vec2 = [
-        p[0] + ((q[0] - p[0]) * s) / n,
-        p[1] + ((q[1] - p[1]) * s) / n,
-      ];
-      const b: Vec2 = [
-        p[0] + ((q[0] - p[0]) * (s + 1)) / n,
-        p[1] + ((q[1] - p[1]) * (s + 1)) / n,
-      ];
-      // Up past a lawn's lift too, so no seam shows at the rim.
-      const ta = ground(a[0], a[1]) + 0.02;
-      const tb = ground(b[0], b[1]) + 0.02;
-      const ba = floorAt(a[0], a[1]) - 0.01;
-      const bb = floorAt(b[0], b[1]) - 0.01;
-      const quad: [number, number, number][] = [
-        [a[0], ba, a[1]],
-        [b[0], bb, b[1]],
-        [b[0], tb, b[1]],
-        [a[0], ta, a[1]],
-      ];
-      // Wound to face the inside.
-      const [u, v, w] = [quad[0]!, quad[1]!, quad[2]!];
-      const cx = (v[1] - u[1]) * (w[2] - u[2]) - (v[2] - u[2]) * (w[1] - u[1]);
-      const cz = (v[0] - u[0]) * (w[1] - u[1]) - (v[1] - u[1]) * (w[0] - u[0]);
-      const order =
-        cx * nx + cz * nz >= 0 ? [0, 1, 2, 0, 2, 3] : [0, 2, 1, 0, 3, 2];
-      for (const k of order) wall.push(...quad[k]!);
-    }
-  }
-  const walls = new THREE.BufferGeometry();
-  walls.setAttribute("position", new THREE.Float32BufferAttribute(wall, 3));
-  walls.computeVertexNormals();
-  parts.add(walls, mat("#5e4a38", 1));
+  // The walls, facing in, from the ground's edge straight down (up past
+  // a lawn's lift too, so no seam shows at the rim).
+  parts.add(
+    earthFaces(
+      outline,
+      (x, z) => floorAt(x, z) - 0.01,
+      (x, z) => ground(x, z) + 0.02,
+      true,
+    ),
+    mat("#5e4a38", 1),
+  );
   return parts.group();
 }
 
@@ -1283,6 +1326,7 @@ export function siteModel(
   bends: Bends | null = null,
   plain: Ground | null = null,
   pits: Pit3d[] | null = null,
+  raised: Pit3d[] | null = null,
 ): THREE.Group | null {
   const site = item.site;
   if (!site || site.points.length < 2) return null;
@@ -1296,6 +1340,7 @@ export function siteModel(
     return ground(wx, wz) - item.y0;
   };
   if (site.surface === "dig") return dig(item, local);
+  if (site.surface === "raise") return raisedArea(item, local);
   // The dug-out areas reaching it, in its own frame.
   const toLocal = ([wx, wz]: Vec2): Vec2 => {
     const dx = wx - item.x;
@@ -1316,8 +1361,27 @@ export function siteModel(
         Math.max(...p.map((q) => q[1])) >= Math.min(...zs) &&
         Math.min(...p.map((q) => q[1])) <= Math.max(...zs),
     );
+  // The raised areas reaching it, in its own frame.
+  const localRaised = (raised ?? [])
+    .map((r) => ({ points: r.points.map(toLocal), depth: r.depth }))
+    .filter(
+      ({ points: p }) =>
+        Math.max(...p.map((q) => q[0])) >= Math.min(...xs) &&
+        Math.min(...p.map((q) => q[0])) <= Math.max(...xs) &&
+        Math.max(...p.map((q) => q[1])) >= Math.min(...zs) &&
+        Math.min(...p.map((q) => q[1])) <= Math.max(...zs),
+    );
   if (site.surface)
-    return surface(item, site.surface, local, toWorld, cut, bends, localPits);
+    return surface(
+      item,
+      site.surface,
+      local,
+      toWorld,
+      cut,
+      bends,
+      localPits,
+      localRaised,
+    );
   /** The site's own grade there, before any shaping (else as drawn). */
   const plainLocal: Ground = plain
     ? (x, z) => {
@@ -1325,6 +1389,12 @@ export function siteModel(
         return plain(wx, wz) - item.y0;
       }
     : local;
-  if (site.fence) return fence(item, site.fence, local, plainLocal);
+  // A fence or hedge on a raised area stands on it (a retaining wall
+  // holding one stands on the ground beside it).
+  const onRaised: Ground = (x, z) => local(x, z) + raiseAt(localRaised, x, z);
+  if (site.fence)
+    return site.fence === "retaining"
+      ? fence(item, site.fence, local, plainLocal)
+      : fence(item, site.fence, onRaised, plainLocal);
   return null;
 }

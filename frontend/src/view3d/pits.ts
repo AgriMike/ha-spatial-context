@@ -124,3 +124,55 @@ export function pitDepthAt(
     if (p.depth > most && inside(p.points, x, z)) most = p.depth;
   return most;
 }
+
+/** The part of a polygon inside an outline: pieces, each a polygon. */
+export function intersectPit(poly: Vec2[], points: Vec2[]): Vec2[][] {
+  const out: Vec2[][] = [];
+  for (const tri of pitParts(points)) {
+    let piece = poly;
+    for (let k = 0; k < 3 && piece.length >= 3; k++)
+      piece = clipLine(piece, tri[k]!, tri[(k + 1) % 3]!, true);
+    if (piece.length >= 3 && Math.abs(area(piece)) > 1e-9) out.push(piece);
+  }
+  return out;
+}
+
+/** How far the ground is raised at a spot (0 outside every raised area). */
+export function raiseAt(
+  raised: Pit3d[] | undefined,
+  x: number,
+  z: number,
+): number {
+  return pitDepthAt(raised, x, z);
+}
+
+/** What's left of a polygon, cut along every raised area's outline it
+ * reaches: pieces, each with how far up it's raised. */
+export function splitRaised(
+  poly: Vec2[],
+  raised: Pit3d[],
+  up = 0,
+): { points: Vec2[]; up: number }[] {
+  let pieces = [{ points: poly, up }];
+  for (const r of raised) {
+    const xs = poly.map((p) => p[0]);
+    const zs = poly.map((p) => p[1]);
+    const rx = r.points.map((p) => p[0]);
+    const rz = r.points.map((p) => p[1]);
+    if (
+      Math.max(...xs) < Math.min(...rx) ||
+      Math.min(...xs) > Math.max(...rx) ||
+      Math.max(...zs) < Math.min(...rz) ||
+      Math.min(...zs) > Math.max(...rz)
+    )
+      continue;
+    pieces = pieces.flatMap((p) => [
+      ...subtractPit(p.points, r.points).map((q) => ({ points: q, up: p.up })),
+      ...intersectPit(p.points, r.points).map((q) => ({
+        points: q,
+        up: p.up + r.depth,
+      })),
+    ]);
+  }
+  return pieces;
+}
