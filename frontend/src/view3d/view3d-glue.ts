@@ -642,6 +642,12 @@ function stairsModel(
   const paint = modelMaterial("#efebe4");
   const white = modelMaterial("#f4f1eb");
   const wood = modelMaterial("#7d5536");
+  // Deck stairs: open plank treads on stringers, a wood handrail and
+  // newels, dark balusters (as the deck's railing).
+  const out = !!st.outdoor;
+  const newel = out ? modelMaterial("#6e4a30") : white;
+  const spindle = out ? modelMaterial("#2e2e2e") : white;
+  const plank = modelMaterial("#9a6a44");
   const box = (
     w: number,
     hh: number,
@@ -664,6 +670,22 @@ function stairsModel(
     const zEnd = z0 + dir * D;
     const len = Math.abs(zEnd - zs);
     const landed = k === n && (st.landing ?? 0) >= run - 0.02;
+    if (out) {
+      // Two planks a tread, a gap between, their nosing a little proud.
+      if (landed) continue;
+      const depth = run + 0.02;
+      for (const f of [0.25, 0.75])
+        box(
+          W,
+          0.035,
+          depth / 2 - 0.006,
+          0,
+          k * h - 0.0175,
+          zs + dir * (depth * f - 0.02),
+          plank,
+        );
+      continue;
+    }
     const hk = landed ? h - 0.004 : h;
     box(W, hk, len, 0, (k - 1) * h + hk / 2, (zs + zEnd) / 2, paint);
     if (landed) continue;
@@ -678,10 +700,22 @@ function stairsModel(
       tread,
     );
   }
+  // Deck stairs' stringers: a board up each side and one down the middle,
+  // under the treads from the foot to the top.
+  if (out) {
+    const len = Math.hypot(D, rise);
+    for (const x of [-W / 2 + 0.03, 0, W / 2 - 0.03]) {
+      const g = new THREE.BoxGeometry(0.045, 0.28, len);
+      g.rotateX(-dir * Math.atan2(rise, D));
+      const mesh = add(g, wood, rise / 2 - 0.16);
+      mesh.position.x = x;
+      mesh.position.z = z0 + (dir * D) / 2;
+    }
+  }
   // A flight down from its floor (its top is the floor's level): a wall
   // along each open side up to the floor, and a level banister on top of
   // it at the floor's level, running the flight's length to the wall.
-  if (Math.max(st.front, st.back) <= 0.05) {
+  if (!out && Math.max(st.front, st.back) <= 0.05) {
     st.rails.forEach((on, i) => {
       const x = (i === 0 ? -1 : 1) * (W / 2 + 0.05);
       // A straight wall down each side from the floor to the flight's
@@ -729,9 +763,9 @@ function stairsModel(
     const za = lowCut > 0 ? z0 + dir * (lowCut - 0.04) : zLow;
     const zb = highCut > 0 ? z0 + dir * (D - highCut + 0.04) : zHigh;
     if (lowCut <= 0)
-      box(0.09, railH + 0.12, 0.09, x, (railH + 0.12) / 2, zLow, white);
+      box(0.09, railH + 0.12, 0.09, x, (railH + 0.12) / 2, zLow, newel);
     if (highCut <= 0)
-      box(0.09, railH + 0.12, 0.09, x, rise + (railH + 0.12) / 2, zHigh, white);
+      box(0.09, railH + 0.12, 0.09, x, rise + (railH + 0.12) / 2, zHigh, newel);
     const ya = railY(za);
     const yb = railY(zb);
     const rail = box(
@@ -754,7 +788,7 @@ function stairsModel(
         if (Math.abs(z - zLow) < 0.08 || Math.abs(z - zHigh) < 0.08) continue;
         const top = railY(z) - 0.03;
         const bottom = k * h;
-        box(0.025, top - bottom, 0.025, x, (top + bottom) / 2, z, white);
+        box(0.025, top - bottom, 0.025, x, (top + bottom) / 2, z, spindle);
       }
   });
 }

@@ -1063,30 +1063,35 @@ function buildFloor(
         f.x * m + lx * c + lz * sn,
         f.y * m - lx * sn + lz * c,
       ];
-      /** The floor at a spot: a room of this floor's level, else the floor
-       * above's (the flight climbs to it), else this floor's. */
+      /** The floor at a spot: a room of this floor's level (a deck
+       * outside too), else the floor above's (the flight climbs to it),
+       * else this floor's. */
       const levelAt = ([x, z]: Vec2): number => {
         const room = layout.rooms.find(
-          (r) =>
-            !r.outdoor &&
-            r.points.length >= 3 &&
-            pointInPolygon(x / m, z / m, r.points),
+          (r) => r.points.length >= 3 && pointInPolygon(x / m, z / m, r.points),
         );
         if (room) return room.floor_offset_m ?? 0;
         return floorAbove(x, z) ?? 0;
       };
-      const front = levelAt(P(0, d / 2 + 0.3));
-      const back = levelAt(P(0, -d / 2 - 0.3));
+      let front = levelAt(P(0, d / 2 + 0.3));
+      let back = levelAt(P(0, -d / 2 - 0.3));
+      // Its foot and rise set by hand (a flight down to a floor below,
+      // whose foot lies under this floor's deck): the end whose floor is
+      // nearer the top is the top.
+      if (f.elevation_cm != null && f.height_cm) {
+        const low = f.elevation_cm / 100;
+        const high = low + f.height_cm / 100;
+        const frontHigh = Math.abs(front - high) <= Math.abs(back - high);
+        front = frontHigh ? high : low;
+        back = frontHigh ? low : high;
+      }
       const top = Math.max(front, back);
       // How far back from its high end the floor up there runs over it:
       // its top step is that floor.
       const high = front > back ? 1 : -1;
       const floorAt = ([x, z]: Vec2): boolean => {
         const room = layout.rooms.find(
-          (r) =>
-            !r.outdoor &&
-            r.points.length >= 3 &&
-            pointInPolygon(x / m, z / m, r.points),
+          (r) => r.points.length >= 3 && pointInPolygon(x / m, z / m, r.points),
         );
         const y = room ? (room.floor_offset_m ?? 0) : floorAbove(x, z);
         return y !== null && Math.abs(y - top) < 0.05;
@@ -1094,12 +1099,25 @@ function buildFloor(
       let landing = 0;
       while (landing < d && floorAt(P(0, high * (d / 2 - landing - 0.01))))
         landing += 0.02;
+      // Out of doors: no indoor room at either end or under it.
+      const indoorAt = ([x, z]: Vec2) =>
+        layout.rooms.some(
+          (r) =>
+            !r.outdoor &&
+            r.points.length >= 3 &&
+            pointInPolygon(x / m, z / m, r.points),
+        );
+      const outdoor =
+        !indoorAt(P(0, d / 2 + 0.3)) &&
+        !indoorAt(P(0, -d / 2 - 0.3)) &&
+        !indoorAt(P(0, 0));
       return {
         item: f,
         front,
         back,
         top,
         landing,
+        outdoor,
         sides: [
           [P(-w / 2, -d / 2), P(-w / 2, d / 2)],
           [P(w / 2, -d / 2), P(w / 2, d / 2)],
@@ -2452,6 +2470,36 @@ function buildFloor(
         const pb: Vec2 = [b[0] + nx * inset, b[1] + nz * inset];
         const mid = [(a[0] + b[0]) / 2 / m, (a[1] + b[1]) / 2 / m] as const;
         const open = !nearWall(mid[0], mid[1]);
+        // Where a flight of stairs meets this edge at the deck's level: a
+        // gap in the railing (metres along it from pa).
+        const plen = Math.hypot(pb[0] - pa[0], pb[1] - pa[1]);
+        const gaps: [number, number][] = [];
+        for (const st of stairs) {
+          const ends: [Vec2, Vec2, number][] = [
+            [st.sides[0]![0], st.sides[1]![0], st.back],
+            [st.sides[0]![1], st.sides[1]![1], st.front],
+          ];
+          for (const [e0, e1, y] of ends) {
+            if (Math.abs(y - level) > 0.05) continue;
+            const off = (q: Vec2) =>
+              Math.abs((q[0] - pa[0]) * nx + (q[1] - pa[1]) * nz);
+            if (off(e0) > 0.4 || off(e1) > 0.4) continue;
+            const t = (q: Vec2) => (q[0] - pa[0]) * ux + (q[1] - pa[1]) * uz;
+            const t0 = Math.max(0, Math.min(t(e0), t(e1)) - 0.03);
+            const t1 = Math.min(plen, Math.max(t(e0), t(e1)) + 0.03);
+            if (t1 > t0) gaps.push([t0, t1]);
+          }
+        }
+        const inGap = (t: number) => gaps.some(([g0, g1]) => t > g0 && t < g1);
+        /** The railing's runs: the edge less its gaps. */
+        const runs: [number, number][] = [];
+        let from = 0;
+        for (const [g0, g1] of [...gaps].sort((p, q) => p[0] - q[0])) {
+          if (g0 > from) runs.push([from, g0]);
+          from = Math.max(from, g1);
+        }
+        if (from < plen) runs.push([from, plen]);
+        const at = (t: number): Vec2 => [pa[0] + ux * t, pa[1] + uz * t];
         // Rim board under the deck's edge.
         walls.push({
           ...along(a, b, level - 0.3, level - 0.02, 0.05),
@@ -2464,20 +2512,36 @@ function buildFloor(
           const z = pa[1] + (pb[1] - pa[1]) * (i / n);
           // Under a wall side only the corners need posts.
           if (!open && i > 0 && i < n) continue;
-          post(x, z, open ? level + RAIL_TOP_M : level - 0.02);
+          // In a stair's gap, a post at the floor only (no rail on it).
+          const gap = open && inGap((plen * i) / n);
+          post(x, z, open && !gap ? level + RAIL_TOP_M : level - 0.02);
         }
         if (!open) return;
-        walls.push({
-          ...along(pa, pb, level + RAIL_TOP_M - 0.06, level + RAIL_TOP_M, 0.09),
-          color: wood,
-        });
-        walls.push({
-          ...along(pa, pb, level + 0.08, level + 0.12, 0.05),
-          color: rail,
-        });
+        // A post each side of a stair's gap, where the railing stops.
+        for (const [g0, g1] of gaps)
+          for (const t of [g0, g1])
+            if (t > 0.05 && t < plen - 0.05) post(...at(t), level + RAIL_TOP_M);
+        for (const [r0, r1] of runs) {
+          if (r1 - r0 < 0.05) continue;
+          walls.push({
+            ...along(
+              at(r0),
+              at(r1),
+              level + RAIL_TOP_M - 0.06,
+              level + RAIL_TOP_M,
+              0.09,
+            ),
+            color: wood,
+          });
+          walls.push({
+            ...along(at(r0), at(r1), level + 0.08, level + 0.12, 0.05),
+            color: rail,
+          });
+        }
         const count = Math.floor(len / 0.12);
         for (let i = 1; i < count; i++) {
           const f = i / count;
+          if (inGap(plen * f)) continue;
           walls.push({
             x: pa[0] + (pb[0] - pa[0]) * f,
             z: pa[1] + (pb[1] - pa[1]) * f,
@@ -2727,6 +2791,7 @@ function buildFloor(
               back: flight.back,
               rails: [railed(si, 0), railed(si, 1)] as [boolean, boolean],
               landing: flight.landing,
+              outdoor: flight.outdoor,
               railEnds: [railEnds(si, 0), railEnds(si, 1)] as [
                 [number, number],
                 [number, number],

@@ -196,6 +196,8 @@ export interface Item3d {
     rails: [boolean, boolean];
     landing?: number;
     railEnds?: [[number, number], [number, number]];
+    /** Out of doors (deck stairs): open treads on stringers. */
+    outdoor?: boolean;
   };
 }
 
