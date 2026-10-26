@@ -4107,17 +4107,68 @@ export class Floorplan3dView extends LitElement {
         !surface
           ? html`${this._num(localize("edit3d.height"), height, (v) => set({ height_cm: v && v > 0 ? v : null }), { unit: "cm", min: 1 })}
               ${
-                retaining
+                retaining && item.closed !== false
                   ? html`<label class="row">
                       <span>${localize("edit3d.wallFill")}</span>
                       <input
                         type="checkbox"
                         .checked=${item.fill === true}
-                        ?disabled=${item.closed === false || n < 3}
+                        ?disabled=${n < 3}
                         @change=${(e: Event) =>
                           set({ fill: (e.target as HTMLInputElement).checked })}
                       />
                     </label>`
+                  : nothing
+              }
+              ${
+                // An open wall holding soil on one side: how far back it
+                // slopes (aim_m; unset = none), and which side.
+                retaining && item.closed === false
+                  ? html`<label class="row">
+                        <span>${localize("edit3d.wallSoil")}</span>
+                        <input
+                          type="checkbox"
+                          .checked=${(item.aim_m ?? 0) > 0}
+                          @change=${(e: Event) =>
+                            set({
+                              aim_m: (e.target as HTMLInputElement).checked
+                                ? 2
+                                : null,
+                            })}
+                        />
+                      </label>
+                      ${
+                        (item.aim_m ?? 0) > 0
+                          ? html`${this._num(
+                                localize("edit3d.wallSoilSlope"),
+                                item.aim_m ?? 2,
+                                (v) =>
+                                  set({
+                                    aim_m: v && v >= 0.3 ? Math.min(v, 20) : 2,
+                                  }),
+                                { unit: "m", min: 0.3, step: 0.5 },
+                              )}
+                              <div class="buttons">
+                                <button
+                                  @click=${() =>
+                                    set({
+                                      points: [
+                                        ...(item.points ?? []),
+                                      ].reverse(),
+                                      ...(item.corners?.length
+                                        ? {
+                                            corners: [
+                                              ...item.corners,
+                                            ].reverse(),
+                                          }
+                                        : {}),
+                                    })}
+                                >
+                                  ${localize("edit3d.wallSoilSwap")}
+                                </button>
+                              </div>`
+                          : nothing
+                      }`
                   : nothing
               }
               ${

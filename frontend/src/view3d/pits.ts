@@ -225,6 +225,7 @@ export function edgeDistances(
 /** Outside a raised area but within the blend of its blended edges: how
  * far from them (else null). */
 export function blendDistance(r: Pit3d, x: number, z: number): number | null {
+  if (r.band) return bandDistance(r, x, z);
   if (!r.blend || r.blend <= 0 || !nearBox(r.points, x, z, r.blend))
     return null;
   const [, soft] = edgeDistances(r, x, z);
@@ -237,12 +238,68 @@ export function blendDistance(r: Pit3d, x: number, z: number): number | null {
  * bottom), and to nothing toward its sharp edges (as along a wall),
  * weighed by how near each is: a sharp drop only right at a sharp edge,
  * smooth everywhere else (round a wall's free end too). */
+/** How far a spot is from a line (open polyline), and how far along it
+ * that nearest point lies, and its whole length. */
+function alongLine(
+  line: Vec2[],
+  x: number,
+  z: number,
+): [number, number, number] {
+  let best = Infinity;
+  let at = 0;
+  let run = 0;
+  for (let k = 0; k + 1 < line.length; k++) {
+    const [ax, az] = line[k]!;
+    const [bx, bz] = line[k + 1]!;
+    const dx = bx - ax;
+    const dz = bz - az;
+    const ll = dx * dx + dz * dz;
+    const len = Math.sqrt(ll);
+    const t =
+      ll > 0
+        ? Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / ll))
+        : 0;
+    const d = Math.hypot(x - ax - dx * t, z - az - dz * t);
+    if (d < best) {
+      best = d;
+      at = run + t * len;
+    }
+    run += len;
+  }
+  return [best, at, run];
+}
+
+/** Soil a wall holds back, at a spot in its band: its full height at the
+ * wall, rolling down to nothing across the band (smootherstep: level at
+ * the wall's top, no crease at the foot), tapering off over the last
+ * metre to each free end of the wall. */
+export function bandRaise(r: Pit3d, x: number, z: number): number {
+  const b = r.blend ?? 0;
+  if (!r.band || b <= 0) return 0;
+  const [d, s, length] = alongLine(r.band.line, x, z);
+  if (d >= b) return 0;
+  const t = 1 - d / b;
+  const ease = t * t * t * (t * (t * 6 - 15) + 10);
+  const f = Math.min(1, b, length / 2);
+  const e = f > 0 ? Math.min(1, Math.min(s, length - s) / f) : 1;
+  return r.depth * ease * e * e * (3 - 2 * e);
+}
+
+/** Within a wall's soil band: how far from the wall (else null). */
+export function bandDistance(r: Pit3d, x: number, z: number): number | null {
+  if (!r.band || !nearBox(r.points, x, z, 0) || !inside(r.points, x, z))
+    return null;
+  return alongLine(r.band.line, x, z)[0];
+}
+
 export function raiseOf(
   r: Pit3d,
   x: number,
   z: number,
   inside: boolean = nearBox(r.points, x, z, 0) && pitDepthAt([r], x, z) > 0,
 ): number {
+  // A wall's soil: only within its band, nothing on the wall's far side.
+  if (r.band) return inside ? bandRaise(r, x, z) : 0;
   if (inside) return r.depth;
   if (!r.blend || r.blend <= 0 || !nearBox(r.points, x, z, r.blend)) return 0;
   const [hard, soft] = edgeDistances(r, x, z);

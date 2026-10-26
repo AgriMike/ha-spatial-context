@@ -1462,7 +1462,11 @@ export function siteModel(
     );
   // The raised areas reaching it, in its own frame.
   const localRaised = (raised ?? [])
-    .map((r) => ({ ...r, points: r.points.map(toLocal) }))
+    .map((r) => ({
+      ...r,
+      points: r.points.map(toLocal),
+      ...(r.band ? { band: { line: r.band.line.map(toLocal) } } : {}),
+    }))
     .filter(
       ({ points: p }) =>
         Math.max(...p.map((q) => q[0])) >= Math.min(...xs) &&

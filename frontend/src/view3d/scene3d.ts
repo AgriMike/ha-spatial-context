@@ -4411,6 +4411,39 @@ function floorAboveOf(
   };
 }
 
+/** The band of soil a wall along `line` (world, open) holds on its left
+ * as drawn, `blend` deep: the line, then the same line that far out
+ * (mitred at its bends), back. */
+function soilBand(
+  line: Vec2[],
+  blend: number,
+): { points: Vec2[]; blend: number; band: { line: Vec2[] } } | null {
+  const pts = line.filter(
+    (p, k) =>
+      k === 0 ||
+      Math.hypot(p[0] - line[k - 1]![0], p[1] - line[k - 1]![1]) > 1e-4,
+  );
+  const n = pts.length;
+  if (n < 2) return null;
+  const segN = pts.slice(1).map((b, k) => {
+    const a = pts[k]!;
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    return [-(b[1] - a[1]) / l, (b[0] - a[0]) / l] as Vec2;
+  });
+  const out = pts.map((p, k) => {
+    const nin = segN[Math.max(0, k - 1)]!;
+    const nout = segN[Math.min(n - 2, k)]!;
+    let mx = nin[0] + nout[0];
+    let mz = nin[1] + nout[1];
+    const ml = Math.hypot(mx, mz) || 1;
+    mx /= ml;
+    mz /= ml;
+    const reach = blend / Math.max(0.35, mx * nout[0] + mz * nout[1]);
+    return [p[0] + mx * reach, p[1] + mz * reach] as Vec2;
+  });
+  return { points: [...pts, ...out.reverse()], blend, band: { line: pts } };
+}
+
 /** The hillside the building stands on: grade on its high and low sides,
  * falling toward a compass bearing. Rooms whose floor sits below the high
  * side's grade are cut out of the ground, so a walk-out basement still
@@ -4500,7 +4533,21 @@ function terrain(
     const m = metersPerUnit(f.layout.scale);
     for (const item of f.layout.furniture) {
       const entry = catalogItem(item.kind);
-      if (!entry || (item.points?.length ?? 0) < 3) continue;
+      if (!entry || (item.points?.length ?? 0) < 2) continue;
+      // An open retaining wall holding back soil (its slope, stored as
+      // aim_m): on its left as drawn.
+      if (
+        isRetainingWall(entry) &&
+        item.closed === false &&
+        (item.aim_m ?? 0) > 0
+      ) {
+        const band = soilBand(worldOf(f, item).points, item.aim_m!);
+        const h =
+          (item.height_cm ?? Number(entry.opts["height"] ?? 60)) / 100 - 0.04;
+        if (band && h > 0) raised.push({ ...band, depth: h, id: item.id });
+        continue;
+      }
+      if ((item.points?.length ?? 0) < 3) continue;
       const site = entry.opts["site"];
       const filled =
         isRetainingWall(entry) && item.fill === true && item.closed !== false;

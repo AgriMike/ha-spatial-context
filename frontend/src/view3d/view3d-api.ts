@@ -351,6 +351,11 @@ export interface Pit3d {
   hard?: boolean[];
   /** The item it's from. */
   id?: string;
+  /** Soil a retaining wall holds back on one side: `points` is the band
+   * it covers (the wall's line and the same line `blend` out on that
+   * side); inside it the ground rises to `depth` at the wall and rolls
+   * back down to nothing across the band (see pits.ts bandRaise). */
+  band?: { line: Vec2[] };
 }
 
 /** One scan placed on a floor, in world terms. */
