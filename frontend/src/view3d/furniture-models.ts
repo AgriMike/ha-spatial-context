@@ -1531,6 +1531,161 @@ const range: Builder = (m, o, tint) => {
   if (!flag(o, "noBack")) m.box(W, 0.12, 0.04, 0, h, -D / 2 + 0.02, steel);
 };
 
+/** A pro-style round bar handle on two standoffs, along y (from `y0` up
+ * `len`) or across x (centred), its face plane at `z`. */
+function tubeHandle(
+  m: Model,
+  x: number,
+  y0: number,
+  z: number,
+  len: number,
+  steel: THREE.Material,
+  across = false,
+): void {
+  const r = 0.011;
+  const out = 0.045;
+  if (across) {
+    m.cyl(r, r, len, x, y0, z + out, steel, 14, "x");
+    for (const s of [-1, 1])
+      m.cyl(
+        0.008,
+        0.009,
+        out,
+        x + s * (len / 2 - 0.03),
+        y0,
+        z + out / 2,
+        steel,
+        10,
+        "z",
+      );
+  } else {
+    m.cyl(r, r, len, x, y0, z + out, steel, 14);
+    for (const s of [0.04, len - 0.04])
+      m.cyl(0.008, 0.009, out, x, y0 + s, z + out / 2, steel, 10, "z");
+  }
+}
+
+/** Beko's 36" four-door French-door fridge (front at +z): brushed steel,
+ * a pair of doors over a pair of lower freezer doors, round bar handles
+ * by the middle, a dark toe grille on levelling feet. */
+const bekoFridge: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const steel = mat(tint ?? "#c9cccf", 0.32, 0.7);
+  const bright = mat("#e3e6e8", 0.2, 0.9);
+  const dark = mat("#2a2b2d", 0.6);
+  const feet = 0.04;
+  const kick = 0.06;
+  m.box(W - 0.01, H - feet, D - 0.05, 0, feet, -0.025, steel);
+  m.box(W - 0.04, kick, 0.02, 0, feet, D / 2 - 0.05, dark);
+  for (const s of [-1, 1])
+    m.cyl(0.018, 0.018, feet, s * (W / 2 - 0.05), 0, D / 2 - 0.08, dark, 10);
+  const fz = D / 2 - 0.025;
+  const gap = 0.006;
+  const base = feet + kick;
+  const split = base + (H - base) * 0.4;
+  for (const s of [-1, 1]) {
+    const x = (s * W) / 4;
+    // Lower and upper doors, a hinge cap at the top outer corner.
+    m.box(W / 2 - gap, split - base - gap, 0.04, x, base, fz, steel);
+    m.box(W / 2 - gap, H - split - gap, 0.04, x, split + gap / 2, fz, steel);
+    m.box(0.05, 0.012, 0.04, s * (W / 2 - 0.04), H - 0.012, fz, bright);
+    // Handles by the middle.
+    const hx = s * 0.045;
+    tubeHandle(m, hx, split + 0.07, fz + 0.02, (H - split) * 0.7, bright);
+    tubeHandle(m, hx, base + 0.08, fz + 0.02, (split - base) * 0.62, bright);
+  }
+  // The badge.
+  m.box(0.07, 0.015, 0.003, W / 2 - 0.1, H - 0.08, fz + 0.021, dark);
+};
+
+/** Beko's 30" pro-style gas range (front at +z): stainless body on
+ * legs, four sealed burners under continuous cast-iron grates, six knobs
+ * on the control band, a big oven window, a bar handle. */
+const bekoRange: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const steel = mat(tint ?? "#c9cccf", 0.32, 0.7);
+  const bright = mat("#e3e6e8", 0.2, 0.9);
+  const black = mat("#1c1c1e", 0.5);
+  const glass = mat("#1e2226", 0.08, 0.3);
+  const legs = 0.07;
+  const top = H - 0.03;
+  // Legs, the body, a recessed kick between the front legs.
+  for (const sx of [-1, 1])
+    for (const sz of [-1, 1])
+      m.cyl(
+        0.02,
+        0.018,
+        legs,
+        sx * (W / 2 - 0.04),
+        0,
+        sz * (D / 2 - 0.06),
+        black,
+        12,
+      );
+  m.box(W, top - legs, D - 0.04, 0, legs, -0.02, steel);
+  const fz = D / 2 - 0.02;
+  // The cooktop: black enamel, burners, two cast-iron grates.
+  m.box(W - 0.02, 0.012, D - 0.06, 0, top, -0.02, black);
+  const grate = mat("#232325", 0.75, 0.2);
+  for (const sx of [-1, 1])
+    for (const sz of [-1, 1]) {
+      const x = (sx * W) / 4;
+      const z = -0.02 + (sz * (D - 0.06)) / 4;
+      m.cyl(0.05, 0.055, 0.02, x, top, z, mat("#3a3a3c", 0.4, 0.5), 20);
+      m.cyl(0.035, 0.035, 0.012, x, top + 0.02, z, black, 18);
+    }
+  const gy = top + 0.035;
+  for (const sx of [-1, 1]) {
+    const gx = (sx * W) / 4;
+    const gw = W / 2 - 0.02;
+    const gd = D - 0.08;
+    // The grate's frame and its fingers.
+    for (const sz of [-1, 1])
+      m.box(gw, 0.015, 0.012, gx, gy, -0.02 + sz * (gd / 2 - 0.006), grate);
+    for (const s of [-1, 1])
+      m.box(0.012, 0.015, gd, gx + s * (gw / 2 - 0.006), gy, -0.02, grate);
+    m.box(gw, 0.015, 0.012, gx, gy, -0.02, grate);
+    m.box(0.012, 0.015, gd, gx, gy, -0.02, grate);
+    for (const t of [-0.3, 0.3]) {
+      m.box(gw, 0.012, 0.01, gx, gy, -0.02 + t * gd, grate);
+      m.box(0.01, 0.012, gd, gx + t * gw, gy, -0.02, grate);
+    }
+  }
+  // A low back guard.
+  m.box(W, 0.07, 0.03, 0, top, -D / 2 + 0.015, steel);
+  // The control band and its knobs.
+  const band = top - 0.13;
+  m.box(W, 0.12, 0.02, 0, band, fz, steel);
+  const ky = band + 0.06;
+  const knobs = [-0.3, -0.21, -0.07, 0.02, 0.16, 0.25].map(
+    (k) => k * (W / 0.76),
+  );
+  for (const kx of knobs) {
+    m.cyl(0.024, 0.026, 0.03, kx, ky, fz + 0.025, bright, 18, "z");
+    m.cyl(0.006, 0.006, 0.006, kx, ky + 0.012, fz + 0.042, black, 6, "z");
+  }
+  m.cyl(
+    0.006,
+    0.006,
+    0.004,
+    -W / 2 + 0.05,
+    ky,
+    fz + 0.012,
+    mat("#ff7a2a", 0.4, 0, { glow: "#ff7a2a", glowLevel: 0.2 }),
+    10,
+    "z",
+  );
+  // The oven door: steel round a big dark window, the handle above.
+  const dy = legs + 0.05;
+  const dh = band - 0.012 - dy;
+  m.box(W - 0.01, dh, 0.03, 0, dy, fz, steel);
+  m.box(W * 0.78, dh * 0.5, 0.004, 0, dy + dh * 0.2, fz + 0.016, glass);
+  tubeHandle(m, 0, dy + dh - 0.06, fz + 0.015, W * 0.82, bright, true);
+  m.box(0.05, 0.012, 0.003, 0, dy + 0.06, fz + 0.016, black);
+  // The kick under the door, between the legs.
+  m.box(W - 0.06, 0.05, 0.02, 0, legs, fz - 0.04, black);
+};
+
 const hood: Builder = (m, _o, tint) => {
   const { W, D, H } = m;
   const steel = mat(tint ?? C.steel, 0.35, 0.6);
@@ -2583,6 +2738,8 @@ const BY_KIND: [RegExp, Builder][] = [
   [/wheelie_bin|^garbage_bin$|^garbage_cart|^recycling_cart/, wheelieBin],
   [/^tv_|_tv$|^tv\d/, tv],
   [/^shaker_/, shaker],
+  [/^fridge_beko/, bekoFridge],
+  [/^range_beko/, bekoRange],
   [/^bed_nera/, neraBed],
   [/^media_nera/, neraMedia],
   [/^sofa_ceni|^chair_ceni/, ceniSofa],

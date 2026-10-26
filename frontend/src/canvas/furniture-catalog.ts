@@ -544,6 +544,14 @@ const KITCHEN: Row[] = [
   ["range_50", "Range 50 cm", 50, 60, "range", { burners: 4 }],
   ["range_60", "Range 60 cm", 60, 64, "range", { burners: 4 }],
   ["range_76", "Range 76 cm (30 in)", 76, 66, "range", { burners: 4 }],
+  [
+    "range_beko_30_pro",
+    'Beko 30" pro-style gas range',
+    76,
+    69,
+    "range",
+    { burners: 4, h3d: 0.93 },
+  ],
   ["range_90", "Range 90 cm", 90, 66, "range", { burners: 5 }],
   ["range_91_six", "Range 91 cm, 6 burners", 91, 68, "range", { burners: 6 }],
   [
@@ -609,6 +617,14 @@ const KITCHEN: Row[] = [
   ["fridge_top_freezer", "Fridge (top freezer)", 70, 75, "fridge"],
   ["fridge_bottom_freezer", "Fridge (bottom freezer)", 76, 80, "fridge"],
   ["fridge_french_door", "French-door fridge", 91, 86, "fridge", { doors: 2 }],
+  [
+    "fridge_beko_36_4door",
+    'Beko 36" 4-door French-door fridge',
+    91,
+    75,
+    "fridge",
+    { doors: 2, h3d: 1.78 },
+  ],
   [
     "fridge_side_by_side",
     "Side-by-side fridge",
