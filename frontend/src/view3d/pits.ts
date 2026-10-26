@@ -137,24 +137,107 @@ export function intersectPit(poly: Vec2[], points: Vec2[]): Vec2[][] {
   return out;
 }
 
-/** How far the ground is raised at a spot (0 outside every raised area). */
+/** How far a spot is from an outline's nearest sharp edge and its
+ * nearest blended one (edge k runs from point k to the next). */
+export function edgeDistances(
+  r: Pit3d,
+  x: number,
+  z: number,
+): [number, number] {
+  let hard = Infinity;
+  let soft = Infinity;
+  const pts = r.points;
+  for (let k = 0; k < pts.length; k++) {
+    const [ax, az] = pts[k]!;
+    const [bx, bz] = pts[(k + 1) % pts.length]!;
+    const dx = bx - ax;
+    const dz = bz - az;
+    const ll = dx * dx + dz * dz;
+    const t =
+      ll > 0
+        ? Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / ll))
+        : 0;
+    const d = Math.hypot(x - ax - dx * t, z - az - dz * t);
+    if (r.hard?.[k]) hard = Math.min(hard, d);
+    else soft = Math.min(soft, d);
+  }
+  return [hard, soft];
+}
+
+/** Outside a raised area but within the blend of its blended edges: how
+ * far from them (else null). */
+export function blendDistance(r: Pit3d, x: number, z: number): number | null {
+  if (!r.blend || r.blend <= 0) return null;
+  const [, soft] = edgeDistances(r, x, z);
+  return soft < r.blend ? soft : null;
+}
+
+/** How far a raised area lifts the ground at a spot: all of its height
+ * inside it (`inside`, else as the spot lies). Outside, it eases down
+ * across its blend from its blended edges (smootherstep, no crease top or
+ * bottom), and to nothing toward its sharp edges (as along a wall),
+ * weighed by how near each is: a sharp drop only right at a sharp edge,
+ * smooth everywhere else (round a wall's free end too). */
+export function raiseOf(
+  r: Pit3d,
+  x: number,
+  z: number,
+  inside: boolean = pitDepthAt([r], x, z) > 0,
+): number {
+  if (inside) return r.depth;
+  if (!r.blend || r.blend <= 0) return 0;
+  const [hard, soft] = edgeDistances(r, x, z);
+  if (soft >= r.blend) return 0;
+  const t = 1 - soft / r.blend;
+  const ease = t * t * t * (t * (t * 6 - 15) + 10);
+  // Toward a sharp edge, down to nothing within 15 cm (under the wall
+  // along it, mostly); the step this leaves along a blended edge right by
+  // a sharp one gets an earth face (see site-models raisedArea).
+  const k = Number.isFinite(hard)
+    ? Math.min(1, hard / Math.min(r.blend, 0.15))
+    : 1;
+  const share = k * k * (3 - 2 * k);
+  return r.depth * ease * share;
+}
+
+/** How far the ground is raised at a spot (0 outside every raised area
+ * and its blends). */
 export function raiseAt(
   raised: Pit3d[] | undefined,
   x: number,
   z: number,
 ): number {
-  return pitDepthAt(raised, x, z);
+  if (!raised) return 0;
+  let most = 0;
+  for (const r of raised) most = Math.max(most, raiseOf(r, x, z));
+  return most;
 }
 
-/** What's left of a polygon, cut along every raised area's outline it
- * reaches: pieces, each with how far up it's raised. */
+/** raiseAt for a point of a piece known to lie inside the raised areas
+ * `inside` (by index) and outside the rest: a point on a sharp edge
+ * takes its piece's side. */
+export function raiseFor(
+  raised: Pit3d[],
+  x: number,
+  z: number,
+  inside: number[],
+): number {
+  let most = 0;
+  raised.forEach((r, k) => {
+    most = Math.max(most, raiseOf(r, x, z, inside.includes(k)));
+  });
+  return most;
+}
+
+/** A polygon cut along every raised area's outline it reaches: pieces,
+ * each with the raised areas (by index) it lies inside. */
 export function splitRaised(
   poly: Vec2[],
   raised: Pit3d[],
-  up = 0,
-): { points: Vec2[]; up: number }[] {
-  let pieces = [{ points: poly, up }];
-  for (const r of raised) {
+  inside: number[] = [],
+): { points: Vec2[]; inside: number[] }[] {
+  let pieces = [{ points: poly, inside }];
+  raised.forEach((r, k) => {
     const xs = poly.map((p) => p[0]);
     const zs = poly.map((p) => p[1]);
     const rx = r.points.map((p) => p[0]);
@@ -165,14 +248,17 @@ export function splitRaised(
       Math.max(...zs) < Math.min(...rz) ||
       Math.min(...zs) > Math.max(...rz)
     )
-      continue;
+      return;
     pieces = pieces.flatMap((p) => [
-      ...subtractPit(p.points, r.points).map((q) => ({ points: q, up: p.up })),
+      ...subtractPit(p.points, r.points).map((q) => ({
+        points: q,
+        inside: p.inside,
+      })),
       ...intersectPit(p.points, r.points).map((q) => ({
         points: q,
-        up: p.up + r.depth,
+        inside: [...p.inside, k],
       })),
     ]);
-  }
+  });
   return pieces;
 }

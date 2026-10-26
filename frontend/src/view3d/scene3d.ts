@@ -4457,6 +4457,45 @@ function terrain(
   // in the world.
   const pits: Pit3d[] = [];
   const raised: Pit3d[] = [];
+  // Every retaining wall's line in the world: a raised area's edge along
+  // one stays sharp, the rest blend.
+  const walls: [Vec2, Vec2][] = [];
+  const worldOf = (f: SceneInput["floors"][number], item: FurnitureItem) => {
+    const entry = catalogItem(item.kind)!;
+    const m = metersPerUnit(f.layout.scale);
+    const flip = !!item.mirrored !== !!entry.flip;
+    const spec = siteSpec(item, entry, flip, null);
+    const a = (-item.rotation_deg * Math.PI) / 180;
+    const [c, s] = [Math.cos(a), Math.sin(a)];
+    const points = spec.points.map(([x, z]): Vec2 => [
+      item.x * m + x * c + z * s,
+      item.y * m - x * s + z * c,
+    ]);
+    return { points, closed: spec.closed };
+  };
+  for (const f of input.floors)
+    for (const item of f.layout.furniture) {
+      const entry = catalogItem(item.kind);
+      if (!isRetainingWall(entry) || (item.points?.length ?? 0) < 2) continue;
+      const { points, closed } = worldOf(f, item);
+      for (let k = 0; k + 1 < points.length + (closed ? 1 : 0); k++)
+        walls.push([points[k]!, points[(k + 1) % points.length]!]);
+    }
+  const alongWall = (a: Vec2, b: Vec2) => {
+    let near = 0;
+    for (let k = 0; k <= 4; k++) {
+      const x = a[0] + ((b[0] - a[0]) * k) / 4;
+      const z = a[1] + ((b[1] - a[1]) * k) / 4;
+      if (
+        walls.some(
+          ([p, q]) =>
+            pointToSegmentDistance(x, z, p[0], p[1], q[0], q[1]) < 0.4,
+        )
+      )
+        near++;
+    }
+    return near >= 3;
+  };
   for (const f of input.floors) {
     const m = metersPerUnit(f.layout.scale);
     for (const item of f.layout.furniture) {
@@ -4475,9 +4514,24 @@ function terrain(
         item.y * m - x * s + z * c,
       ]);
       if (site === "dig") pits.push({ points, depth: digDepth(item, entry) });
-      else if (site === "raise")
-        raised.push({ points, depth: digDepth(item, entry) });
-      else {
+      else if (site === "raise") {
+        // Its blend (stored as aim_m): edges not along a retaining wall
+        // ease down to the ground round it over that distance.
+        const blend = item.aim_m ?? 0;
+        raised.push({
+          points,
+          depth: digDepth(item, entry),
+          id: item.id,
+          ...(blend > 0
+            ? {
+                blend,
+                hard: points.map((p, k) =>
+                  alongWall(p, points[(k + 1) % points.length]!),
+                ),
+              }
+            : {}),
+        });
+      } else {
         // Soil up to just under the wall's cap.
         const h =
           (item.height_cm ?? Number(entry.opts["height"] ?? 60)) / 100 - 0.04;

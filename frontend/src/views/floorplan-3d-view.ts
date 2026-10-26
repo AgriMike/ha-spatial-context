@@ -4072,6 +4072,16 @@ export class Floorplan3dView extends LitElement {
       )}
       ${this._color(localize("edit3d.color"), item.color, (v) => set({ color: v }))}
       ${
+        entry?.opts["site"] === "raise"
+          ? this._num(
+              localize("edit3d.raiseBlend"),
+              item.aim_m ?? 0,
+              (v) => set({ aim_m: v && v >= 0.1 ? Math.min(v, 40) : null }),
+              { unit: "m", min: 0, step: 0.5 },
+            )
+          : nothing
+      }
+      ${
         entry?.opts["site"] === "dig" || entry?.opts["site"] === "raise"
           ? this._num(
               localize(

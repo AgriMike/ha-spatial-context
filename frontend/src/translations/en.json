@@ -777,6 +777,7 @@
     "wallDepth": "Depth below ground",
     "digDepth": "Depth (straight down)",
     "raiseHeight": "Raise (straight up)",
+    "raiseBlend": "Blend (edges not along a retaining wall)",
     "wallFill": "Filled to its top (a closed wall: raised bed)",
     "closedLine": "Closed loop",
     "curveAll": "Curve (all corners)",

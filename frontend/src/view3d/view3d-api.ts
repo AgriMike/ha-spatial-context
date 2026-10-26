@@ -344,6 +344,13 @@ export interface Terrain3d {
 export interface Pit3d {
   points: Vec2[];
   depth: number;
+  /** A raised area: how far (metres) its edges ease down to the ground
+   * round it, but for those marked `hard` (edge k runs from point k to
+   * the next; along a retaining wall). */
+  blend?: number;
+  hard?: boolean[];
+  /** The item it's from. */
+  id?: string;
 }
 
 /** One scan placed on a floor, in world terms. */

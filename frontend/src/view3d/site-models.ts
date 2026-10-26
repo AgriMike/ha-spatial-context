@@ -10,7 +10,15 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import { raiseAt, splitRaised, subtractPit } from "./pits";
+import {
+  blendDistance,
+  edgeDistances,
+  raiseAt,
+  raiseOf,
+  raiseFor,
+  splitRaised,
+  subtractPit,
+} from "./pits";
 import type { Item3d, Pit3d, Vec2 } from "./view3d-api";
 
 type Ground = (x: number, z: number) => number;
@@ -711,7 +719,17 @@ function surface(
   };
   /** The ground's own normal at a point (smooth shading over curves),
    * pushed onto `out`. */
-  const pushSlopeNormal = (out: number[], x: number, z: number) => {
+  const blended = raised.some((r) => r.blend);
+  /** How far raised areas lift a point of a piece (inside those `inside`,
+   * by index). */
+  const upFor = (x: number, z: number, inside: number[]) =>
+    raised.length ? raiseFor(raised, x, z, inside) : 0;
+  const pushSlopeNormal = (
+    out: number[],
+    x: number,
+    z: number,
+    inside: number[] = [],
+  ) => {
     const k = slot(x, z);
     let gx = k < 0 ? NaN : slopeX![k]!;
     let gz = k < 0 ? NaN : slopeZ![k]!;
@@ -723,6 +741,13 @@ function surface(
         slopeX![k] = gx;
         slopeZ![k] = gz;
       }
+    }
+    if (blended) {
+      // A raised area's blend slopes it too (on the piece's own side of
+      // a sharp edge).
+      const e = 0.1;
+      gx += (upFor(x + e, z, inside) - upFor(x - e, z, inside)) / (2 * e);
+      gz += (upFor(x, z + e, inside) - upFor(x, z - e, inside)) / (2 * e);
     }
     const l = Math.hypot(gx, 1, gz);
     out.push(-gx / l, 1 / l, -gz / l);
@@ -745,8 +770,37 @@ function surface(
     const pos: number[] = [];
     const uv: number[] = [];
     const nor: number[] = [];
-    const emit = (p: Vec2, up = 0) => {
-      pos.push(p[0], top(p[0], p[1]) + up, p[1]);
+    /** Lifted clear of the terrain over a blend's curve, as over the
+     * grading's (see extraLift): smootherstep's sharpest bend is about
+     * 5.8 times its height over its run squared. */
+    const blendLift = (x: number, z: number) => {
+      let most = 0;
+      for (const r of raised) {
+        const d = blendDistance(r, x, z);
+        if (d === null) continue;
+        // Easing off across the blend (both sides of the edge alike), so
+        // the lift has no edge of its own.
+        const t = 1 - d / r.blend!;
+        const ease = t * t * (3 - 2 * t);
+        most = Math.max(
+          most,
+          ((5.8 * r.depth * SPAN) / (r.blend! * r.blend!)) * ease,
+        );
+        // Where it wraps round a wall's end, the ground climbs steeply
+        // out from under the wall: a little more, near the wall.
+        const [hard] = edgeDistances(r, x, z);
+        if (hard < 0.6 && !pointIn(r.points, x, z)) {
+          const s = 1 - d / r.blend!;
+          const v = r.depth * s * s * s * (s * (s * 6 - 15) + 10);
+          most = Math.max(most, Math.min(0.08, 0.25 * v * (1 - hard / 0.6)));
+        }
+      }
+      return Math.min(0.08, most);
+    };
+    const emit = (p: Vec2, inside: number[] = []) => {
+      const up = raised.length ? upFor(p[0], p[1], inside) : 0;
+      const lift = blended ? blendLift(p[0], p[1]) : 0;
+      pos.push(p[0], top(p[0], p[1]) + up + lift, p[1]);
       const [wx, wz] = toWorld(p[0], p[1]);
       uv.push(wx / spec.tile, wz / spec.tile);
     };
@@ -778,20 +832,20 @@ function surface(
         // And along any raised area's: the piece inside it lifted.
         const lifted = raised.length
           ? pieces.flatMap((piece) => splitRaised(piece, raised))
-          : pieces.map((points) => ({ points, up: 0 }));
-        for (const { points: piece, up } of lifted)
+          : pieces.map((points) => ({ points, inside: [] as number[] }));
+        for (const { points: piece, inside } of lifted)
           for (let f = 1; f + 1 < piece.length; f++) {
             const [a, b, c] = [piece[0]!, piece[f]!, piece[f + 1]!];
             // Facing up: counter-clockwise in (x, z) is clockwise seen from
             // above (+y) — so emit a, c, b.
-            emit(a, up);
-            emit(c, up);
-            emit(b, up);
+            emit(a, inside);
+            emit(c, inside);
+            emit(b, inside);
             if (fine) {
               // Smooth over the curves, as the terrain is shaded.
-              pushSlopeNormal(nor, a[0], a[1]);
-              pushSlopeNormal(nor, c[0], c[1]);
-              pushSlopeNormal(nor, b[0], b[1]);
+              pushSlopeNormal(nor, a[0], a[1], inside);
+              pushSlopeNormal(nor, c[0], c[1], inside);
+              pushSlopeNormal(nor, b[0], b[1], inside);
             } else {
               // One plane: its face's own.
               const k = pos.length - 9;
@@ -1221,10 +1275,12 @@ function earthFaces(
   low: (x: number, z: number) => number,
   high: (x: number, z: number) => number,
   inward: boolean,
+  only: ((edge: number) => boolean) | null = null,
 ): THREE.BufferGeometry {
   const side = (polyArea(outline) > 0 ? 1 : -1) * (inward ? 1 : -1);
   const wall: number[] = [];
   for (let i = 0; i < outline.length; i++) {
+    if (only && !only(i)) continue;
     const p = outline[i]!;
     const q = outline[(i + 1) % outline.length]!;
     const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
@@ -1248,6 +1304,12 @@ function earthFaces(
         [b[0], high(b[0], b[1]), b[1]],
         [a[0], high(a[0], a[1]), a[1]],
       ];
+      // No face where there's no step to cover.
+      if (
+        quad[3]![1] - quad[0]![1] < 0.025 &&
+        quad[2]![1] - quad[1]![1] < 0.025
+      )
+        continue;
       const [u, v, w] = [quad[0]!, quad[1]!, quad[2]!];
       const cx = (v[1] - u[1]) * (w[2] - u[2]) - (v[2] - u[2]) * (w[1] - u[1]);
       const cz = (v[0] - u[0]) * (w[1] - u[1]) - (v[1] - u[1]) * (w[0] - u[0]);
@@ -1265,7 +1327,11 @@ function earthFaces(
 /** A raised area: the ground lifted straight up inside its outline (the
  * terrain and lawns are lifted there; see pits.ts), with an earth face
  * round its edge from the ground up to it. */
-function raisedArea(item: Item3d, ground: Ground): THREE.Group {
+function raisedArea(
+  item: Item3d,
+  ground: Ground,
+  own: Pit3d | null,
+): THREE.Group {
   const site = item.site!;
   const up = site.dig ?? 0.5;
   const parts = new Parts();
@@ -1273,8 +1339,10 @@ function raisedArea(item: Item3d, ground: Ground): THREE.Group {
   parts.add(
     earthFaces(
       site.points,
-      (x, z) => ground(x, z) - 0.02,
-      // Up past a lawn's lift, so no seam shows at the rim.
+      // From the ground just outside it (up its blend, where it blends;
+      // see raiseOf) ...
+      (x, z) => ground(x, z) + (own ? raiseOf(own, x, z, false) : 0) - 0.02,
+      // ... up to its top, past a lawn's lift so no seam shows at the rim.
       (x, z) => ground(x, z) + up + 0.02,
       false,
     ),
@@ -1340,7 +1408,7 @@ export function siteModel(
     return ground(wx, wz) - item.y0;
   };
   if (site.surface === "dig") return dig(item, local);
-  if (site.surface === "raise") return raisedArea(item, local);
+
   // The dug-out areas reaching it, in its own frame.
   const toLocal = ([wx, wz]: Vec2): Vec2 => {
     const dx = wx - item.x;
@@ -1363,13 +1431,19 @@ export function siteModel(
     );
   // The raised areas reaching it, in its own frame.
   const localRaised = (raised ?? [])
-    .map((r) => ({ points: r.points.map(toLocal), depth: r.depth }))
+    .map((r) => ({ ...r, points: r.points.map(toLocal) }))
     .filter(
       ({ points: p }) =>
         Math.max(...p.map((q) => q[0])) >= Math.min(...xs) &&
         Math.min(...p.map((q) => q[0])) <= Math.max(...xs) &&
         Math.max(...p.map((q) => q[1])) >= Math.min(...zs) &&
         Math.min(...p.map((q) => q[1])) <= Math.max(...zs),
+    );
+  if (site.surface === "raise")
+    return raisedArea(
+      item,
+      local,
+      localRaised.find((r) => r.id === item.id) ?? null,
     );
   if (site.surface)
     return surface(

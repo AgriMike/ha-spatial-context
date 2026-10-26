@@ -7,7 +7,13 @@ import { counterModel, furnitureModel } from "./furniture-models";
 import { outdoorModel } from "./outdoor-models";
 import { siteModel } from "./site-models";
 import { gradeAt } from "./ground-grid";
-import { pitDepthAt, raiseAt, splitRaised, subtractPit } from "./pits";
+import {
+  intersectPit,
+  pitDepthAt,
+  raiseAt,
+  raiseFor,
+  subtractPit,
+} from "./pits";
 import type {
   Box3d,
   EditHit,
@@ -1087,7 +1093,20 @@ function terrainBends(
     terrainFold(t, x1, z0) !== f ||
     terrainFold(t, x0, z1) !== f ||
     terrainFold(t, x1, z1) !== f ||
-    terrainGraded(t, x0, x1, z0, z1)
+    terrainGraded(t, x0, x1, z0, z1) ||
+    // A raised area's blended slopes.
+    (t.raised ?? []).some((r) => {
+      if (!r.blend) return false;
+      const b = r.blend;
+      const px = r.points.map((p) => p[0]);
+      const pz = r.points.map((p) => p[1]);
+      return (
+        x1 >= Math.min(...px) - b &&
+        x0 <= Math.max(...px) + b &&
+        z1 >= Math.min(...pz) - b &&
+        z0 <= Math.max(...pz) + b
+      );
+    })
   );
 }
 
@@ -1165,7 +1184,7 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
   }
   // Dug-out areas: a cell wholly inside one is a hole; one its outline
   // crosses is cut along it exactly (what's left of it, in pieces).
-  const cutCells = new Map<number, { points: Vec2[]; up: number }[]>();
+  const cutCells = new Map<number, { points: Vec2[]; inside: number[] }[]>();
   const firstAfter = (lines: number[], v: number) => {
     let k = 0;
     while (k < lines.length - 1 && lines[k + 1]! <= v) k++;
@@ -1191,13 +1210,13 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
               [xb, zb],
               [xa, zb],
             ] as Vec2[],
-            up: 0,
+            inside: [] as number[],
           },
         ];
         const left = was.flatMap((piece) =>
           subtractPit(piece.points, pit.points).map((points) => ({
             points,
-            up: piece.up,
+            inside: piece.inside,
           })),
         );
         if (!left.length) {
@@ -1217,7 +1236,7 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
   }
   // Raised areas: a cell one's outline crosses is split along it, the
   // piece inside raised.
-  for (const r of t.raised ?? []) {
+  (t.raised ?? []).forEach((r, ri) => {
     const px = r.points.map((p) => p[0]);
     const pz = r.points.map((p) => p[1]);
     const i0 = firstAfter(xs, Math.min(...px));
@@ -1239,15 +1258,24 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
                 [xb, zb],
                 [xa, zb],
               ] as Vec2[],
-              up: 0,
+              inside: [] as number[],
             },
           ]
-        ).flatMap((p) => splitRaised(p.points, [r], p.up));
+        ).flatMap((p) => [
+          ...subtractPit(p.points, r.points).map((points) => ({
+            points,
+            inside: p.inside,
+          })),
+          ...intersectPit(p.points, r.points).map((points) => ({
+            points,
+            inside: [...p.inside, ri],
+          })),
+        ]);
         // Wholly in or out, and not cut already: as it was.
         if (!was && pieces.length <= 1) continue;
         cutCells.set(k, pieces);
       }
-  }
+  });
   // Blocks of B by B cells where the ground is one plane (no grading, no
   // fold of the hillside, no hole), one cell round them included so their
   // edges' normals are the plane's too: each drawn as a few big
@@ -1418,12 +1446,15 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
   const extraIndex: number[] = [];
   const e = 0.1;
   for (const pieces of cutCells.values())
-    for (const { points: piece, up } of pieces) {
+    for (const { points: piece, inside } of pieces) {
       const first = n + extraPos.length / 3;
+      // Its own side of a sharp edge.
+      const at = (x: number, z: number) =>
+        base(x, z) + raiseFor(t.raised ?? [], x, z, inside);
       for (const [x, z] of piece) {
-        extraPos.push(x, base(x, z) + up, z);
-        const gx = (base(x + e, z) - base(x - e, z)) / (2 * e);
-        const gz = (base(x, z + e) - base(x, z - e)) / (2 * e);
+        extraPos.push(x, at(x, z), z);
+        const gx = (at(x + e, z) - at(x - e, z)) / (2 * e);
+        const gz = (at(x, z + e) - at(x, z - e)) / (2 * e);
         const l = Math.hypot(gx, 1, gz);
         extraNor.push(-gx / l, 1 / l, -gz / l);
       }
