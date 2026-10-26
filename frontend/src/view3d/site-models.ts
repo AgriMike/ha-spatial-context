@@ -884,11 +884,6 @@ function surface(
           0.85,
         );
       });
-    } else if (kind === "mulch") {
-      scatter(1.2, (x, z) => {
-        if (rand() < 0.5)
-          parts.blob(x, top(x, z) + 0.18, z, 0.22, mat("#5e8c42", 1), 0.8);
-      });
     } else if (kind === "rock") {
       scatter(0.5, (x, z) => {
         if (rand() < 0.6)
