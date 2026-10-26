@@ -182,6 +182,8 @@ export interface Item3d {
     thick: number;
     /** How far a retaining wall goes below the ground (metres). */
     depth?: number;
+    /** A dug-out area's depth (metres; its `surface` is "dig"). */
+    dig?: number;
     tint: string | null;
   };
   /** A free-form outline tall enough to be a counter: drawn as one. */
@@ -328,6 +330,14 @@ export interface Terrain3d {
    * footprint it leaves alone (the house stands on its foundation). */
   grid?: GroundGrid | null;
   cover?: Vec2[][];
+  /** Dug-out areas (see pits.ts): the ground lowered straight down. */
+  pits?: Pit3d[];
+}
+
+/** A dug-out area: its outline (x, z, metres, world) and how deep. */
+export interface Pit3d {
+  points: Vec2[];
+  depth: number;
 }
 
 /** One scan placed on a floor, in world terms. */

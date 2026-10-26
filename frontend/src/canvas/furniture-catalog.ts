@@ -3130,6 +3130,14 @@ const SITE: Row[] = [
     { site: "rock", color: "#9e9e9e", fill: true },
   ],
   [
+    "site_dig",
+    "Dug-out area (straight down)",
+    300,
+    300,
+    "shapeFreeform",
+    { site: "dig", height: 50, color: "#7a6450", fill: true },
+  ],
+  [
     "site_fence_privacy",
     "Privacy fence (wood)",
     400,

@@ -10,7 +10,8 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import type { Item3d, Vec2 } from "./view3d-api";
+import { subtractPit } from "./pits";
+import type { Item3d, Pit3d, Vec2 } from "./view3d-api";
 
 type Ground = (x: number, z: number) => number;
 
@@ -595,6 +596,7 @@ function surface(
   toWorld: (x: number, z: number) => Vec2,
   cut: ((x: number, z: number) => boolean) | null = null,
   bends: Bends | null = null,
+  pits: Vec2[][] = [],
 ): THREE.Group {
   const site = item.site!;
   const spec = SURFACES[kind] ?? SURFACES["concrete"]!;
@@ -726,11 +728,14 @@ function surface(
   };
   /** Where the ground is dug out for the house (a walk-out's lower level,
    * a garage a step down): no surface there, or it'd cover their floors. */
-  const dugOut = (x: number, z: number) => {
+  const inHole = (x: number, z: number) => {
     if (!cut) return false;
     const [wx, wz] = toWorld(x, z);
     return cut(wx, wz);
   };
+  /** In the house's dug-out, or in a dug-out area. */
+  const dugOut = (x: number, z: number) =>
+    inHole(x, z) || pits.some((p) => pointIn(p, x, z));
   let picked: {
     material: THREE.Material;
     rows: { z0: number; cell: number; starts: number[] };
@@ -752,35 +757,53 @@ function surface(
     for (const row of cells.rows) {
       starts.push(pos.length / 9);
       for (const { tri, fine } of row) {
-        const [a, b, c] = tri;
-        if (dugOut((a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3))
+        const [a0, b0, c0] = tri;
+        if (inHole((a0[0] + b0[0] + c0[0]) / 3, (a0[1] + b0[1] + c0[1]) / 3))
           continue;
-        // Facing up: counter-clockwise in (x, z) is clockwise seen from
-        // above (+y) — so emit a, c, b.
-        emit(a);
-        emit(c);
-        emit(b);
-        if (fine) {
-          // Smooth over the curves, as the terrain is shaded.
-          pushSlopeNormal(nor, a[0], a[1]);
-          pushSlopeNormal(nor, c[0], c[1]);
-          pushSlopeNormal(nor, b[0], b[1]);
-        } else {
-          // One plane: its face's own.
-          const k = pos.length - 9;
-          u.set(
-            pos[k + 3]! - pos[k]!,
-            pos[k + 4]! - pos[k + 1]!,
-            pos[k + 5]! - pos[k + 2]!,
-          );
-          w.set(
-            pos[k + 6]! - pos[k]!,
-            pos[k + 7]! - pos[k + 1]!,
-            pos[k + 8]! - pos[k + 2]!,
-          );
-          n.crossVectors(u, w).normalize();
-          for (let q = 0; q < 3; q++) nor.push(n.x, n.y, n.z);
+        // Cut exactly along any dug-out area's outline it reaches.
+        let pieces: Vec2[][] = [tri];
+        for (const p of pits) {
+          const xs3 = [a0[0], b0[0], c0[0]];
+          const zs3 = [a0[1], b0[1], c0[1]];
+          if (
+            Math.max(...xs3) < Math.min(...p.map((q) => q[0])) ||
+            Math.min(...xs3) > Math.max(...p.map((q) => q[0])) ||
+            Math.max(...zs3) < Math.min(...p.map((q) => q[1])) ||
+            Math.min(...zs3) > Math.max(...p.map((q) => q[1]))
+          )
+            continue;
+          pieces = pieces.flatMap((piece) => subtractPit(piece, p));
         }
+        for (const piece of pieces)
+          for (let f = 1; f + 1 < piece.length; f++) {
+            const [a, b, c] = [piece[0]!, piece[f]!, piece[f + 1]!];
+            // Facing up: counter-clockwise in (x, z) is clockwise seen from
+            // above (+y) — so emit a, c, b.
+            emit(a);
+            emit(c);
+            emit(b);
+            if (fine) {
+              // Smooth over the curves, as the terrain is shaded.
+              pushSlopeNormal(nor, a[0], a[1]);
+              pushSlopeNormal(nor, c[0], c[1]);
+              pushSlopeNormal(nor, b[0], b[1]);
+            } else {
+              // One plane: its face's own.
+              const k = pos.length - 9;
+              u.set(
+                pos[k + 3]! - pos[k]!,
+                pos[k + 4]! - pos[k + 1]!,
+                pos[k + 5]! - pos[k + 2]!,
+              );
+              w.set(
+                pos[k + 6]! - pos[k]!,
+                pos[k + 7]! - pos[k + 1]!,
+                pos[k + 8]! - pos[k + 2]!,
+              );
+              n.crossVectors(u, w).normalize();
+              for (let q = 0; q < 3; q++) nor.push(n.x, n.y, n.z);
+            }
+          }
       }
     }
     starts.push(pos.length / 9);
@@ -1183,6 +1206,75 @@ function fence(
   return parts.group();
 }
 
+/** A dug-out area: the ground lowered straight down inside its outline
+ * (the terrain and lawns are cut along it; see pits.ts), with earth walls
+ * and a floor following the ground's slope `depth` below it. */
+function dig(item: Item3d, ground: Ground): THREE.Group {
+  const site = item.site!;
+  const depth = site.dig ?? 0.5;
+  const outline = site.points;
+  const parts = new Parts();
+  if (outline.length < 3) return parts.group();
+  const floorAt = (x: number, z: number) => ground(x, z) - depth;
+  // The floor, cut as a surface is so it follows the ground.
+  const pos: number[] = [];
+  for (const row of cellTriangles(outline, SURFACE_CELL_M).rows)
+    for (const { tri } of row) {
+      const [a, b, c] = tri;
+      for (const p of [a, c, b]) pos.push(p[0], floorAt(p[0], p[1]), p[1]);
+    }
+  const floor = new THREE.BufferGeometry();
+  floor.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  floor.computeVertexNormals();
+  parts.add(floor, mat(site.tint ?? "#7a6450", 1));
+  // The walls, facing in, from the ground's edge straight down.
+  const inward = polyArea(outline) > 0 ? 1 : -1;
+  const wall: number[] = [];
+  for (let i = 0; i < outline.length; i++) {
+    const p = outline[i]!;
+    const q = outline[(i + 1) % outline.length]!;
+    const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    if (len < 1e-4) continue;
+    // Its inward side: left of the edge for a counter-clockwise outline.
+    const nx = (-(q[1] - p[1]) / len) * inward;
+    const nz = ((q[0] - p[0]) / len) * inward;
+    const n = Math.max(1, Math.ceil(len / 0.3));
+    for (let s = 0; s < n; s++) {
+      const a: Vec2 = [
+        p[0] + ((q[0] - p[0]) * s) / n,
+        p[1] + ((q[1] - p[1]) * s) / n,
+      ];
+      const b: Vec2 = [
+        p[0] + ((q[0] - p[0]) * (s + 1)) / n,
+        p[1] + ((q[1] - p[1]) * (s + 1)) / n,
+      ];
+      // Up past a lawn's lift too, so no seam shows at the rim.
+      const ta = ground(a[0], a[1]) + 0.02;
+      const tb = ground(b[0], b[1]) + 0.02;
+      const ba = floorAt(a[0], a[1]) - 0.01;
+      const bb = floorAt(b[0], b[1]) - 0.01;
+      const quad: [number, number, number][] = [
+        [a[0], ba, a[1]],
+        [b[0], bb, b[1]],
+        [b[0], tb, b[1]],
+        [a[0], ta, a[1]],
+      ];
+      // Wound to face the inside.
+      const [u, v, w] = [quad[0]!, quad[1]!, quad[2]!];
+      const cx = (v[1] - u[1]) * (w[2] - u[2]) - (v[2] - u[2]) * (w[1] - u[1]);
+      const cz = (v[0] - u[0]) * (w[1] - u[1]) - (v[1] - u[1]) * (w[0] - u[0]);
+      const order =
+        cx * nx + cz * nz >= 0 ? [0, 1, 2, 0, 2, 3] : [0, 2, 1, 0, 3, 2];
+      for (const k of order) wall.push(...quad[k]!);
+    }
+  }
+  const walls = new THREE.BufferGeometry();
+  walls.setAttribute("position", new THREE.Float32BufferAttribute(wall, 3));
+  walls.computeVertexNormals();
+  parts.add(walls, mat("#5e4a38", 1));
+  return parts.group();
+}
+
 /** The site feature an item stands for, or null where it isn't one. */
 export function siteModel(
   item: Item3d,
@@ -1190,6 +1282,7 @@ export function siteModel(
   cut: ((x: number, z: number) => boolean) | null = null,
   bends: Bends | null = null,
   plain: Ground | null = null,
+  pits: Pit3d[] | null = null,
 ): THREE.Group | null {
   const site = item.site;
   if (!site || site.points.length < 2) return null;
@@ -1202,8 +1295,29 @@ export function siteModel(
     const [wx, wz] = toWorld(x, z);
     return ground(wx, wz) - item.y0;
   };
+  if (site.surface === "dig") return dig(item, local);
+  // The dug-out areas reaching it, in its own frame.
+  const toLocal = ([wx, wz]: Vec2): Vec2 => {
+    const dx = wx - item.x;
+    const dz = wz - item.z;
+    return [
+      dx * Math.cos(a) - dz * Math.sin(a),
+      dx * Math.sin(a) + dz * Math.cos(a),
+    ];
+  };
+  const xs = site.points.map((p) => p[0]);
+  const zs = site.points.map((p) => p[1]);
+  const localPits = (pits ?? [])
+    .map((p) => p.points.map(toLocal))
+    .filter(
+      (p) =>
+        Math.max(...p.map((q) => q[0])) >= Math.min(...xs) &&
+        Math.min(...p.map((q) => q[0])) <= Math.max(...xs) &&
+        Math.max(...p.map((q) => q[1])) >= Math.min(...zs) &&
+        Math.min(...p.map((q) => q[1])) <= Math.max(...zs),
+    );
   if (site.surface)
-    return surface(item, site.surface, local, toWorld, cut, bends);
+    return surface(item, site.surface, local, toWorld, cut, bends, localPits);
   /** The site's own grade there, before any shaping (else as drawn). */
   const plainLocal: Ground = plain
     ? (x, z) => {

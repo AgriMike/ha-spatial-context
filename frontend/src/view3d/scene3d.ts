@@ -40,6 +40,7 @@ import type {
   Item3d,
   LightBeam,
   Pane3d,
+  Pit3d,
   Porch3d,
   Roof3d,
   RoofEdge3d,
@@ -2847,6 +2848,11 @@ function buildFloor(
   };
 }
 
+/** How deep a dug-out area goes, metres (its height; 50 cm unset). */
+export function digDepth(item: FurnitureItem, entry: CatalogItem): number {
+  return (item.height_cm ?? Number(entry.opts["height"] ?? 50)) / 100;
+}
+
 /** A retaining wall: its elevation (negative) is how deep its foot goes. */
 export function isRetainingWall(entry: CatalogItem | undefined): boolean {
   return entry?.opts["fence"] === "retaining";
@@ -2904,6 +2910,7 @@ function siteSpec(
       : Number(entry.opts["height"] ?? 100) / 100,
     thick: entry.d / 100,
     ...(isRetainingWall(entry) ? { depth: retainingDepth(item) } : {}),
+    ...(surface === "dig" ? { dig: digDepth(item, entry) } : {}),
     tint: own_,
   };
 }
@@ -4378,6 +4385,27 @@ function terrain(
       .filter((r) => r.points.length >= 3)
       .map((r) => r.points.map(([x, y]): Vec2 => [x * m, y * m]));
   });
+  // Dug-out areas, on any floor's plan: their outlines in the world.
+  const pits: Pit3d[] = [];
+  for (const f of input.floors) {
+    const m = metersPerUnit(f.layout.scale);
+    for (const item of f.layout.furniture) {
+      const entry = catalogItem(item.kind);
+      if (entry?.opts["site"] !== "dig" || (item.points?.length ?? 0) < 3)
+        continue;
+      const flip = !!item.mirrored !== !!entry.flip;
+      const local = siteSpec(item, entry, flip, null).points;
+      const a = (-item.rotation_deg * Math.PI) / 180;
+      const [c, s] = [Math.cos(a), Math.sin(a)];
+      pits.push({
+        points: local.map(([x, z]): Vec2 => [
+          item.x * m + x * c + z * s,
+          item.y * m - x * s + z * c,
+        ]),
+        depth: digDepth(item, entry),
+      });
+    }
+  }
   return {
     uphill: ground.uphill_m,
     downhill: ground.downhill_m,
@@ -4387,6 +4415,7 @@ function terrain(
     holes,
     ...(ground.grid ? { grid: ground.grid } : {}),
     cover,
+    ...(pits.length ? { pits } : {}),
   };
 }
 

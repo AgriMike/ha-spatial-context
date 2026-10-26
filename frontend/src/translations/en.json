@@ -774,6 +774,7 @@
     "gradeRestartNeeded": "Restart Home Assistant to save the grading; until then it lasts only until the page reloads.",
     "siteKind": "Type",
     "wallDepth": "Depth below ground",
+    "digDepth": "Depth (straight down)",
     "closedLine": "Closed loop",
     "curveAll": "Curve (all corners)",
     "curveCorner": "Curve (corner {n})",

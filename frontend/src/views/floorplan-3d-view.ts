@@ -3901,6 +3901,16 @@ export class Floorplan3dView extends LitElement {
       )}
       ${this._color(localize("edit3d.color"), item.color, (v) => set({ color: v }))}
       ${
+        entry?.opts["site"] === "dig"
+          ? this._num(
+              localize("edit3d.digDepth"),
+              height,
+              (v) => set({ height_cm: v && v > 0 ? Math.min(v, 2000) : null }),
+              { unit: "cm", min: 1 },
+            )
+          : nothing
+      }
+      ${
         !surface
           ? html`${this._num(localize("edit3d.height"), height, (v) => set({ height_cm: v && v > 0 ? v : null }), { unit: "cm", min: 1 })}
               ${
