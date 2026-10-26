@@ -420,6 +420,31 @@ const KITCHEN: Row[] = [
     "cabinet",
     { doors: 2, shaker: "tall", h3d: 2.13 },
   ],
+  // To the ceiling line: 42" wall cabinets, a pantry and a hood to match.
+  [
+    "shaker_wall_cabinet_42",
+    'Shaker wall cabinet 42" tall (white oak)',
+    76,
+    33,
+    "cabinet",
+    { doors: 2, shaker: "wall", h3d: 1.07, y3d: 1.37 },
+  ],
+  [
+    "shaker_tall_pantry_96",
+    'Shaker tall pantry 96" (white oak)',
+    76,
+    61,
+    "cabinet",
+    { doors: 2, shaker: "tall", h3d: 2.44 },
+  ],
+  [
+    "shaker_range_hood",
+    "Plank range hood (white oak)",
+    76,
+    50,
+    "hood",
+    { shaker: "hood", h3d: 0.99, y3d: 1.45 },
+  ],
   [
     "corner_base_cabinet",
     "Corner base cabinet",

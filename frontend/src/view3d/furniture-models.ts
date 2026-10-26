@@ -1167,15 +1167,61 @@ function barPull(
   }
 }
 
+/** A white oak range hood to match the shaker cabinets (front at +z): a
+ * box clad front and sides in horizontal planks, dark reveals between
+ * them, its liner and lights underneath. */
+function plankHood(m: Model, oak: string): void {
+  const { W, D, H } = m;
+  const wood = mat(oak, 0.6);
+  const reveal = mat(shade(oak, 0.5), 0.85);
+  const t = 0.012;
+  // The core shows only in the reveals.
+  m.box(W - 2 * t, H, D - t, 0, 0, -t / 2, reveal);
+  const n = Math.max(3, Math.round(H / 0.11));
+  const ph = H / n;
+  for (let i = 0; i < n; i++) {
+    const y = i * ph + 0.003;
+    m.box(W, ph - 0.006, t, 0, y, D / 2 - t / 2, wood);
+    for (const s of [-1, 1])
+      m.box(t, ph - 0.006, D - t, s * (W / 2 - t / 2), y, -t / 2, wood);
+  }
+  // The liner and two lights underneath.
+  m.box(
+    W - 2 * t - 0.01,
+    0.004,
+    D - t - 0.01,
+    0,
+    0.004,
+    -t / 2,
+    mat("#3a3b3d", 0.5, 0.5),
+  );
+  for (const s of [-1, 1])
+    m.cyl(
+      0.025,
+      0.025,
+      0.004,
+      (s * W) / 4,
+      0,
+      0,
+      mat("#f4f1e6", 0.3, 0, { glow: "#fff6dd", glowLevel: 0.3 }),
+      16,
+    );
+}
+
 /** White oak shaker cabinets (front at +z): a base cabinet, drawer base
  * or sink base on a toe kick under a quartz top, a wall cabinet, a tall
- * pantry. Its face, from the top down: drawers at the heights set on the
- * item (`fronts`; the last one taking up the rest when there are no
- * doors), then its doors across the rest — else its type's own. */
+ * pantry, and a plank range hood to go with them. Its face, from the top
+ * down: drawers at the heights set on the item (`fronts`; the last one
+ * taking up the rest when there are no doors), then its doors across the
+ * rest — else its type's own. */
 const shaker: Builder = (m, o, tint, item) => {
   const { W, D, H } = m;
   const type = typeof o["shaker"] === "string" ? o["shaker"] : "base";
   const oak = tint ?? WHITE_OAK;
+  if (type === "hood") {
+    plankHood(m, oak);
+    return;
+  }
   const wood = mat(oak, 0.6);
   const panel = mat(shade(oak, 0.93), 0.65);
   const counter = type === "base" || type === "drawers" || type === "sink";
@@ -1237,11 +1283,10 @@ const shaker: Builder = (m, o, tint, item) => {
   }
   const doorH = y - y0;
   if (doors > 0 && doorH > 0.05) {
-    // A tall pantry's doors in two tiers.
+    // A tall pantry's doors in two tiers: tall ones below, a short pair
+    // above (a third of the way, lined up with the wall cabinets).
     const tiers =
-      type === "tall" && doorH > 1.6
-        ? [Math.min(doorH * 0.6, 1.35), doorH - Math.min(doorH * 0.6, 1.35)]
-        : [doorH];
+      type === "tall" && doorH > 1.6 ? [doorH * 0.66, doorH * 0.34] : [doorH];
     let ty = y0;
     tiers.forEach((th, tier) => {
       const dw = W / doors;
