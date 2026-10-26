@@ -354,6 +354,15 @@ export function metersPerUnit(scale: Scale | null): number {
 
 type Mount = "floor" | "ceiling" | { y0: number };
 
+/** A floor's thickness under its rooms (the glue draws their undersides
+ * this far down). */
+const FLOOR_SLAB_M = 0.05;
+
+/** Whether an item hangs from the ceiling. */
+function ceilingMounted(kind: string): boolean {
+  return HEIGHT_RULES.find(([re]) => re.test(kind))?.[2] === "ceiling";
+}
+
 /** [matches the item id, height in metres, how it's mounted] — first match
  * wins. Rough real-world sizes; a scene only needs to read right. */
 const HEIGHT_RULES: [RegExp, number, Mount?][] = [
@@ -2706,7 +2715,15 @@ function buildFloor(
         (r) => r.points.length >= 3 && pointInPolygon(item.x, item.y, r.points),
       );
     const height = placed.height;
-    const y0 = placed.y0 + (grounded ? 0 : offsetAt(item.x, item.y));
+    let y0 = placed.y0 + (grounded ? 0 : offsetAt(item.x, item.y));
+    // Hung from the ceiling under a floor that starts below its walls'
+    // top (a basement's lights under the main floor): from that floor's
+    // underside instead, not up through it.
+    if (item.elevation_cm == null && ceilingMounted(item.kind)) {
+      const above = floorAbove(item.x * m, item.y * m);
+      if (above !== null && y0 + height > above - FLOOR_SLAB_M)
+        y0 = Math.max(0, above - FLOOR_SLAB_M - height);
+    }
     const live = states.get(item.id);
     const own = item.color ?? null;
     const line = live?.color ?? own ?? (dark ? "#e0e0e0" : "#4a4a4a");

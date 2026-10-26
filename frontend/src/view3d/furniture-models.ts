@@ -757,15 +757,17 @@ const ceniBase = (m: Model, W: number, D: number, wood: THREE.Material) => {
   }
 };
 
-/** Article's Ceni sofa (back at -z): track arms, three seat and three
- * back cushions on its walnut base. Quarry gray unless coloured. */
+/** Article's Ceni sofa and lounge chair (back at -z): track arms, a seat
+ * and back cushion a place on its walnut base. Its fabric (`fabric`;
+ * the sofa's quarry gray unset) unless coloured. */
 const ceniSofa: Builder = (m, o, tint) => {
   const { W, D, H } = m;
-  const fab = mat(tint ?? "#8b877f", 0.95);
-  const cush = mat(tint ? shade(tint, 1.05) : "#928e86", 0.95);
+  const cloth = tint ?? (typeof o["fabric"] === "string" ? o["fabric"] : null);
+  const fab = mat(cloth ?? "#8b877f", 0.95);
+  const cush = mat(cloth ? shade(cloth, 1.05) : "#928e86", 0.95);
   ceniBase(m, W, D, mat(WALNUT, 0.55));
   const base = 0.13;
-  const arm = Math.min(0.17, W * 0.09);
+  const arm = Math.min(0.17, Math.max(0.14, W * 0.09));
   const armTop = Math.min(0.61, H - 0.12);
   const seatTop = Math.min(0.42, H * 0.53);
   const backD = 0.2;
@@ -2417,7 +2419,7 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^tv_|_tv$|^tv\d/, tv],
   [/^bed_nera/, neraBed],
   [/^media_nera/, neraMedia],
-  [/^sofa_ceni/, ceniSofa],
+  [/^sofa_ceni|^chair_ceni/, ceniSofa],
   [/^ottoman_ceni/, ceniOttoman],
   [/^car_land_rover_discovery/, discovery],
   [/^car_mercedes_glc/, glc],
