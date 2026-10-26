@@ -53,11 +53,40 @@ function pitParts(points: Vec2[]): [Vec2, Vec2, Vec2][] {
   return parts;
 }
 
+/** A polygon's bounds (min x, min z, max x, max z). */
+function bounds(poly: Vec2[]): [number, number, number, number] {
+  let [x0, z0, x1, z1] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const [x, z] of poly) {
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+    if (z < z0) z0 = z;
+    if (z > z1) z1 = z;
+  }
+  return [x0, z0, x1, z1];
+}
+
+/** Whether a triangle's bounds miss a box. */
+function misses(
+  tri: [Vec2, Vec2, Vec2],
+  [x0, z0, x1, z1]: [number, number, number, number],
+): boolean {
+  const [a, b, c] = tri;
+  return (
+    Math.max(a[0], b[0], c[0]) < x0 ||
+    Math.min(a[0], b[0], c[0]) > x1 ||
+    Math.max(a[1], b[1], c[1]) < z0 ||
+    Math.min(a[1], b[1], c[1]) > z1
+  );
+}
+
 /** What's left of a polygon outside a pit's outline: pieces, each a
  * polygon (none when it's all inside; itself when it's all outside). */
 export function subtractPit(poly: Vec2[], points: Vec2[]): Vec2[][] {
   let pieces = [poly];
+  const box = bounds(poly);
   for (const tri of pitParts(points)) {
+    // A triangle clear of it leaves it as it is.
+    if (misses(tri, box)) continue;
     const next: Vec2[][] = [];
     for (const piece of pieces) {
       // Outside a convex triangle: beyond its first edge, or within that
@@ -121,20 +150,49 @@ export function pitDepthAt(
   if (!pits) return 0;
   let most = 0;
   for (const p of pits)
-    if (p.depth > most && inside(p.points, x, z)) most = p.depth;
+    if (p.depth > most && nearBox(p.points, x, z, 0) && inside(p.points, x, z))
+      most = p.depth;
   return most;
 }
 
 /** The part of a polygon inside an outline: pieces, each a polygon. */
 export function intersectPit(poly: Vec2[], points: Vec2[]): Vec2[][] {
   const out: Vec2[][] = [];
+  const box = bounds(poly);
   for (const tri of pitParts(points)) {
+    if (misses(tri, box)) continue;
     let piece = poly;
     for (let k = 0; k < 3 && piece.length >= 3; k++)
       piece = clipLine(piece, tri[k]!, tri[(k + 1) % 3]!, true);
     if (piece.length >= 3 && Math.abs(area(piece)) > 1e-9) out.push(piece);
   }
   return out;
+}
+
+/** An outline's bounds (min x, min z, max x, max z), worked out once. */
+const BOXES = new WeakMap<Vec2[], [number, number, number, number]>();
+
+export function boxOf(points: Vec2[]): [number, number, number, number] {
+  let b = BOXES.get(points);
+  if (!b) {
+    b = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const [x, z] of points) {
+      b[0] = Math.min(b[0], x);
+      b[1] = Math.min(b[1], z);
+      b[2] = Math.max(b[2], x);
+      b[3] = Math.max(b[3], z);
+    }
+    BOXES.set(points, b);
+  }
+  return b;
+}
+
+/** Whether a spot is within `reach` of an outline's bounds. */
+function nearBox(points: Vec2[], x: number, z: number, reach: number) {
+  const [x0, z0, x1, z1] = boxOf(points);
+  return (
+    x >= x0 - reach && x <= x1 + reach && z >= z0 - reach && z <= z1 + reach
+  );
 }
 
 /** How far a spot is from an outline's nearest sharp edge and its
@@ -167,7 +225,8 @@ export function edgeDistances(
 /** Outside a raised area but within the blend of its blended edges: how
  * far from them (else null). */
 export function blendDistance(r: Pit3d, x: number, z: number): number | null {
-  if (!r.blend || r.blend <= 0) return null;
+  if (!r.blend || r.blend <= 0 || !nearBox(r.points, x, z, r.blend))
+    return null;
   const [, soft] = edgeDistances(r, x, z);
   return soft < r.blend ? soft : null;
 }
@@ -182,10 +241,10 @@ export function raiseOf(
   r: Pit3d,
   x: number,
   z: number,
-  inside: boolean = pitDepthAt([r], x, z) > 0,
+  inside: boolean = nearBox(r.points, x, z, 0) && pitDepthAt([r], x, z) > 0,
 ): number {
   if (inside) return r.depth;
-  if (!r.blend || r.blend <= 0) return 0;
+  if (!r.blend || r.blend <= 0 || !nearBox(r.points, x, z, r.blend)) return 0;
   const [hard, soft] = edgeDistances(r, x, z);
   if (soft >= r.blend) return 0;
   const t = 1 - soft / r.blend;
@@ -237,18 +296,16 @@ export function splitRaised(
   inside: number[] = [],
 ): { points: Vec2[]; inside: number[] }[] {
   let pieces = [{ points: poly, inside }];
+  let [px0, pz0, px1, pz1] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const [x, z] of poly) {
+    if (x < px0) px0 = x;
+    if (x > px1) px1 = x;
+    if (z < pz0) pz0 = z;
+    if (z > pz1) pz1 = z;
+  }
   raised.forEach((r, k) => {
-    const xs = poly.map((p) => p[0]);
-    const zs = poly.map((p) => p[1]);
-    const rx = r.points.map((p) => p[0]);
-    const rz = r.points.map((p) => p[1]);
-    if (
-      Math.max(...xs) < Math.min(...rx) ||
-      Math.min(...xs) > Math.max(...rx) ||
-      Math.max(...zs) < Math.min(...rz) ||
-      Math.min(...zs) > Math.max(...rz)
-    )
-      return;
+    const [rx0, rz0, rx1, rz1] = boxOf(r.points);
+    if (px1 < rx0 || px0 > rx1 || pz1 < rz0 || pz0 > rz1) return;
     pieces = pieces.flatMap((p) => [
       ...subtractPit(p.points, r.points).map((q) => ({
         points: q,

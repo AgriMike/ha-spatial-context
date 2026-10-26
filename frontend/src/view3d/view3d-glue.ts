@@ -8,6 +8,7 @@ import { outdoorModel } from "./outdoor-models";
 import { siteModel } from "./site-models";
 import { gradeAt } from "./ground-grid";
 import {
+  boxOf,
   intersectPit,
   pitDepthAt,
   raiseAt,
@@ -1098,14 +1099,8 @@ function terrainBends(
     (t.raised ?? []).some((r) => {
       if (!r.blend) return false;
       const b = r.blend;
-      const px = r.points.map((p) => p[0]);
-      const pz = r.points.map((p) => p[1]);
-      return (
-        x1 >= Math.min(...px) - b &&
-        x0 <= Math.max(...px) + b &&
-        z1 >= Math.min(...pz) - b &&
-        z0 <= Math.max(...pz) + b
-      );
+      const [rx0, rz0, rx1, rz1] = boxOf(r.points);
+      return x1 >= rx0 - b && x0 <= rx1 + b && z1 >= rz0 - b && z0 <= rz1 + b;
     })
   );
 }

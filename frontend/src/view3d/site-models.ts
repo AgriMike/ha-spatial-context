@@ -12,6 +12,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import {
   blendDistance,
+  boxOf,
   edgeDistances,
   raiseAt,
   raiseOf,
@@ -710,9 +711,19 @@ function surface(
       y += extraLift(x, z);
     return y;
   };
+  /** Points off the finer grid (where an outline cuts it), by key. */
+  const offTops = new Map<string, number>();
   const top = (x: number, z: number) => {
     const k = slot(x, z);
-    if (k < 0) return topAt(x, z);
+    if (k < 0) {
+      const key = `${Math.round(x * 1000)},${Math.round(z * 1000)}`;
+      let y = offTops.get(key);
+      if (y === undefined) {
+        y = topAt(x, z);
+        offTops.set(key, y);
+      }
+      return y;
+    }
     let y = tops[k]!;
     if (y !== y) y = tops[k] = topAt(x, z);
     return y;
@@ -724,6 +735,53 @@ function surface(
    * by index). */
   const upFor = (x: number, z: number, inside: number[]) =>
     raised.length ? raiseFor(raised, x, z, inside) : 0;
+  /** Lifted clear of the terrain over a blend's curve, as over the
+   * grading's (see extraLift): smootherstep's sharpest bend is about
+   * 5.8 times its height over its run squared. */
+  const blendLift = (x: number, z: number) => {
+    let most = 0;
+    for (const r of raised) {
+      const d = blendDistance(r, x, z);
+      if (d === null) continue;
+      // Easing off across the blend (both sides of the edge alike), so
+      // the lift has no edge of its own.
+      const t = 1 - d / r.blend!;
+      const ease = t * t * (3 - 2 * t);
+      most = Math.max(
+        most,
+        ((5.8 * r.depth * SPAN) / (r.blend! * r.blend!)) * ease,
+      );
+      // Where it wraps round a wall's end, the ground climbs steeply
+      // out from under the wall: a little more, near the wall.
+      const [hard] = edgeDistances(r, x, z);
+      if (hard < 0.6 && !pointIn(r.points, x, z)) {
+        const s = 1 - d / r.blend!;
+        const v = r.depth * s * s * s * (s * (s * 6 - 15) + 10);
+        most = Math.max(most, Math.min(0.08, 0.25 * v * (1 - hard / 0.6)));
+      }
+    }
+    return Math.min(0.08, most);
+  };
+  /** A point's lift by the raised areas and that lift's slope (x, z),
+   * worked out once (the triangles round it share it). */
+  const lifts = new Map<string, [number, number, number, number]>();
+  const liftAt = (x: number, z: number, inside: number[]) => {
+    const key = `${Math.round(x * 1000)},${Math.round(z * 1000)},${inside.join(".")}`;
+    let v = lifts.get(key);
+    if (!v) {
+      const e = 0.1;
+      v = blended
+        ? [
+            upFor(x, z, inside),
+            (upFor(x + e, z, inside) - upFor(x - e, z, inside)) / (2 * e),
+            (upFor(x, z + e, inside) - upFor(x, z - e, inside)) / (2 * e),
+            blendLift(x, z),
+          ]
+        : [upFor(x, z, inside), 0, 0, 0];
+      lifts.set(key, v);
+    }
+    return v;
+  };
   const pushSlopeNormal = (
     out: number[],
     x: number,
@@ -745,9 +803,9 @@ function surface(
     if (blended) {
       // A raised area's blend slopes it too (on the piece's own side of
       // a sharp edge).
-      const e = 0.1;
-      gx += (upFor(x + e, z, inside) - upFor(x - e, z, inside)) / (2 * e);
-      gz += (upFor(x, z + e, inside) - upFor(x, z - e, inside)) / (2 * e);
+      const [, lx, lz] = liftAt(x, z, inside);
+      gx += lx;
+      gz += lz;
     }
     const l = Math.hypot(gx, 1, gz);
     out.push(-gx / l, 1 / l, -gz / l);
@@ -770,36 +828,10 @@ function surface(
     const pos: number[] = [];
     const uv: number[] = [];
     const nor: number[] = [];
-    /** Lifted clear of the terrain over a blend's curve, as over the
-     * grading's (see extraLift): smootherstep's sharpest bend is about
-     * 5.8 times its height over its run squared. */
-    const blendLift = (x: number, z: number) => {
-      let most = 0;
-      for (const r of raised) {
-        const d = blendDistance(r, x, z);
-        if (d === null) continue;
-        // Easing off across the blend (both sides of the edge alike), so
-        // the lift has no edge of its own.
-        const t = 1 - d / r.blend!;
-        const ease = t * t * (3 - 2 * t);
-        most = Math.max(
-          most,
-          ((5.8 * r.depth * SPAN) / (r.blend! * r.blend!)) * ease,
-        );
-        // Where it wraps round a wall's end, the ground climbs steeply
-        // out from under the wall: a little more, near the wall.
-        const [hard] = edgeDistances(r, x, z);
-        if (hard < 0.6 && !pointIn(r.points, x, z)) {
-          const s = 1 - d / r.blend!;
-          const v = r.depth * s * s * s * (s * (s * 6 - 15) + 10);
-          most = Math.max(most, Math.min(0.08, 0.25 * v * (1 - hard / 0.6)));
-        }
-      }
-      return Math.min(0.08, most);
-    };
     const emit = (p: Vec2, inside: number[] = []) => {
-      const up = raised.length ? upFor(p[0], p[1], inside) : 0;
-      const lift = blended ? blendLift(p[0], p[1]) : 0;
+      const [up, , , lift] = raised.length
+        ? liftAt(p[0], p[1], inside)
+        : [0, 0, 0, 0];
       pos.push(p[0], top(p[0], p[1]) + up + lift, p[1]);
       const [wx, wz] = toWorld(p[0], p[1]);
       uv.push(wx / spec.tile, wz / spec.tile);
@@ -818,13 +850,12 @@ function surface(
         // Cut exactly along any dug-out area's outline it reaches.
         let pieces: Vec2[][] = [tri];
         for (const p of pits) {
-          const xs3 = [a0[0], b0[0], c0[0]];
-          const zs3 = [a0[1], b0[1], c0[1]];
+          const [qx0, qz0, qx1, qz1] = boxOf(p);
           if (
-            Math.max(...xs3) < Math.min(...p.map((q) => q[0])) ||
-            Math.min(...xs3) > Math.max(...p.map((q) => q[0])) ||
-            Math.max(...zs3) < Math.min(...p.map((q) => q[1])) ||
-            Math.min(...zs3) > Math.max(...p.map((q) => q[1]))
+            Math.max(a0[0], b0[0], c0[0]) < qx0 ||
+            Math.min(a0[0], b0[0], c0[0]) > qx1 ||
+            Math.max(a0[1], b0[1], c0[1]) < qz0 ||
+            Math.min(a0[1], b0[1], c0[1]) > qz1
           )
             continue;
           pieces = pieces.flatMap((piece) => subtractPit(piece, p));

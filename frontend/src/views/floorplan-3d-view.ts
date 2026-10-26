@@ -696,6 +696,9 @@ export class Floorplan3dView extends LitElement {
       .editor button.danger {
         color: var(--sc-danger);
       }
+      .editor [hidden] {
+        display: none !important;
+      }
       .editor furniture-library-sidebar {
         --sc-chip-wrap: nowrap;
         position: static;
@@ -3958,7 +3961,12 @@ export class Floorplan3dView extends LitElement {
                 />
                 <span class="unit">${this._gradeFeather} m</span>
               </label>
-              <label class="row">
+              <!-- How much a dab raises or lowers (the other modes have
+                   none: they level, smooth or reset). -->
+              <label
+                class="row"
+                ?hidden=${this._gradeMode !== "raise" && this._gradeMode !== "lower"}
+              >
                 <span>${localize("edit3d.brushStrength")}</span>
                 <input
                   type="range"

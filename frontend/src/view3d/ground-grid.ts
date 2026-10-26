@@ -191,8 +191,9 @@ export function brushGrid(
       else if (mode === "flatten")
         next = v + (level - v) * Math.min(1, f * 0.5);
       else if (mode === "reset") {
-        // Half the way back each dab, then all of it once it's close.
-        next = v * (1 - Math.min(1, f * 0.5));
+        // Straight back to the site's own grade within the radius, easing
+        // into what's round it across the feather.
+        next = v * (1 - f);
         if (Math.abs(next) < 0.005) next = 0;
       } else {
         // A little toward a soft average of the points round: lumps a
