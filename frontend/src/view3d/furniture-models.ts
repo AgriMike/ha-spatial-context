@@ -1796,6 +1796,218 @@ const carHauler: Builder = (m, _o, tint) => {
   }
 };
 
+/** A car's side profile (z along its length, front at +z; y up) swept
+ * across `width`, centred: a body panel, the glasshouse. */
+function profile(
+  m: Model,
+  pts: [number, number][],
+  width: number,
+  material: THREE.Material,
+  bevel = 0.04,
+): void {
+  const shape = new THREE.Shape(pts.map(([z, y]) => new THREE.Vector2(z, y)));
+  const b = Math.min(bevel, width / 4);
+  const g = new THREE.ExtrudeGeometry(shape, {
+    depth: Math.max(0.01, width - 2 * b),
+    bevelEnabled: b > 0,
+    bevelThickness: b,
+    bevelSize: b,
+    bevelSegments: 2,
+    curveSegments: 6,
+  });
+  // (z, y, across) → x across, centred.
+  g.rotateY(-Math.PI / 2);
+  g.translate(width / 2 - b, 0, 0);
+  g.computeVertexNormals();
+  m.add(g, material);
+}
+
+/** A wheel at (x, z): tyre, rim, and its arch's black lining above. */
+function carWheel(
+  m: Model,
+  x: number,
+  z: number,
+  r: number,
+  rim: THREE.Material,
+): void {
+  const tyre = mat(C.rubber, 0.9);
+  const side = Math.sign(x) || 1;
+  m.cyl(r, r, 0.26, x, r, z, tyre, 28, "x");
+  m.cyl(r * 0.66, r * 0.66, 0.265, x, r, z, rim, 20, "x");
+  m.cyl(r * 0.2, r * 0.2, 0.27, x, r, z, mat(C.charcoal, 0.4, 0.6), 12, "x");
+  // Spokes across the rim's face.
+  for (let k = 0; k < 5; k++) {
+    const g = new THREE.BoxGeometry(0.02, r * 1.2, 0.05);
+    g.rotateX((k * Math.PI) / 5);
+    g.translate(x + side * 0.133, r, z);
+    m.add(g, rim);
+  }
+}
+
+/** A Land Rover Discovery (front at +z): tall and square, an upright
+ * tailgate, the roof stepped up behind the front doors with rails,
+ * black pillars under a "floating" roof, vertical tail lights and the
+ * number plate off to one side. Red unless coloured. */
+const discovery: Builder = (m, _o, tint) => {
+  const { W, D } = m;
+  const L = D;
+  const w = Math.min(W * 0.92, 2.05);
+  const paint = mat(tint ?? "#8e1a1f", 0.28, 0.55);
+  const glass = mat("#20303c", 0.06, 0.4);
+  const black = mat(C.black, 0.55);
+  const rim = mat("#9aa0a6", 0.3, 0.8);
+  const f = L / 2;
+  const r = 0.39;
+  // The body: bumpers to the belt line, bonnet sloping to the screen.
+  profile(
+    m,
+    [
+      [-f, 0.42],
+      [-f, 1.12],
+      [-f + 0.1, 1.15],
+      [f - 1.25, 1.15],
+      [f - 0.1, 1.06],
+      [f, 0.95],
+      [f, 0.42],
+      [f - 0.35, 0.33],
+      [-f + 0.3, 0.33],
+    ],
+    w,
+    paint,
+  );
+  // The glasshouse: steep screen, the roof stepping up at the B pillar,
+  // the tailgate glass near upright.
+  profile(
+    m,
+    [
+      [-f + 0.12, 1.15],
+      [-f + 0.2, 1.78],
+      [-0.1, 1.8],
+      [-0.1, 1.76],
+      [f - 1.75, 1.76],
+      [f - 1.25, 1.15],
+    ],
+    w * 0.9,
+    glass,
+    0.03,
+  );
+  // The roof's paint over it (stepped), its rails.
+  m.box(
+    w * 0.86,
+    0.06,
+    f - 0.1 - 0.12 + 0.05,
+    0,
+    1.8,
+    (-f + 0.17 - 0.1) / 2,
+    paint,
+  );
+  m.box(w * 0.84, 0.05, f - 1.75 + 0.1, 0, 1.76, (f - 1.75 - 0.1) / 2, paint);
+  for (const s of [-1, 1]) {
+    m.box(0.04, 0.05, L * 0.6, s * w * 0.4, 1.86, -0.15, black);
+    // Black pillars, the "floating" roof.
+    m.box(0.03, 0.62, 0.12, s * (w * 0.45 + 0.005), 1.16, -f + 0.32, black);
+    m.box(0.03, 0.6, 0.1, s * (w * 0.45 + 0.005), 1.16, -0.12, black);
+    // Mirrors.
+    m.soft(0.22, 0.13, 0.1, s * (w / 2 + 0.08), 1.08, f - 1.3, paint, 0.03);
+    // Black arch linings and sills.
+    m.box(0.06, 0.12, L * 0.55, s * (w / 2 - 0.02), 0.33, -0.1, black);
+  }
+  // Wheels.
+  const zf = f - 0.95;
+  const zr = -f + 1.12;
+  for (const s of [-1, 1])
+    for (const z of [zf, zr]) carWheel(m, s * (w / 2 - 0.16), z, r, rim);
+  // Front: headlights, grille, bumper; rear: tail lights, offset plate.
+  const lamp = mat("#f3f1e8", 0.2, 0, { glow: "#ffffff", glowLevel: 0.15 });
+  const red = mat("#a3181d", 0.3, 0, { glow: "#ff2020", glowLevel: 0.1 });
+  for (const s of [-1, 1]) {
+    m.box(0.42, 0.11, 0.04, s * w * 0.33, 0.86, f - 0.02, lamp);
+    m.box(0.08, 0.42, 0.04, s * (w / 2 - 0.08), 0.8, -f - 0.01, red);
+  }
+  m.box(w * 0.42, 0.2, 0.04, 0, 0.78, f, black);
+  m.box(w * 0.9, 0.14, 0.06, 0, 0.42, f - 0.01, black);
+  m.box(w * 0.9, 0.12, 0.06, 0, 0.42, -f + 0.01, black);
+  m.box(0.52, 0.12, 0.02, w * 0.18, 0.62, -f - 0.02, mat("#eeeeea", 0.4));
+};
+
+/** A Mercedes-Benz GLC (front at +z): a lower, rounder SUV, the
+ * tailgate sloping in, a wide grille with the star, slim lights and a
+ * light strip across the back. Silver unless coloured. */
+const glc: Builder = (m, _o, tint) => {
+  const { W, D } = m;
+  const L = D;
+  const w = Math.min(W * 0.92, 1.92);
+  const paint = mat(tint ?? "#b9bdc1", 0.22, 0.75);
+  const glass = mat("#1d2731", 0.06, 0.4);
+  const black = mat(C.black, 0.5);
+  const chrome = mat(C.chrome, 0.2, 0.9);
+  const rim = mat("#c8ccd0", 0.25, 0.85);
+  const f = L / 2;
+  const r = 0.37;
+  profile(
+    m,
+    [
+      [-f, 0.4],
+      [-f + 0.02, 0.98],
+      [-f + 0.2, 1.04],
+      [f - 1.15, 1.04],
+      [f - 0.25, 0.95],
+      [f - 0.02, 0.82],
+      [f, 0.42],
+      [f - 0.3, 0.32],
+      [-f + 0.3, 0.32],
+    ],
+    w,
+    paint,
+    0.06,
+  );
+  profile(
+    m,
+    [
+      [-f + 0.25, 1.04],
+      [-f + 0.8, 1.58],
+      [-f + 1.2, 1.64],
+      [f - 1.75, 1.64],
+      [f - 1.15, 1.04],
+    ],
+    w * 0.88,
+    glass,
+    0.05,
+  );
+  // The roof's paint, rounded over the glass.
+  m.soft(
+    w * 0.8,
+    0.05,
+    L - 1.2 - 1.75 + 0.1,
+    0,
+    1.6,
+    (-f + 1.2 + f - 1.75) / 2,
+    paint,
+    0.025,
+  );
+  for (const s of [-1, 1]) {
+    m.soft(0.2, 0.12, 0.1, s * (w / 2 + 0.07), 0.98, f - 1.2, paint, 0.03);
+    m.box(0.05, 0.1, L * 0.5, s * (w / 2 - 0.02), 0.32, -0.1, black);
+  }
+  const zf = f - 0.88;
+  const zr = -f + 1.05;
+  for (const s of [-1, 1])
+    for (const z of [zf, zr]) carWheel(m, s * (w / 2 - 0.15), z, r, rim);
+  const lamp = mat("#f3f1e8", 0.2, 0, { glow: "#ffffff", glowLevel: 0.15 });
+  const red = mat("#a3181d", 0.3, 0, { glow: "#ff2020", glowLevel: 0.1 });
+  for (const s of [-1, 1])
+    m.box(0.36, 0.07, 0.04, s * w * 0.34, 0.8, f - 0.08, lamp);
+  // The grille, its star, the lower intake.
+  m.box(w * 0.46, 0.24, 0.04, 0, 0.56, f - 0.01, black);
+  m.cyl(0.07, 0.07, 0.02, 0, 0.68, f + 0.015, chrome, 20, "z");
+  m.box(w * 0.46, 0.015, 0.045, 0, 0.67, f - 0.005, chrome);
+  m.box(w * 0.7, 0.1, 0.05, 0, 0.36, f - 0.02, black);
+  // Tail lights, a strip across between them.
+  m.box(w * 0.86, 0.06, 0.04, 0, 0.92, -f + 0.01, red);
+  m.box(w * 0.86, 0.12, 0.05, 0, 0.4, -f + 0.01, black);
+  m.box(0.5, 0.11, 0.02, 0, 0.62, -f - 0.01, mat("#eeeeea", 0.4));
+};
+
 const tv: Builder = (m, _o, _tint, item) => {
   const { W, H } = m;
   const h = Math.min(H, W * 0.58);
@@ -1971,6 +2183,8 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^gate_(hog|wood)_/, gate],
   [/wheelie_bin|^garbage_bin$|^garbage_cart|^recycling_cart/, wheelieBin],
   [/^tv_|_tv$|^tv\d/, tv],
+  [/^car_land_rover_discovery/, discovery],
+  [/^car_mercedes_glc/, glc],
   [/^car_/, car],
   [/desk_chair|office_chair|task_chair|gaming_chair/, deskChair],
   [/water_heater/, waterHeater],

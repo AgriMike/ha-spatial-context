@@ -1358,6 +1358,78 @@ function japanese(m: Model, rand: () => number, green: string): void {
   }
 }
 
+/** A quaking aspen: slender white trunks rising nearly to the top, with
+ * a narrow oval crown of small leaves over their upper part. */
+function aspen(m: Model, rand: () => number, green: string): void {
+  const { W, D, H } = m;
+  const rx = W / 2;
+  const rz = D / 2;
+  const R = Math.min(rx, rz);
+  const white = mat("#e8e4da", 0.8);
+  const dark = mat("#2b2724", 0.9);
+  const tops: V3[] = [];
+  for (let s = 0; s < 2; s++) {
+    const a = s * Math.PI + rand() * 0.8;
+    const foot = v3(Math.cos(a) * 0.12, 0, Math.sin(a) * 0.12);
+    const top = v3(Math.cos(a) * rx * 0.12, H * 0.93, Math.sin(a) * rz * 0.12);
+    const r = 0.09 + 0.03 * rand();
+    limb(m, foot, top, r, r * 0.3, white, 12);
+    tops.push(top);
+    for (let k = 0; k < 16; k++) {
+      const t = 0.05 + 0.85 * rand();
+      const p = foot.clone().lerp(top, t);
+      const ang = rand() * Math.PI * 2;
+      const rr = r * (1 - 0.6 * t) + 0.002;
+      m.box(
+        0.03 + 0.03 * rand(),
+        0.008,
+        0.004,
+        p.x + Math.cos(ang) * rr,
+        p.y,
+        p.z + Math.sin(ang) * rr,
+        dark,
+      );
+    }
+  }
+  // The crown: clumps round an oval over the upper three-fifths, each on
+  // a short limb from the nearer trunk.
+  const n = 30;
+  for (let i = 0; i < n; i++) {
+    const f = rand();
+    const y = H * (0.38 + 0.58 * f);
+    const spread = Math.sin(Math.PI * (0.12 + 0.82 * f)) * (0.7 + 0.3 * rand());
+    const ang = rand() * Math.PI * 2;
+    const x = Math.cos(ang) * rx * spread * 0.8;
+    const z = Math.sin(ang) * rz * spread * 0.8;
+    const trunk = tops[i % tops.length]!;
+    const k = y / trunk.y;
+    if (i % 2 === 0)
+      limb(
+        m,
+        v3(trunk.x * k, y - 0.4, trunk.z * k),
+        v3(x, y, z),
+        0.035,
+        0.012,
+        white,
+        4,
+      );
+    const sz = R * (0.3 + 0.12 * rand());
+    foliage(
+      m,
+      x,
+      y,
+      z,
+      sz,
+      sz * 1.15,
+      sz,
+      shades(green, rand),
+      rand,
+      "fine",
+      0.8,
+    );
+  }
+}
+
 /** A birch clump: three pale stems with dark marks, an airy crown on
  * each. */
 function birch(m: Model, rand: () => number, green: string): void {
@@ -2042,7 +2114,7 @@ function rosette(
   m: Model,
   rand: () => number,
   green: string,
-  opts: { agave?: boolean; stalk?: boolean },
+  opts: { agave?: boolean; stalk?: boolean; stripe?: string | null },
 ): void {
   const { W, D, H } = m;
   const R = Math.min(W, D) / 2;
@@ -2094,22 +2166,42 @@ function rosette(
         .addScaledVector(side, s * wBase * 0.5 * (1 - (k / segs) * 0.95))
         .add(v3(0, -Math.abs(s) * wBase * 0.18, 0));
     const color = shades(green, rand);
-    strip(
-      m,
-      pts.map((p, k) => keel(p, k, -0.5)),
-      pts.map((_, k) => wBase * 0.5 * (1 - (k / segs) * 0.95)),
-      side,
-      color,
-      tone(color, 1.12),
-    );
-    strip(
-      m,
-      pts.map((p, k) => keel(p, k, 0.5)),
-      pts.map((_, k) => wBase * 0.5 * (1 - (k / segs) * 0.95)),
-      side,
-      color,
-      tone(color, 1.12),
-    );
+    if (opts.stripe) {
+      // Variegated (a Color Guard): a broad stripe down the middle of
+      // each leaf, its margins green.
+      const gold = shades(opts.stripe, rand);
+      for (const [s, c] of [
+        [-0.75, color],
+        [-0.25, gold],
+        [0.25, gold],
+        [0.75, color],
+      ] as const)
+        strip(
+          m,
+          pts.map((p, k) => keel(p, k, s)),
+          pts.map((_, k) => wBase * 0.25 * (1 - (k / segs) * 0.95)),
+          side,
+          c,
+          tone(c, 1.12),
+        );
+    } else {
+      strip(
+        m,
+        pts.map((p, k) => keel(p, k, -0.5)),
+        pts.map((_, k) => wBase * 0.5 * (1 - (k / segs) * 0.95)),
+        side,
+        color,
+        tone(color, 1.12),
+      );
+      strip(
+        m,
+        pts.map((p, k) => keel(p, k, 0.5)),
+        pts.map((_, k) => wBase * 0.5 * (1 - (k / segs) * 0.95)),
+        side,
+        color,
+        tone(color, 1.12),
+      );
+    }
     // A dark spine at an agave's tip.
     if (opts.agave) {
       const tip = pts[segs]!;
@@ -2467,6 +2559,9 @@ function plantModel(m: Model, item: Item3d, o: Opts): boolean {
     case "japanese":
       japanese(m, rand, green);
       return true;
+    case "aspen":
+      aspen(m, rand, green);
+      return true;
     case "birch":
       birch(m, rand, green);
       return true;
@@ -2523,7 +2618,10 @@ function plantModel(m: Model, item: Item3d, o: Opts): boolean {
       });
       return true;
     case "yucca":
-      rosette(m, rand, green, { stalk: !!o["stalk"] });
+      rosette(m, rand, green, {
+        stalk: !!o["stalk"],
+        stripe: typeof o["stripe"] === "string" ? o["stripe"] : null,
+      });
       return true;
     case "agave":
       rosette(m, rand, green, { agave: true });
