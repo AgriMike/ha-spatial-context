@@ -749,6 +749,17 @@ function buildFloor(
 ): Floor3d {
   const { layout, wallHeight: H } = input;
   const m = metersPerUnit(layout.scale);
+  // A window keeps its size on walls taller (or shorter) than the 2.4 m
+  // its defaults are for: the difference is shared above and below it in
+  // the proportion of those gaps, so it sits where it looks right.
+  const windowSpan = WINDOW_HEAD_M - WINDOW_SILL_M;
+  const windowSill =
+    WINDOW_SILL_M *
+    Math.max(
+      0,
+      (H - windowSpan) / Math.max(0.01, DEFAULT_WALL_HEIGHT_M - windowSpan),
+    );
+  const windowHead = windowSill + windowSpan;
   const covers = computeCoverOpenness(layout.openings, hass);
   const walls: Box3d[] = [];
   const panes: Pane3d[] = [];
@@ -2174,8 +2185,8 @@ function buildFloor(
             ? H - 0.15
             : style === "full"
               ? H
-              : WINDOW_HEAD_M;
-        const head =
+              : windowHead;
+        let head =
           Math.min(
             top - off,
             isDoor || beside
@@ -2189,12 +2200,35 @@ function buildFloor(
               ? Math.max(0, head - off - 0.45)
               : style === "full"
                 ? 0
-                : Math.min(WINDOW_SILL_M, head - off - 0.1)) + off;
+                : Math.min(windowSill, head - off - 0.1)) + off;
         // A window in an outside wall stays clear of the ground.
         if (!isDoor && outside && exterior.groundAt) {
           const [gx, gz] = at(hole.s);
           const clear = exterior.groundAt(gx, gz) - GROUND_DRAWN_M + 0.15;
           if (sill < clear) sill = Math.min(clear, head - 0.3);
+        }
+        // ...and clear of a lower roof outside it (one sloping up against
+        // the wall below): moved up, keeping its size, as far as the wall
+        // allows, and only then cut short.
+        if (!isDoor && nOut && style !== "full") {
+          let roofTop = -Infinity;
+          for (const f of [0, 0.25, 0.5, 0.75, 1]) {
+            const [px, pz] = at(hole.s0 + (hole.s1 - hole.s0) * f);
+            const o = t / 2 + 0.05;
+            const r = exterior.roofBelow(
+              px + nOut[0] * o,
+              pz + nOut[1] * o,
+              head,
+            );
+            if (r !== null) roofTop = Math.max(roofTop, r);
+          }
+          const clear = roofTop + 0.12;
+          if (clear > sill) {
+            const lift = Math.min(clear - sill, Math.max(0, top - 0.08 - head));
+            sill += lift;
+            head += lift;
+            if (sill < clear) sill = Math.min(clear, head - 0.3);
+          }
         }
         // Under a door (a step up from a lower room) it stops a hair under
         // the floor it leads onto.
@@ -3720,9 +3754,10 @@ function plannedRoof(
       top: over.length ? Math.min(...over.map((o) => o.y0)) : r.ceiling,
     };
   });
-  const faces = sections.flatMap((s) => {
-    const eave = Math.min(s.eave0, s.eave1);
-    const rooms = floorsAll.flatMap((f) => {
+  // The rooms whose floors are above an eave: a roof there is cut away
+  // inside them (it runs on under their floors, hidden).
+  const roomsOver = (eave: number) =>
+    floorsAll.flatMap((f) => {
       const fm = metersPerUnit(f.layout.scale);
       return f.layout.rooms
         .filter(
@@ -3736,6 +3771,8 @@ function plannedRoof(
           poly: r.points.map(([x, y]): Vec2 => [x * fm, y * fm]),
         }));
     });
+  const faces = sections.flatMap((s) => {
+    const rooms = roomsOver(Math.min(s.eave0, s.eave1));
     const si = sections.indexOf(s);
     // Its overhang where it runs into another part of the house (a
     // garage's eave against the entry beside it): not there.
@@ -3832,13 +3869,31 @@ function plannedRoof(
         meets ? meets.overhang : PORCH_OVERHANG_M,
         p.abutted,
       );
-      if (s)
+      if (s) {
+        // Cut out of an upper room it runs into (a bedroom over a garage
+        // standing forward of the door), as the house's own roofs are.
+        const rooms = roomsOver(eave);
+        const own: RoofEdge3d[] = [];
+        const porchFaces = sectionFaces(s, own, {
+          key: `porch:${porchIndex}`,
+          label: "Porch",
+        });
+        for (const e of own)
+          edges.push(
+            ...rooms.reduce<RoofEdge3d[]>(
+              (acc, room) => acc.flatMap((x) => cutEdge(x, room.poly, room.y)),
+              [e],
+            ),
+          );
         faces.push(
-          ...sectionFaces(s, edges, {
-            key: `porch:${porchIndex}`,
-            label: "Porch",
-          }),
+          ...porchFaces.flatMap((face) =>
+            rooms.reduce<RoofFace3d[]>(
+              (acc, room) => acc.flatMap((f) => cutFace(f, room.poly, room.y)),
+              [face],
+            ),
+          ),
         );
+      }
       porchIndex++;
     }
   // No light strip inside the house: an eave running on through an upper
