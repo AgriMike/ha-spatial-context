@@ -185,6 +185,10 @@ export interface Item3d {
     /** A dug-out area's depth (metres; its `surface` is "dig"), or a
      * raised area's height (its `surface` is "raise"). */
     dig?: number;
+    /** A surface built up as a block (a bed in a dug-out area): its top
+     * this far above the ground's own level (metres), its sides down to
+     * whatever it stands on. */
+    extrude?: number;
     tint: string | null;
   };
   /** A free-form outline tall enough to be a counter: drawn as one. */

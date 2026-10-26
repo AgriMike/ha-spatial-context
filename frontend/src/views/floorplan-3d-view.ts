@@ -4080,6 +4080,24 @@ export class Floorplan3dView extends LitElement {
       )}
       ${this._color(localize("edit3d.color"), item.color, (v) => set({ color: v }))}
       ${
+        // A bed, lawn or drive built up as a block (elevation_cm: its top
+        // above the ground's level; empty = lying on the ground).
+        surface &&
+        entry?.opts["site"] !== "dig" &&
+        entry?.opts["site"] !== "raise"
+          ? this._num(
+              localize("edit3d.extrude"),
+              item.elevation_cm ?? null,
+              (v) =>
+                set({
+                  elevation_cm:
+                    v == null ? null : Math.max(-500, Math.min(500, v)),
+                }),
+              { unit: "cm", placeholder: localize("edit3d.extrudeOff") },
+            )
+          : nothing
+      }
+      ${
         entry?.opts["site"] === "raise"
           ? this._num(
               localize("edit3d.raiseBlend"),

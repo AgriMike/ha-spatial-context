@@ -2657,7 +2657,9 @@ function buildFloor(
     const placed = {
       height: item.height_cm ? item.height_cm / 100 : auto.height,
       y0:
-        item.elevation_cm != null && !isRetainingWall(entry)
+        item.elevation_cm != null &&
+        !isRetainingWall(entry) &&
+        !isExtrudable(entry)
           ? item.elevation_cm / 100
           : auto.y0,
     };
@@ -2913,6 +2915,13 @@ function buildFloor(
   };
 }
 
+/** A surface (a bed, a lawn, a drive) that can be built up as a block:
+ * its elevation is then its top's height above the ground's own level. */
+export function isExtrudable(entry: CatalogItem | undefined): boolean {
+  const site = entry?.opts["site"];
+  return typeof site === "string" && site !== "dig" && site !== "raise";
+}
+
 /** How deep a dug-out area goes, metres (its height; 50 cm unset). */
 export function digDepth(item: FurnitureItem, entry: CatalogItem): number {
   return (item.height_cm ?? Number(entry.opts["height"] ?? 50)) / 100;
@@ -2977,6 +2986,9 @@ function siteSpec(
     ...(isRetainingWall(entry) ? { depth: retainingDepth(item) } : {}),
     ...(surface === "dig" || surface === "raise"
       ? { dig: digDepth(item, entry) }
+      : {}),
+    ...(isExtrudable(entry) && item.elevation_cm != null
+      ? { extrude: item.elevation_cm / 100 }
       : {}),
     tint: own_,
   };

@@ -13,6 +13,7 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import {
   blendDistance,
   boxOf,
+  pitDepthAt,
   edgeDistances,
   raiseAt,
   raiseOf,
@@ -607,9 +608,12 @@ function surface(
   bends: Bends | null = null,
   pits: Vec2[][] = [],
   raised: Pit3d[] = [],
+  floor: Ground | null = null,
 ): THREE.Group {
   const site = item.site!;
   const spec = SURFACES[kind] ?? SURFACES["concrete"]!;
+  // Built up as a block: its top that far above the ground's own level.
+  const lift = spec.lift + (site.extrude ?? 0);
   const outline = site.points;
   const parts = new Parts();
   const cell = SURFACE_CELL_M;
@@ -699,7 +703,7 @@ function surface(
   };
   /** The top's height at a point. */
   const topAt = (x: number, z: number) => {
-    let y = groundAt(x, z) + spec.lift;
+    let y = groundAt(x, z) + lift;
     // The point's own cell, or on a cell line the cells either side.
     const fx = x / cell;
     const fz = z / cell;
@@ -940,8 +944,9 @@ function surface(
         const ub = raiseAt(raised, b[0], b[1]);
         const ya = top(a[0], a[1]) + ua;
         const yb = top(b[0], b[1]) + ub;
-        const ga = ground(a[0], a[1]) + ua - 0.05;
-        const gb = ground(b[0], b[1]) + ub - 0.05;
+        // Down to what it stands on (a dug-out area's floor, for a block).
+        const ga = (floor ?? ground)(a[0], a[1]) + ua - 0.05;
+        const gb = (floor ?? ground)(b[0], b[1]) + ub - 0.05;
         edge.push(a[0], ya, a[1], b[0], yb, b[1], b[0], gb, b[1]);
         edge.push(a[0], ya, a[1], b[0], gb, b[1], a[0], ga, a[1]);
       }
@@ -1479,6 +1484,23 @@ export function siteModel(
       item,
       local,
       localRaised.find((r) => r.id === item.id) ?? null,
+    );
+  // Built up as a block: not cut away by a dug-out area it's in, its
+  // sides down to that area's floor.
+  if (site.surface && site.extrude != null)
+    return surface(
+      item,
+      site.surface,
+      local,
+      toWorld,
+      cut,
+      bends,
+      [],
+      localRaised,
+      (x, z) => {
+        const [wx, wz] = toWorld(x, z);
+        return local(x, z) - pitDepthAt(pits ?? undefined, wx, wz);
+      },
     );
   if (site.surface)
     return surface(

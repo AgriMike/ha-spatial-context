@@ -779,6 +779,8 @@
     "raiseHeight": "Raise (straight up)",
     "raiseBlend": "Blend (edges not along a retaining wall)",
     "wallFill": "Filled to its top (raised bed)",
+    "extrude": "Extrude (top above ground)",
+    "extrudeOff": "off",
     "wallSoil": "Holds back soil",
     "wallSoilSlope": "Soil slopes back over",
     "wallSoilSwap": "Soil on the other side",
