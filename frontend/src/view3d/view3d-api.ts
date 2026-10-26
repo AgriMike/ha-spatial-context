@@ -180,6 +180,8 @@ export interface Item3d {
     height: number;
     /** How thick a hedge or wall stands (metres). */
     thick: number;
+    /** How far a retaining wall goes below the ground (metres). */
+    depth?: number;
     tint: string | null;
   };
   /** A free-form outline tall enough to be a counter: drawn as one. */

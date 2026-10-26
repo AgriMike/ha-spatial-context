@@ -3719,6 +3719,7 @@ export class Floorplan3dView extends LitElement {
       ["lower", "mdi:arrow-down-bold", localize("edit3d.gradeLower")],
       ["flatten", "mdi:minus", localize("edit3d.gradeFlatten")],
       ["smooth", "mdi:wave", localize("edit3d.gradeSmooth")],
+      ["reset", "mdi:backup-restore", localize("edit3d.gradeReset")],
       ["point", "mdi:dots-grid", localize("edit3d.gradePoint")],
     ];
     return html`<div class="tools">
@@ -3875,6 +3876,12 @@ export class Floorplan3dView extends LitElement {
         <span class="unit">${value}%</span>
       </label>`;
     const height = item.height_cm ?? Number(entry?.opts["height"] ?? 0);
+    // A retaining wall's foot below the ground: its elevation, negated.
+    const retaining = entry?.opts["fence"] === "retaining";
+    const depth =
+      item.elevation_cm != null && item.elevation_cm < 0
+        ? -item.elevation_cm
+        : 30;
     return html`<h3>${item.label || entry?.name || item.kind}</h3>
       ${this._select(
         localize("edit3d.siteKind"),
@@ -3895,6 +3902,20 @@ export class Floorplan3dView extends LitElement {
       ${
         !surface
           ? html`${this._num(localize("edit3d.height"), height, (v) => set({ height_cm: v && v > 0 ? v : null }), { unit: "cm", min: 1 })}
+              ${
+                retaining
+                  ? this._num(
+                      localize("edit3d.wallDepth"),
+                      depth,
+                      (v) =>
+                        set({
+                          elevation_cm:
+                            v != null && v > 0 ? -Math.min(v, 500) : null,
+                        }),
+                      { unit: "cm", min: 1 },
+                    )
+                  : nothing
+              }
               <label class="row">
                 <span>${localize("edit3d.closedLine")}</span>
                 <input

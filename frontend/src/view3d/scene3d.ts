@@ -2587,10 +2587,14 @@ function buildFloor(
     if (entry?.category === "landscape")
       auto.height *=
         (item.width_cm + item.depth_cm) / Math.max(1, entry.w + entry.d);
-    // A height or elevation set by hand wins.
+    // A height or elevation set by hand wins (a retaining wall's
+    // elevation is its foot below the ground: see siteSpec).
     const placed = {
       height: item.height_cm ? item.height_cm / 100 : auto.height,
-      y0: item.elevation_cm != null ? item.elevation_cm / 100 : auto.y0,
+      y0:
+        item.elevation_cm != null && !isRetainingWall(entry)
+          ? item.elevation_cm / 100
+          : auto.y0,
     };
     // Out in the yard (in none of the floor's rooms), on the ground;
     // else in a room set higher or lower, with it.
@@ -2843,6 +2847,19 @@ function buildFloor(
   };
 }
 
+/** A retaining wall: its elevation (negative) is how deep its foot goes. */
+export function isRetainingWall(entry: CatalogItem | undefined): boolean {
+  return entry?.opts["fence"] === "retaining";
+}
+
+/** How far a retaining wall goes below the ground, metres (its elevation,
+ * negated; 30 cm unset). */
+export function retainingDepth(item: FurnitureItem): number {
+  return item.elevation_cm != null && item.elevation_cm < 0
+    ? -item.elevation_cm / 100
+    : 0.3;
+}
+
 /** A site item's outline in its own frame (metres, corners rounded as
  * the plan draws them) and what it is. */
 function siteSpec(
@@ -2886,6 +2903,7 @@ function siteSpec(
       ? item.height_cm / 100
       : Number(entry.opts["height"] ?? 100) / 100,
     thick: entry.d / 100,
+    ...(isRetainingWall(entry) ? { depth: retainingDepth(item) } : {}),
     tint: own_,
   };
 }

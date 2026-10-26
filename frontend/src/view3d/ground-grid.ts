@@ -138,7 +138,7 @@ export function growGrid(
   return { x0: x0 - padL * s, z0: z0 - padT * s, step: s, cols, rows, h };
 }
 
-export type GradeMode = "raise" | "lower" | "flatten" | "smooth";
+export type GradeMode = "raise" | "lower" | "flatten" | "smooth" | "reset";
 
 /** How much of a dab a spot `d` metres from its middle gets: all of it
  * within `radius`, easing to none across `feather` beyond it — with no
@@ -158,8 +158,9 @@ export function brushWeight(
 const BLUR = [1, 2, 1];
 
 /** A brush stroke's dab at a spot: raises, lowers, levels (toward
- * `level`, a raise) or smooths the points within `radius`, fully, and
- * fading to nothing across `feather` metres beyond. */
+ * `level`, a raise), smooths or returns to the site's own grade (no raise)
+ * the points within `radius`, fully, and fading to nothing across
+ * `feather` metres beyond. */
 export function brushGrid(
   g: GroundGrid,
   x: number,
@@ -189,7 +190,11 @@ export function brushGrid(
       else if (mode === "lower") next = v - amount * f;
       else if (mode === "flatten")
         next = v + (level - v) * Math.min(1, f * 0.5);
-      else {
+      else if (mode === "reset") {
+        // Half the way back each dab, then all of it once it's close.
+        next = v * (1 - Math.min(1, f * 0.5));
+        if (Math.abs(next) < 0.005) next = 0;
+      } else {
         // A little toward a soft average of the points round: lumps a
         // point across iron out, while a bank or berm keeps its shape.
         let sum = 0;

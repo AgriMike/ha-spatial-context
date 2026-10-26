@@ -1783,6 +1783,10 @@ function createView3d(options: View3dOptions): View3dHandle {
             siteTerrain
               ? (x0, z0, x1, z1) => terrainBends(siteTerrain, x0, z0, x1, z1)
               : null,
+            siteTerrain?.grid
+              ? (x, z) =>
+                  groundAt({ ...siteTerrain!, grid: null }, x, z) - baseY
+              : null,
           ),
         )
       : null;

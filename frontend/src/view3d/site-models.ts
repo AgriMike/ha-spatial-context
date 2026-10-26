@@ -920,7 +920,12 @@ function surface(
 /** A fence (or wall, hedge, edging) along the line: posts at its corners
  * and every few metres, what fills between them, all following the
  * ground. */
-function fence(item: Item3d, kind: string, ground: Ground): THREE.Group {
+function fence(
+  item: Item3d,
+  kind: string,
+  ground: Ground,
+  plain: Ground,
+): THREE.Group {
   const site = item.site!;
   const parts = new Parts();
   const h = site.height;
@@ -1044,7 +1049,9 @@ function fence(item: Item3d, kind: string, ground: Ground): THREE.Group {
     }
   }
   // A retaining wall: one piece along its line (round its curves too),
-  // its top following the ground half a metre at a time, and a cap.
+  // and a cap. Built up from the site's own grade (half a metre at a
+  // time), it stays put as the ground is shaped round it: its foot goes
+  // `depth` below whichever is lower, so it always meets the ground.
   if (kind === "retaining") {
     const line: Vec2[] = [];
     for (let i = 0; i + 1 < pts.length; i++) {
@@ -1062,12 +1069,13 @@ function fence(item: Item3d, kind: string, ground: Ground): THREE.Group {
     }
     line.push(pts[pts.length - 1]!);
     const thick = Math.max(0.2, site.thick);
-    const topAt = (q: Vec2) => g0(q) + h;
+    const depth = site.depth ?? 0.3;
+    const topAt = (q: Vec2) => plain(q[0], q[1]) + h;
     parts.strip(
       line,
       site.closed,
       thick,
-      (q) => g0(q) - 0.15,
+      (q) => Math.min(g0(q), plain(q[0], q[1])) - depth,
       topAt,
       mat(tint ?? "#9b968c", 0.9),
     );
@@ -1149,6 +1157,7 @@ export function siteModel(
   ground: Ground,
   cut: ((x: number, z: number) => boolean) | null = null,
   bends: Bends | null = null,
+  plain: Ground | null = null,
 ): THREE.Group | null {
   const site = item.site;
   if (!site || site.points.length < 2) return null;
@@ -1163,6 +1172,13 @@ export function siteModel(
   };
   if (site.surface)
     return surface(item, site.surface, local, toWorld, cut, bends);
-  if (site.fence) return fence(item, site.fence, local);
+  /** The site's own grade there, before any shaping (else as drawn). */
+  const plainLocal: Ground = plain
+    ? (x, z) => {
+        const [wx, wz] = toWorld(x, z);
+        return plain(wx, wz) - item.y0;
+      }
+    : local;
+  if (site.fence) return fence(item, site.fence, local, plainLocal);
   return null;
 }
