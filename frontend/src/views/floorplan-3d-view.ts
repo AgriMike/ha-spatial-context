@@ -240,7 +240,16 @@ type EditDrag =
       j: number;
       /** The ground there without the point's own raise. */
       base: number;
+    }
+  | {
+      /** An area being drawn for the grid's points to show over (metres). */
+      kind: "gradeArea";
+      from: [number, number];
+      to: [number, number];
     };
+
+/** The most grid points an area shows at once. */
+const GRADE_AREA_MAX = 900;
 
 /** Where the lazily loaded three.js module is served (see rollup's
  * view3dModule and frontend.py's static path). */
@@ -785,6 +794,11 @@ export class Floorplan3dView extends LitElement {
   @state() private _gradeStep = 1;
   @state() private _gradeNode: { i: number; j: number } | null = null;
   private _gradeCursor: [number, number] | null = null;
+  /** The area (min x, min z, max x, max z, metres) whose grid points
+   * the Points mode shows, each to drag up or down. */
+  @state() private _gradeArea: [number, number, number, number] | null = null;
+  /** Each shown grid point's spot (x, z), by handle. */
+  private _gradeHandleAt: [number, number][] = [];
   /** The length of the edge being drawn (and the whole line so far),
    * shown beside it. */
   @state() private _measure: {
@@ -1607,23 +1621,98 @@ export class Floorplan3dView extends LitElement {
         const x0 = (grid?.x0 ?? 0) % step;
         const z0 = (grid?.z0 ?? 0) % step;
         const nodes: [number, number, number][] = [];
+        const draft =
+          this._drag?.kind === "gradeArea"
+            ? ([
+                Math.min(this._drag.from[0], this._drag.to[0]),
+                Math.min(this._drag.from[1], this._drag.to[1]),
+                Math.max(this._drag.from[0], this._drag.to[0]),
+                Math.max(this._drag.from[1], this._drag.to[1]),
+              ] as [number, number, number, number])
+            : null;
+        const area = draft ?? this._gradeArea;
+        // The grid's points over the area (or round the pointer), and
+        // its lines between them, draped over the ground.
+        const [ax0, az0, ax1, az1] = area ?? [
+          cx - reach,
+          cz - reach,
+          cx + reach,
+          cz + reach,
+        ];
+        const gxs: number[] = [];
+        const gzs: number[] = [];
         for (
-          let x = Math.ceil((cx - reach - x0) / step) * step + x0;
-          x <= cx + reach;
+          let x = Math.ceil((ax0 - x0) / step) * step + x0;
+          x <= ax1;
           x += step
         )
-          for (
-            let z = Math.ceil((cz - reach - z0) / step) * step + z0;
-            z <= cz + reach;
-            z += step
-          )
-            nodes.push([x, gy(x, z) + 0.04, z]);
+          gxs.push(x);
+        for (
+          let z = Math.ceil((az0 - z0) / step) * step + z0;
+          z <= az1;
+          z += step
+        )
+          gzs.push(z);
+        if (area) {
+          const ring: [number, number][] = [
+            [ax0, az0],
+            [ax1, az0],
+            [ax1, az1],
+            [ax0, az1],
+            [ax0, az0],
+          ];
+          const outline: [number, number, number][] = [];
+          for (let k = 0; k + 1 < ring.length; k++) {
+            const [pa, pb] = [ring[k]!, ring[k + 1]!];
+            const n = Math.max(
+              1,
+              Math.ceil(Math.hypot(pb[0] - pa[0], pb[1] - pa[1]) / 0.25),
+            );
+            for (let s = 0; s <= n; s++) {
+              const x = pa[0] + ((pb[0] - pa[0]) * s) / n;
+              const z = pa[1] + ((pb[1] - pa[1]) * s) / n;
+              outline.push([x, gy(x, z), z]);
+            }
+          }
+          paths.push({ points: outline, color: "#ff7043" });
+        }
+        const many = gxs.length * gzs.length > GRADE_AREA_MAX;
+        if (area && !draft && !many) {
+          for (const z of gzs) {
+            const line: [number, number, number][] = [];
+            for (
+              let x = gxs[0] ?? ax0;
+              x <= (gxs[gxs.length - 1] ?? ax1) + 1e-6;
+              x += 0.25
+            )
+              line.push([x, gy(x, z), z]);
+            if (line.length > 1) paths.push({ points: line, color: "#ffffff" });
+          }
+          for (const x of gxs) {
+            const line: [number, number, number][] = [];
+            for (
+              let z = gzs[0] ?? az0;
+              z <= (gzs[gzs.length - 1] ?? az1) + 1e-6;
+              z += 0.25
+            )
+              line.push([x, gy(x, z), z]);
+            if (line.length > 1) paths.push({ points: line, color: "#ffffff" });
+          }
+        }
+        this._gradeHandleAt = [];
+        if (!draft && !many)
+          for (const x of gxs)
+            for (const z of gzs) {
+              nodes.push([x, gy(x, z) + 0.04, z]);
+              this._gradeHandleAt.push([x, z]);
+            }
         handles = nodes;
         const node = this._gradeNode;
         if (grid && node) {
           const nx = grid.x0 + node.i * step;
           const nz = grid.z0 + node.j * step;
           handles = [...handles, [nx, gy(nx, nz) + 0.04, nz]];
+          this._gradeHandleAt.push([nx, nz]);
           activeHandle = handles.length - 1;
         }
       } else {
@@ -2490,6 +2579,26 @@ export class Floorplan3dView extends LitElement {
         this._drag = null;
         if (drag.kind === "grade" || drag.kind === "gradePoint")
           this._saveGrade(drag.grid);
+        if (drag.kind === "gradeArea") {
+          const step = this._gradeGrid()?.step ?? this._gradeStep;
+          const w = Math.abs(drag.to[0] - drag.from[0]);
+          const d = Math.abs(drag.to[1] - drag.from[1]);
+          // Too small to hold a point either way: none.
+          this._gradeArea =
+            w >= step * 0.9 && d >= step * 0.9
+              ? [
+                  Math.min(drag.from[0], drag.to[0]),
+                  Math.min(drag.from[1], drag.to[1]),
+                  Math.max(drag.from[0], drag.to[0]),
+                  Math.max(drag.from[1], drag.to[1]),
+                ]
+              : this._gradeArea;
+        }
+        this._pushOverlay();
+        return false;
+      }
+      if (drag?.kind === "gradeArea" && e.type === "drag") {
+        if (g) drag.to = [g[0], g[2]];
         this._pushOverlay();
         return false;
       }
@@ -2507,14 +2616,24 @@ export class Floorplan3dView extends LitElement {
         const h = drag.grid.h.slice();
         h[drag.j * drag.grid.cols + drag.i] = Math.round(v * 1000) / 1000;
         drag.grid = { ...drag.grid, h };
-        this._handle?.previewGrade(drag.grid);
+        // Only the ground round the point moves (its smoothing reaches
+        // two points either way).
+        const reach = 2 * drag.grid.step;
+        this._handle?.previewGrade(drag.grid, [
+          nx - reach,
+          nz - reach,
+          nx + reach,
+          nz + reach,
+        ]);
         this._pushOverlay();
         return false;
       }
       if (!g) return false;
       this._gradeCursor = [g[0], g[2]];
       if (e.type === "move") {
-        this._pushOverlay();
+        // An area's points stay put: nothing follows the pointer.
+        if (!(this._gradeMode === "point" && this._gradeArea))
+          this._pushOverlay();
         return false;
       }
       const r = this._gradeRadius;
@@ -2525,17 +2644,41 @@ export class Floorplan3dView extends LitElement {
         if (!this._ground) this._setGround({});
         const saved = this._ground?.grid ?? null;
         const step = saved?.step ?? this._gradeStep;
+        // A point's dot pressed: that point (else the one under the
+        // pointer, if it's right by one).
+        const picked =
+          this._gradeMode === "point" && e.hit.handle !== null
+            ? (this._gradeHandleAt[e.hit.handle] ?? null)
+            : null;
+        const at: [number, number] = picked ?? [g[0], g[2]];
         const reachOut = this._gradeMode === "point" ? step : outer + step;
         const grown = growGrid(
           saved,
-          g[0] - reachOut,
-          g[2] - reachOut,
-          g[0] + reachOut,
-          g[2] + reachOut,
+          at[0] - reachOut,
+          at[1] - reachOut,
+          at[0] + reachOut,
+          at[1] + reachOut,
           step,
         );
         if (this._gradeMode === "point") {
-          const node = nearestNode(grown, g[0], g[2]);
+          const node = nearestNode(grown, at[0], at[1]);
+          const near =
+            !!node &&
+            Math.hypot(
+              grown.x0 + node.i * step - at[0],
+              grown.z0 + node.j * step - at[1],
+            ) <
+              step * 0.3;
+          if (!picked && !near) {
+            // Off the points: an area drawn, for its points to show.
+            this._drag = {
+              kind: "gradeArea",
+              from: [g[0], g[2]],
+              to: [g[0], g[2]],
+            };
+            this._pushOverlay();
+            return true;
+          }
           if (!node) return false;
           this._gradeNode = node;
           const nx = grown.x0 + node.i * step;
@@ -3739,6 +3882,20 @@ export class Floorplan3dView extends LitElement {
             </button>`,
         )}
       </div>
+      ${
+        this._gradeMode === "point" && this._gradeArea
+          ? html`<div class="buttons">
+              <button
+                @click=${() => {
+                  this._gradeArea = null;
+                  this._pushOverlay();
+                }}
+              >
+                ${localize("edit3d.gradeAreaClear")}
+              </button>
+            </div>`
+          : nothing
+      }
       ${
         this._gradeMode === "point"
           ? node && grid

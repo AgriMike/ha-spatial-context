@@ -449,8 +449,13 @@ export interface View3dHandle {
   /** The ground's height (edit-floor frame, metres) at a spot. */
   groundHeight(x: number, z: number): number;
   /** Shows the ground graded by a grid while it's being shaped, before
-   * it's saved (the rest of the scene follows on the next setScene). */
-  previewGrade(grid: GroundGrid | null): void;
+   * it's saved (the rest of the scene follows on the next setScene).
+   * With `near` (min x, min z, max x, max z, metres), only that stretch
+   * changed: its heights are moved in place where they can be. */
+  previewGrade(
+    grid: GroundGrid | null,
+    near?: [number, number, number, number],
+  ): void;
   /** Shows a furniture item at a new spot and turn while it's dragged
    * (edit-floor frame, metres; angle as Item3d's), before it's saved. */
   previewItem(

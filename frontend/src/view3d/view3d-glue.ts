@@ -1367,7 +1367,52 @@ function terrainGeometry(t: Terrain3d, box: THREE.Box3): THREE.BufferGeometry {
   for (let k = 0; k < index.length; k++) all[k] = used[index[k]!]!;
   all.set(extraIndex, index.length);
   geom.setIndex(new THREE.BufferAttribute(all, 1));
+  // Which drawn point each grid point is (see moveTerrain).
+  geom.userData["grid"] = { xs, zs, used };
   return geom;
+}
+
+/** Moves a terrain mesh's points within a stretch (min x, min z, max x,
+ * max z) to the ground's height now, their normals from its slope: a
+ * quick preview while one grid point is dragged. False where the mesh
+ * can't show the change (a stretch it drew as one flat plane): it wants
+ * building afresh. */
+function moveTerrain(
+  geom: THREE.BufferGeometry,
+  t: Terrain3d,
+  near: [number, number, number, number],
+): boolean {
+  const g = geom.userData["grid"] as
+    { xs: number[]; zs: number[]; used: Int32Array } | undefined;
+  if (!g) return false;
+  const { xs, zs, used } = g;
+  const nx = xs.length;
+  const [x0, z0, x1, z1] = near;
+  const i0 = xs.findIndex((x) => x >= x0);
+  const j0 = zs.findIndex((z) => z >= z0);
+  if (i0 < 0 || j0 < 0) return false;
+  const pos = geom.getAttribute("position") as THREE.BufferAttribute;
+  const nor = geom.getAttribute("normal") as THREE.BufferAttribute;
+  const todo: [number, number, number][] = [];
+  for (let j = j0; j < zs.length && zs[j]! <= z1; j++)
+    for (let i = i0; i < nx && xs[i]! <= x1; i++) {
+      const w = used[j * nx + i]!;
+      // A point inside a flat stretch isn't drawn: can't move it.
+      if (w < 0) return false;
+      todo.push([w, xs[i]!, zs[j]!]);
+    }
+  const e = 0.1;
+  for (const [w, x, z] of todo) {
+    pos.setY(w, groundAt(t, x, z));
+    const gx = (groundAt(t, x + e, z) - groundAt(t, x - e, z)) / (2 * e);
+    const gz = (groundAt(t, x, z + e) - groundAt(t, x, z - e)) / (2 * e);
+    const l = Math.hypot(gx, 1, gz);
+    nor.setXYZ(w, -gx / l, 1 / l, -gz / l);
+  }
+  pos.needsUpdate = true;
+  nor.needsUpdate = true;
+  geom.computeBoundingSphere();
+  return true;
 }
 
 function percentile(sorted: Float32Array, p: number): number {
@@ -3164,13 +3209,24 @@ function createView3d(options: View3dOptions): View3dHandle {
     return m;
   }
 
+  /** The handles' spheres, shared by every handle (never freed). */
+  const handleGeoms = {
+    dot: new THREE.SphereGeometry(0.075, 16, 12),
+    minor: new THREE.SphereGeometry(0.05, 16, 12),
+    ring: new THREE.SphereGeometry(0.1, 16, 12),
+    pick: new THREE.SphereGeometry(0.18, 8, 6),
+  };
+  const sharedGeoms = new Set<THREE.BufferGeometry>(Object.values(handleGeoms));
+
   function clearOverlay(): void {
     for (const child of [...overlayGroup.children]) {
       overlayGroup.remove(child);
       child.traverse((o) => {
         const mesh = o as THREE.Mesh;
-        // Its materials are kept (see overlayMat).
-        mesh.geometry?.dispose();
+        // Its materials are kept (see overlayMat), and the handles'
+        // shared spheres.
+        if (mesh.geometry && !sharedGeoms.has(mesh.geometry))
+          mesh.geometry.dispose();
       });
     }
     handleMeshes = [];
@@ -3448,7 +3504,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       const active = o.activeHandle === k;
       const minor = o.minorFrom != null && k >= o.minorFrom;
       const dot = new THREE.Mesh(
-        new THREE.SphereGeometry(minor ? 0.05 : 0.075, 16, 12),
+        minor ? handleGeoms.minor : handleGeoms.dot,
         overlayMat(
           new THREE.MeshBasicMaterial({
             color: active ? "#ff7043" : minor ? SELECT_COLOR : "#ffffff",
@@ -3461,7 +3517,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       dot.position.set(x, y, z);
       dot.renderOrder = 1002;
       const ring = new THREE.Mesh(
-        new THREE.SphereGeometry(0.1, 16, 12),
+        handleGeoms.ring,
         overlayMat(
           new THREE.MeshBasicMaterial({
             color: SELECT_COLOR,
@@ -3476,7 +3532,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       ring.renderOrder = 1001;
       // A larger, unseen sphere to grab it by.
       const pick = new THREE.Mesh(
-        new THREE.SphereGeometry(0.18, 8, 6),
+        handleGeoms.pick,
         overlayMat(new THREE.MeshBasicMaterial({ visible: false })),
       );
       pick.position.set(x, y, z);
@@ -3544,11 +3600,15 @@ function createView3d(options: View3dOptions): View3dHandle {
       const entry = editEntry();
       return floorAt(siteTerrain, x, z) - (entry?.spec.baseY ?? 0);
     },
-    previewGrade(grid) {
+    previewGrade(grid, near) {
       if (!siteTerrain || !terrain || !terrainBox) return;
       siteTerrain = { ...siteTerrain, grid };
       // Not what it was built from: the next scene builds it afresh.
       builtTerrainKey = "";
+      if (near && moveTerrain(terrain.geometry, siteTerrain, near)) {
+        invalidate();
+        return;
+      }
       const old = terrain.geometry;
       terrain.geometry = terrainGeometry(siteTerrain, terrainBox);
       old.dispose();
@@ -3630,6 +3690,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       for (const obj of retired) disposeObject(obj);
       retired = [];
       for (const m of overlayMats.values()) m.dispose();
+      for (const g of sharedGeoms) g.dispose();
       disposeObject(scene, false);
       for (const t of textures.values()) t.dispose();
       renderer.dispose();
