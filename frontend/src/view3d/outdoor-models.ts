@@ -1748,41 +1748,76 @@ function mugo(m: Model, rand: () => number, green: string): void {
   );
 }
 
-/** An arborvitae: a dense column, widest low, rounding to a point. */
-function column(m: Model, rand: () => number, green: string): void {
+/** An arborvitae (or, as a `cone`, a dwarf Alberta spruce): a dense
+ * column widest low and rounding to a point (a cone: tapering straight
+ * from a broad base), clothed to the ground in overlapping tufts of
+ * foliage (lit on top, shaded beneath) over a dark core, so it reads as a
+ * sheared evergreen rather than a smooth spindle. */
+function column(
+  m: Model,
+  rand: () => number,
+  green: string,
+  opts: { cone?: boolean } = {},
+): void {
   const { W, D, H } = m;
-  const n = 8;
-  for (let i = 0; i < n; i++) {
-    const f = i / (n - 1);
-    const k = 1 - f * 0.72;
-    clump(
-      m,
-      0,
-      H * (0.13 + 0.72 * f),
-      0,
-      (W / 2) * k * 0.88,
-      H * 0.16,
-      (D / 2) * k * 0.88,
-      tone(green, 0.45),
-      rand,
-      0.12,
-      2,
-      { light: 0.4 },
-    );
-    cards(
-      m,
-      v3(0, H * (0.13 + 0.72 * f), 0),
-      (W / 2) * k,
-      H * 0.16,
-      (D / 2) * k,
-      shades(green, rand),
-      rand,
-      Math.round(26 * k + 10),
-      Math.max(0.2, W * 0.3 * k + 0.08),
-      "fine",
-      { up: 0 },
-    );
+  const R = Math.min(W, D) / 2;
+  // Its radius up its height.
+  const radius = (f: number) =>
+    opts.cone
+      ? R * Math.pow(1 - f, 0.95) * (f < 0.08 ? 0.85 + 2 * f : 1)
+      : R * (f < 0.2 ? 0.88 + 0.6 * f : Math.pow((1 - f) / 0.8, 0.7));
+  const core = tone(green, 0.4);
+  for (let i = 0; i < 6; i++) {
+    const f = (i + 0.5) / 6;
+    const r = radius(Math.min(0.92, f)) * 0.82;
+    clump(m, 0, H * f * 0.96, 0, r, H * 0.11, r, core, rand, 0.1, 1, {
+      light: 0.3,
+    });
   }
+  // Finer tufts on a spruce.
+  const tuft = opts.cone
+    ? Math.max(0.09, Math.min(0.16, R * 0.3))
+    : Math.max(0.14, Math.min(0.26, R * 0.36));
+  const rows = Math.max(6, Math.round(H / (tuft * 0.95)));
+  for (let j = 0; j < rows; j++) {
+    const f = (j + 0.4) / rows;
+    const r = radius(f);
+    const y = H * f * 0.97;
+    const n = Math.max(3, Math.round((2 * Math.PI * r) / (tuft * 0.95)));
+    for (let k = 0; k < n; k++) {
+      const a = ((k + (j % 2) * 0.5) / n) * Math.PI * 2 + rand() * 0.25;
+      const s = tuft * (0.85 + 0.35 * rand()) * (r < tuft ? 0.8 : 1);
+      clump(
+        m,
+        Math.cos(a) * r * 0.8,
+        y + (rand() - 0.5) * tuft * 0.4,
+        Math.sin(a) * r * 0.8,
+        s,
+        s * 1.1,
+        s,
+        tone(green, 0.82 + 0.2 * rand()),
+        rand,
+        0.32,
+        1,
+        { light: 0.55, fleck: 0.3 },
+      );
+    }
+  }
+  // The tip.
+  clump(
+    m,
+    0,
+    H * 0.97,
+    0,
+    tuft * 0.6,
+    tuft * 0.9,
+    tuft * 0.6,
+    green,
+    rand,
+    0.25,
+    1,
+    { light: 0.6 },
+  );
 }
 
 /** A palm: a ringed, gently curving trunk and a crown of arching fronds,
@@ -2570,7 +2605,9 @@ function plantModel(m: Model, item: Item3d, o: Opts): boolean {
       weeping(m, rand, green);
       return true;
     case "conifer":
-      conifer(m, rand, green, { droop: !!o["droop"], dense: !!o["dense"] });
+      // A dense one (a dwarf Alberta spruce) is a solid, tufted cone.
+      if (o["dense"]) column(m, rand, green, { cone: true });
+      else conifer(m, rand, green, { droop: !!o["droop"] });
       return true;
     case "pine":
       pine(m, rand, green, {
