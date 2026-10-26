@@ -219,6 +219,11 @@ export interface Opening {
   window_grid?: WindowGrid;
   /** A window flanked by a pair of louvered shutters. */
   shutters?: boolean;
+  /** A window's bottom above its floor, metres, set by hand (absent: from
+   * its style and the wall's height). */
+  sill_m?: number | null;
+  /** A window's own height, metres, set by hand (absent: its style's). */
+  height_m?: number | null;
   /** A garage door's look (absent: flush). */
   garage_style?: GarageStyle;
   /** Paint for the door, garage door or shutters (#rrggbb). */

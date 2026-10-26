@@ -3696,7 +3696,22 @@ export class Floorplan3dView extends LitElement {
         (v) => v && set({ door_style: v }),
       )}
       ${this._color(L("paint"), o.paint_color, (v) => set({ paint_color: v }))}`;
-    return html`${this._select<WindowType>(
+    // Where it sits in the wall (blank: from its style and the wall).
+    const cm = (v: number | null, lo: number) =>
+      v == null ? null : Math.max(lo, Math.min(1000, v)) / 100;
+    return html`${this._num(
+        L("windowSill"),
+        o.sill_m == null ? null : o.sill_m * 100,
+        (v) => set({ sill_m: cm(v, 0) }),
+        { unit: "cm", min: 0, placeholder: L("windowAuto") },
+      )}
+      ${this._num(
+        L("windowHeight"),
+        o.height_m == null ? null : o.height_m * 100,
+        (v) => set({ height_m: cm(v, 10) }),
+        { unit: "cm", min: 10, placeholder: L("windowAuto") },
+      )}
+      ${this._select<WindowType>(
         L("windowType"),
         o.window_type ?? "picture",
         [

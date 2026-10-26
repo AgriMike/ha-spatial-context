@@ -436,6 +436,8 @@ const OPENING_STYLE_KEYS = [
   "shutters",
   "garage_style",
   "paint_color",
+  "sill_m",
+  "height_m",
 ] as const;
 
 /** The last roof save had to leave the light strips out (restart needed). */

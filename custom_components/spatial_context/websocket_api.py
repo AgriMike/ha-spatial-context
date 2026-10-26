@@ -175,6 +175,14 @@ _OPENING_SCHEMA = {
     ),
     vol.Optional("window_grid"): vol.In(["none", "colonial", "prairie", "craftsman"]),
     vol.Optional("shutters"): bool,
+    # A window's bottom above its floor and its height, metres, set by
+    # hand (unset: from its style and the wall's height).
+    vol.Optional("sill_m"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=0, max=10))
+    ),
+    vol.Optional("height_m"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=0.1, max=10))
+    ),
     vol.Optional("garage_style"): vol.In(
         ["flush", "raised_short", "raised_long", "carriage", "windows", "modern"]
     ),

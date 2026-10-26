@@ -2210,8 +2210,23 @@ function buildFloor(
               : style === "full"
                 ? 0
                 : Math.min(windowSill, head - off - 0.1)) + off;
+        // Its bottom and height set by hand: there, as far as the wall
+        // allows, and not moved for the ground or a roof outside.
+        const byHand =
+          !isDoor &&
+          !beside &&
+          (opening.sill_m != null || opening.height_m != null);
+        if (byHand) {
+          const own = opening.height_m ?? head - sill;
+          sill =
+            Math.max(
+              0,
+              Math.min(opening.sill_m ?? sill - off, top - off - 0.1),
+            ) + off;
+          head = Math.min(top, sill + Math.max(0.1, own));
+        }
         // A window in an outside wall stays clear of the ground.
-        if (!isDoor && outside && exterior.groundAt) {
+        if (!byHand && !isDoor && outside && exterior.groundAt) {
           const [gx, gz] = at(hole.s);
           const clear = exterior.groundAt(gx, gz) - GROUND_DRAWN_M + 0.15;
           if (sill < clear) sill = Math.min(clear, head - 0.3);
@@ -2219,7 +2234,7 @@ function buildFloor(
         // ...and clear of a lower roof outside it (one sloping up against
         // the wall below): moved up, keeping its size, as far as the wall
         // allows, and only then cut short.
-        if (!isDoor && nOut && style !== "full") {
+        if (!byHand && !isDoor && nOut && style !== "full") {
           let roofTop = -Infinity;
           for (const f of [0, 0.25, 0.5, 0.75, 1]) {
             const [px, pz] = at(hole.s0 + (hole.s1 - hole.s0) * f);
