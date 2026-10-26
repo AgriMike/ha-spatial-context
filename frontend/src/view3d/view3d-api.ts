@@ -166,6 +166,9 @@ export interface Item3d {
     opts: Record<string, string | number | boolean | undefined>;
     flip: boolean;
     tint: string | null;
+    /** A cabinet's face set by hand: its drawers' heights from the top
+     * (metres) and the doors below them (null: the catalog's). */
+    fronts?: { drawers: number[] | null; doors: number | null };
   };
   /** A site feature (see site-models.ts): a surface laid on the ground
    * (concrete, asphalt, pavers, lawn, a planting bed…) or a fence, wall

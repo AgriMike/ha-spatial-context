@@ -301,6 +301,11 @@ export interface FurnitureItem {
    * the fixture's own, aimed automatically. */
   beam_deg?: number | null;
   aim_m?: number | null;
+  /** A cabinet's face: its drawers' heights from the top down
+   * (centimetres), and how many doors fill the rest below them; unset =
+   * the catalog cabinet's own. */
+  drawers_cm?: number[] | null;
+  doors?: number | null;
 }
 
 /** A phone room scan (glTF/GLB) laid over a floor in the 3D view — see

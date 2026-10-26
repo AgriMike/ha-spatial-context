@@ -1604,7 +1604,8 @@ function buildFloor(
             angle,
             color: CONCRETE,
           });
-          // A post at each open corner.
+          // A post at each open corner: cedar, else the door's paint.
+          const postColor = door.opening.paint_color ?? CEDAR;
           for (const [corner, along, side] of [
             [oa, 1, 0],
             [ob, -1, 1],
@@ -1619,7 +1620,7 @@ function buildFloor(
               length: POST_M,
               depth: POST_M,
               angle,
-              color: CEDAR,
+              color: postColor,
             });
           }
         }
@@ -2844,6 +2845,14 @@ function buildFloor(
               opts: entry.opts,
               flip,
               tint: own,
+              ...(item.drawers_cm != null || item.doors != null
+                ? {
+                    fronts: {
+                      drawers: item.drawers_cm?.map((c) => c / 100) ?? null,
+                      doors: item.doors ?? null,
+                    },
+                  }
+                : {}),
             },
           }
         : {}),

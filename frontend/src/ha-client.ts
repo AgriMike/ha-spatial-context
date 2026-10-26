@@ -428,6 +428,8 @@ const ITEM_FINISH_KEYS = [
   "entity_id_2",
   "beam_deg",
   "aim_m",
+  "drawers_cm",
+  "doors",
 ] as const;
 const OPENING_STYLE_KEYS = [
   "door_style",

@@ -3658,6 +3658,70 @@ export class Floorplan3dView extends LitElement {
     </div>`;
   }
 
+  /** A shaker cabinet's face: one-click layouts, its drawers' heights
+   * from the top down (the last one filling what's left when there are no
+   * doors), and the doors below them. */
+  private _renderCabinetFronts(
+    item: FurnitureItem,
+    set: (patch: Partial<FurnitureItem>) => void,
+  ) {
+    const L = (k: string) => localize(`edit3d.${k}`);
+    const across = item.width_cm > 61 ? 2 : 1;
+    const presets: [string, number[], number][] = [
+      [L("frontsDoors"), [], across],
+      [L("frontsDrawerDoors"), [15], across],
+      [L("frontsTwoDrawers"), [30, 45], 0],
+      [L("frontsThreeDrawers"), [15, 25, 35], 0],
+      [L("frontsFourDrawers"), [15, 15, 20, 25], 0],
+    ];
+    return html`<div class="buttons">
+        ${presets.map(
+          ([label, drawers, doors]) =>
+            html`<button @click=${() => set({ drawers_cm: drawers, doors })}>
+              ${label}
+            </button>`,
+        )}
+        <button
+          title=${L("frontsReset")}
+          @click=${() => set({ drawers_cm: null, doors: null })}
+        >
+          <ha-icon icon="mdi:backup-restore"></ha-icon>
+        </button>
+      </div>
+      <label class="row">
+        <span>${L("frontsDrawers")}</span>
+        <input
+          type="text"
+          inputmode="decimal"
+          placeholder=${L("auto")}
+          .value=${item.drawers_cm?.map((c) => Math.round(c * 10) / 10).join(", ") ?? ""}
+          @change=${(e: Event) => {
+            const raw = (e.target as HTMLInputElement).value.trim();
+            const list = raw
+              .split(/[,\s]+/)
+              .map(Number)
+              .filter((v) => Number.isFinite(v) && v >= 5)
+              .slice(0, 12);
+            set({ drawers_cm: raw === "" ? null : list });
+          }}
+        />
+        <span class="unit">cm</span>
+      </label>
+      ${this._select<string>(
+        L("frontsDoorCount"),
+        item.doors == null ? "" : String(item.doors),
+        [
+          ["", L("auto")],
+          ["0", "0"],
+          ["1", "1"],
+          ["2", "2"],
+          ["3", "3"],
+          ["4", "4"],
+        ],
+        (v) => set({ doors: v == null || v === "" ? null : Number(v) }),
+      )}`;
+  }
+
   /** An opening's look in 3D: a door's style, a window's type, grid and
    * shutters, a garage door's style, and the paint on them. */
   private _renderOpeningLook(
@@ -4437,6 +4501,7 @@ export class Floorplan3dView extends LitElement {
         ${this._num(localize("edit3d.depth"), item.depth_cm, (v) => v && v > 0 && set({ depth_cm: v }), { unit: "cm", min: 1 })}
         ${this._num(localize("edit3d.height"), item.height_cm ?? null, (v) => set({ height_cm: v && v > 0 ? v : null }), { unit: "cm", placeholder: localize("edit3d.auto") })}
         ${this._num(localize("edit3d.elevation"), item.elevation_cm ?? null, (v) => set({ elevation_cm: v }), { unit: "cm", placeholder: localize("edit3d.auto") })}
+        ${entry?.opts["shaker"] ? this._renderCabinetFronts(item, set) : nothing}
         ${this._num(localize("edit3d.rotation"), item.rotation_deg, (v) => v !== null && set({ rotation_deg: ((v % 360) + 360) % 360 }), { unit: "°" })}
         ${this._color(localize("edit3d.color"), item.color, (v) => set({ color: v }))}
         <label class="row">

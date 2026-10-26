@@ -255,6 +255,18 @@ _FURNITURE_SCHEMA = {
             vol.Length(max=500),
         ),
     ),
+    # A cabinet's face: its drawers' heights from the top down (cm), and
+    # how many doors fill the rest below them; unset = the catalog's.
+    vol.Optional("drawers_cm"): vol.Any(
+        None,
+        vol.All(
+            [vol.All(vol.Coerce(float), vol.Range(min=5, max=300))],
+            vol.Length(max=12),
+        ),
+    ),
+    vol.Optional("doors"): vol.Any(
+        None, vol.All(vol.Coerce(int), vol.Range(min=0, max=4))
+    ),
 }
 
 _SCALE_SCHEMA = vol.Any(

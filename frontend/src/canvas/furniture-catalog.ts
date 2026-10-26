@@ -378,6 +378,48 @@ const KITCHEN: Row[] = [
   ["base_cabinet_120", "Base cabinet 120 cm", 120, 60, "cabinet", { doors: 2 }],
   ["drawer_base_60", "Drawer base 60 cm", 60, 60, "drawers", { cols: 1 }],
   ["drawer_base_90", "Drawer base 90 cm", 90, 60, "drawers", { cols: 2 }],
+  // White oak shaker cabinets: their drawers and doors set per cabinet in
+  // the 3D editor (see furniture-models.ts's shaker).
+  [
+    "shaker_base_cabinet",
+    "Shaker base cabinet (white oak)",
+    60,
+    61,
+    "cabinet",
+    { doors: 1, shaker: "base", h3d: 0.91 },
+  ],
+  [
+    "shaker_drawer_base",
+    "Shaker drawer base (white oak)",
+    60,
+    61,
+    "drawers",
+    { cols: 1, shaker: "drawers", h3d: 0.91 },
+  ],
+  [
+    "shaker_sink_base",
+    "Shaker sink base (white oak)",
+    91,
+    61,
+    "cabinet",
+    { doors: 2, shaker: "sink", h3d: 0.91 },
+  ],
+  [
+    "shaker_wall_cabinet",
+    "Shaker wall cabinet (white oak)",
+    76,
+    33,
+    "cabinet",
+    { doors: 2, shaker: "wall", h3d: 0.76, y3d: 1.37 },
+  ],
+  [
+    "shaker_tall_pantry",
+    "Shaker tall pantry (white oak)",
+    61,
+    61,
+    "cabinet",
+    { doors: 2, shaker: "tall", h3d: 2.13 },
+  ],
   [
     "corner_base_cabinet",
     "Corner base cabinet",

@@ -1100,6 +1100,171 @@ const cabinet: Builder = (m, o, tint, item) => {
   if (H > 1.6) m.box(W + 0.03, 0.04, D + 0.02, 0, H, 0, paint);
 };
 
+/** White oak shaker cabinets' wood. */
+const WHITE_OAK = "#d3b98f";
+
+/** A shaker front (a door or a drawer) `w` × `h` standing on `y`, its
+ * face at `z`: a frame of stiles and rails round a recessed panel; a
+ * short drawer's a plain slab. */
+function shakerFront(
+  m: Model,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  z: number,
+  wood: THREE.Material,
+  panel: THREE.Material,
+): void {
+  const t = 0.019;
+  if (h < 0.13) {
+    m.box(w, h, t, x, y, z - t / 2, wood);
+    return;
+  }
+  const s = Math.min(0.065, w * 0.2, h * 0.25);
+  m.box(w - 2 * s, h - 2 * s, 0.01, x, y + s, z - t + 0.005, panel);
+  for (const sx of [-1, 1])
+    m.box(s, h, t, x + sx * (w / 2 - s / 2), y, z - t / 2, wood);
+  m.box(w - 2 * s, s, t, x, y, z - t / 2, wood);
+  m.box(w - 2 * s, s, t, x, y + h - s, z - t / 2, wood);
+}
+
+/** A matte black bar pull on a front at `z`, centred at (x, y). */
+function barPull(
+  m: Model,
+  x: number,
+  y: number,
+  z: number,
+  vertical: boolean,
+  len: number,
+): void {
+  const black = mat("#1f1f1f", 0.5, 0.6);
+  const b = 0.011;
+  if (vertical) {
+    m.box(b, len, b, x, y - len / 2, z + 0.032, black);
+    for (const s of [-1, 1])
+      m.box(
+        0.009,
+        0.009,
+        0.03,
+        x,
+        y + s * (len / 2 - 0.012) - 0.0045,
+        z + 0.015,
+        black,
+      );
+  } else {
+    m.box(len, b, b, x, y - b / 2, z + 0.032, black);
+    for (const s of [-1, 1])
+      m.box(
+        0.009,
+        0.009,
+        0.03,
+        x + s * (len / 2 - 0.012),
+        y - 0.0045,
+        z + 0.015,
+        black,
+      );
+  }
+}
+
+/** White oak shaker cabinets (front at +z): a base cabinet, drawer base
+ * or sink base on a toe kick under a quartz top, a wall cabinet, a tall
+ * pantry. Its face, from the top down: drawers at the heights set on the
+ * item (`fronts`; the last one taking up the rest when there are no
+ * doors), then its doors across the rest — else its type's own. */
+const shaker: Builder = (m, o, tint, item) => {
+  const { W, D, H } = m;
+  const type = typeof o["shaker"] === "string" ? o["shaker"] : "base";
+  const oak = tint ?? WHITE_OAK;
+  const wood = mat(oak, 0.6);
+  const panel = mat(shade(oak, 0.93), 0.65);
+  const counter = type === "base" || type === "drawers" || type === "sink";
+  const kick = type === "wall" ? 0 : 0.1;
+  const top = counter ? 0.03 : 0;
+  const t = 0.019;
+  const face = D / 2;
+  // The box, its recessed toe kick, the top.
+  m.box(W, H - kick - top, D - t, 0, kick, -t / 2, wood);
+  if (kick)
+    m.box(
+      W - 0.006,
+      kick,
+      D - t - 0.075,
+      0,
+      0,
+      -(t + 0.075) / 2,
+      mat(shade(oak, 0.45), 0.8),
+    );
+  if (top)
+    m.box(W + 0.004, top, D + 0.025, 0, H - top, 0.0125, mat("#ecebe6", 0.35));
+  const gap = 0.003;
+  const y0 = kick + gap;
+  const faceH = H - kick - top - 2 * gap;
+  const across = W > 0.61 ? 2 : 1;
+  const preset: Record<string, [number[], number]> = {
+    base: [[0.15], across],
+    drawers: [[0.15, 0.25, 0.35], 0],
+    sink: [[0.15], across],
+    wall: [[], across],
+    tall: [[], across],
+  };
+  const [ownDrawers, ownDoors] = preset[type] ?? preset["base"]!;
+  const fronts = item.model?.fronts;
+  const list = (fronts?.drawers ?? ownDrawers).map((h) => Math.max(0.05, h));
+  let doors = Math.max(0, Math.min(4, Math.round(fronts?.doors ?? ownDoors)));
+  if (!list.length && !doors) doors = 1;
+  const sum = (a: number[]) => a.reduce((s, h) => s + h, 0);
+  if (doors > 0) {
+    // Room left for the doors: the drawers shrink to fit if they must.
+    const room = faceH - 0.15;
+    const k = sum(list) > room ? Math.max(0, room) / sum(list) : 1;
+    for (let i = 0; i < list.length; i++) list[i] = list[i]! * k;
+  } else if (list.length) {
+    // No doors: the last drawer takes up the rest (or they all shrink).
+    const rest = faceH - sum(list.slice(0, -1));
+    if (rest >= 0.06) list[list.length - 1] = rest;
+    else {
+      const k = faceH / sum(list);
+      for (let i = 0; i < list.length; i++) list[i] = list[i]! * k;
+    }
+  }
+  const pullLen = (w: number) => (w > 0.8 ? 0.305 : w > 0.45 ? 0.192 : 0.128);
+  let y = y0 + faceH;
+  for (const h of list) {
+    shakerFront(m, 0, y - h + gap / 2, W - gap, h - gap, face, wood, panel);
+    barPull(m, 0, y - Math.min(h / 2, 0.075), face, false, pullLen(W));
+    y -= h;
+  }
+  const doorH = y - y0;
+  if (doors > 0 && doorH > 0.05) {
+    // A tall pantry's doors in two tiers.
+    const tiers =
+      type === "tall" && doorH > 1.6
+        ? [Math.min(doorH * 0.6, 1.35), doorH - Math.min(doorH * 0.6, 1.35)]
+        : [doorH];
+    let ty = y0;
+    tiers.forEach((th, tier) => {
+      const dw = W / doors;
+      const len = th > 0.6 ? 0.192 : 0.128;
+      for (let k = 0; k < doors; k++) {
+        const x = -W / 2 + dw * (k + 0.5);
+        shakerFront(m, x, ty + gap / 2, dw - gap, th - gap, face, wood, panel);
+        // The pull by the door's free edge: the pair's middle, else its
+        // right; high on a base, low on a wall cabinet.
+        const edge = doors === 1 ? 1 : k % 2 === 0 ? 1 : -1;
+        const py =
+          type === "wall" || (type === "tall" && tier === 1)
+            ? ty + 0.07 + len / 2
+            : type === "tall"
+              ? ty + Math.min(th - 0.07 - len / 2, 1.05)
+              : ty + th - 0.07 - len / 2;
+        barPull(m, x + edge * (dw / 2 - 0.045), py, face, true, len);
+      }
+      ty += th;
+    });
+  }
+};
+
 const drawers: Builder = (m, o, tint) => {
   const { W, D, H } = m;
   const body = mat(tint ?? C.wood, 0.65);
@@ -2417,6 +2582,7 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^gate_(hog|wood)_/, gate],
   [/wheelie_bin|^garbage_bin$|^garbage_cart|^recycling_cart/, wheelieBin],
   [/^tv_|_tv$|^tv\d/, tv],
+  [/^shaker_/, shaker],
   [/^bed_nera/, neraBed],
   [/^media_nera/, neraMedia],
   [/^sofa_ceni|^chair_ceni/, ceniSofa],
