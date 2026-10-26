@@ -2,7 +2,7 @@
  * module, beside furniture-models.ts): Philips Hue's outdoor fixtures and
  * the common sconces, spots, floods and path lights, each with its lens
  * glowing in its light's colour while on; and trees, shrubs, grasses,
- * yuccas, flowers and boulders, grown from a seed of the item's id so each
+ * yuccas, flowers and boulders, and houseplants in their pots, grown from a seed of the item's id so each
  * one is a little different and stays the same from one draw to the next.
  *
  * The item's frame is furniture-models.ts's: x across its width, z from
@@ -2543,6 +2543,7 @@ function boulders(m: Model, rand: () => number, several: boolean): void {
 }
 
 function plantModel(m: Model, item: Item3d, o: Opts): boolean {
+  if (houseplant(m, item, o)) return true;
   const rand = seeded(item.id);
   const form = str(o, "form", "");
   const tint = item.model?.tint ?? null;
@@ -2646,6 +2647,1258 @@ function plantModel(m: Model, item: Item3d, o: Opts): boolean {
       return true;
     case "boulders":
       boulders(m, rand, true);
+      return true;
+  }
+  return false;
+}
+
+// --- houseplants ----------------------------------------------------------------
+
+/** Houseplants in their pots, each its own species: broad, split, heart,
+ * strap and round leaves on stalks and vines, fronds, canes, rosettes. A
+ * colour set on one paints its pot. */
+
+const POT = {
+  terracotta: "#b5653f",
+  white: "#ebe8e1",
+  charcoal: "#3a3a3c",
+  basket: "#b8945f",
+  sage: "#a3ad98",
+};
+
+/** A pot standing at (x, y, z): tapered, its lip, the soil; the soil's
+ * height. A basket is woven in bands. */
+function pot(
+  m: Model,
+  r: number,
+  h: number,
+  color: string,
+  opts: { x?: number; y?: number; z?: number; basket?: boolean } = {},
+): number {
+  const { x = 0, y = 0, z = 0 } = opts;
+  const body = mat(color, opts.basket ? 0.95 : 0.55);
+  m.cyl(r, r * 0.8, h * 0.9, x, y, z, body, 28);
+  m.cyl(r * 1.05, r * 1.02, h * 0.12, x, y + h * 0.88, z, body, 28);
+  if (opts.basket)
+    for (let k = 1; k < 4; k++) {
+      const rr = r * (0.8 + (0.2 * k) / 4) + 0.003;
+      m.cyl(
+        rr,
+        rr,
+        0.012,
+        x,
+        y + (h * 0.9 * k) / 4,
+        z,
+        mat(tone(color, 0.72), 0.95),
+        28,
+      );
+    }
+  const soil = y + h * 0.93;
+  m.cyl(
+    r * 0.96,
+    r * 0.96,
+    0.012,
+    x,
+    soil - 0.012,
+    z,
+    mat("#3a2a1f", 0.95),
+    24,
+  );
+  return soil;
+}
+
+/** A model drawing into another, raised by `dy` (a plant grown on its
+ * pot's soil by an outdoor builder). */
+class Lifted extends Model {
+  constructor(
+    private readonly into: Model,
+    private readonly dy: number,
+    h: number,
+  ) {
+    super(into.W, into.D, Math.max(0.02, h), false);
+  }
+  override add(g: THREE.BufferGeometry, material: THREE.Material): void {
+    g.translate(0, this.dy, 0);
+    this.into.add(g, material);
+  }
+}
+
+/** A unit direction at azimuth `az` and `el` (radians) above level. */
+const aim = (az: number, el: number): V3 =>
+  v3(Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el));
+const DEG = Math.PI / 180;
+
+type LeafShape =
+  "oval" | "round" | "heart" | "lance" | "strap" | "fiddle" | "split";
+
+/** A leaf's half-width along its length (0 at its stalk, 1 at its tip). */
+const LEAF_WIDTH: Record<LeafShape, (t: number) => number> = {
+  oval: (t) => Math.pow(Math.sin(Math.PI * t), 0.75),
+  round: (t) => Math.sqrt(Math.max(0, 1 - (2 * t - 1) ** 2)),
+  heart: (t) => Math.pow(Math.sin(Math.PI * (0.2 + 0.8 * t)), 0.65),
+  lance: (t) => Math.min(1, t * 5) * Math.pow(1 - t, 0.9),
+  strap: (t) => Math.min(1, t * 8) * Math.min(1, (1 - t) * 4),
+  fiddle: (t) => Math.pow(Math.sin(Math.PI * Math.pow(t, 0.65)), 0.7),
+  split: (t) => Math.pow(Math.sin(Math.PI * (0.12 + 0.88 * t)), 0.6),
+};
+
+/** A leaf from `base` along `dir`: `len` long, `wid` across at its widest,
+ * cupped along its midrib (`fold`) and arching down to its tip (`droop`,
+ * of its length). Darker at its stalk, its midrib lighter, its rim
+ * `edge`'s colour (variegation); a monstera's (`split`) cut into fingers. */
+function leaf(
+  m: Model,
+  base: V3,
+  dir: V3,
+  len: number,
+  wid: number,
+  color: string,
+  opts: {
+    shape?: LeafShape;
+    fold?: number;
+    droop?: number;
+    tip?: string;
+    edge?: string;
+  } = {},
+): void {
+  const shape = opts.shape ?? "oval";
+  const width = LEAF_WIDTH[shape];
+  const fold = opts.fold ?? 0.15;
+  const droop = opts.droop ?? 0.2;
+  const d = dir.clone().normalize();
+  const flat = v3(-d.z, 0, d.x);
+  const side = flat.lengthSq() > 1e-6 ? flat.normalize() : v3(1, 0, 0);
+  const up = side.clone().cross(d).normalize();
+  if (up.y < 0) up.negate();
+  const segs = shape === "split" ? 12 : 8;
+  const across = [0, 0.45, 1];
+  const c0 = new THREE.Color(color).multiplyScalar(0.7);
+  const c1 = new THREE.Color(opts.tip ?? color);
+  const rim = opts.edge ? new THREE.Color(opts.edge) : null;
+  const point = (t: number, u: number, s: number) => {
+    const w = (width(t) * wid) / 2;
+    return base
+      .clone()
+      .addScaledVector(d, len * t)
+      .add(v3(0, -droop * len * t * t, 0))
+      .addScaledVector(side, s * u * w)
+      .addScaledVector(up, fold * u * u * w);
+  };
+  const colour = (t: number, u: number) => {
+    const c = c0.clone().lerp(c1, Math.min(1, t * 1.3));
+    if (u === 0) c.multiplyScalar(1.12);
+    if (rim && u === 1) c.lerp(rim, 0.75);
+    return c;
+  };
+  const pos: number[] = [];
+  const col: number[] = [];
+  for (const s of [-1, 1])
+    for (let i = 0; i < segs; i++) {
+      const ta = i / segs;
+      const tb = (i + 1) / segs;
+      for (let j = 0; j + 1 < across.length; j++) {
+        // A monstera's splits: its outer half cut into fingers.
+        if (
+          shape === "split" &&
+          j === 1 &&
+          i % 3 === 1 &&
+          ta > 0.1 &&
+          tb < 0.95
+        )
+          continue;
+        const ua = across[j]!;
+        const ub = across[j + 1]!;
+        for (const [t, u] of [
+          [ta, ua],
+          [ta, ub],
+          [tb, ub],
+          [ta, ua],
+          [tb, ub],
+          [tb, ua],
+        ] as const) {
+          const p = point(t, u, s);
+          const c = colour(t, u);
+          pos.push(p.x, p.y, p.z);
+          col.push(c.r, c.g, c.b);
+        }
+      }
+    }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  g.computeVertexNormals();
+  m.add(g, SHEET);
+}
+
+/** A stalk or vine through points, as short cylinders. */
+function stalk(m: Model, pts: V3[], r: number, color: string): void {
+  const material = mat(color, 0.85);
+  for (let i = 0; i + 1 < pts.length; i++)
+    limb(m, pts[i]!, pts[i + 1]!, r, r * 0.9, material, 5);
+}
+
+/** Points along a stalk from `base` toward `dir`, `len` long, bending
+ * down by `sag` (of its length) toward its end. */
+function arc(base: V3, dir: V3, len: number, sag: number, n = 5): V3[] {
+  const pts: V3[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    pts.push(
+      base
+        .clone()
+        .addScaledVector(dir, len * t)
+        .add(v3(0, -sag * len * t * t, 0)),
+    );
+  }
+  return pts;
+}
+
+/** A snake plant: stiff sword leaves standing straight up, banded dark
+ * green with a yellow rim. */
+function snakePlant(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.62, Math.min(0.24, H * 0.3), potColor);
+  for (let i = 0; i < 9; i++) {
+    const az = i * 2.39996 + rand() * 0.4;
+    const r = R * 0.3 * rand();
+    leaf(
+      m,
+      v3(Math.cos(az) * r, top, Math.sin(az) * r),
+      aim(az, (76 + rand() * 12) * DEG),
+      (H - top) * (0.55 + 0.45 * rand()),
+      0.06 + 0.025 * rand(),
+      shades("#35593a", rand),
+      { shape: "strap", fold: 0.35, droop: 0.02, edge: "#c8bf62" },
+    );
+  }
+}
+
+/** A ZZ plant: arching stems set with pairs of glossy oval leaflets. */
+function zzPlant(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.5, Math.min(0.24, H * 0.32), potColor);
+  const green = "#2d5224";
+  for (let i = 0; i < 9; i++) {
+    const az = i * 2.39996 + rand() * 0.4;
+    const len = (H - top) * (0.7 + 0.35 * rand());
+    const dir = aim(az, (62 + rand() * 20) * DEG);
+    const pts = arc(v3(0, top, 0), dir, len, 0.15);
+    stalk(m, pts, 0.006, "#4a6a2e");
+    const out = v3(Math.cos(az), 0, Math.sin(az));
+    for (let k = 2; k <= 5; k++) {
+      const p = pts[k]!;
+      for (const s of [-1, 1])
+        leaf(
+          m,
+          p,
+          aim(az + s * 1.1, 15 * DEG).addScaledVector(out, 0.3),
+          0.075,
+          0.035,
+          shades(green, rand),
+          { fold: 0.12, droop: 0.15, tip: tone(green, 1.12) },
+        );
+    }
+    leaf(m, pts[5]!, dir, 0.07, 0.034, green, { droop: 0.2 });
+  }
+}
+
+/** A peace lily: glossy lance-oval leaves arching from long stalks, and
+ * white spathes on stems standing above them. */
+function peaceLily(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.5, Math.min(0.22, H * 0.32), potColor);
+  const h = H - top;
+  for (let i = 0; i < 13; i++) {
+    const az = i * 2.39996 + rand() * 0.3;
+    const end = v3(0, top, 0).addScaledVector(
+      aim(az, (58 + rand() * 18) * DEG),
+      h * (0.35 + 0.15 * rand()),
+    );
+    stalk(m, [v3(0, top, 0), end], 0.004, "#3f6a2e");
+    leaf(
+      m,
+      end,
+      aim(az, (25 + rand() * 25) * DEG),
+      h * 0.48,
+      h * 0.17,
+      shades("#2b5527", rand),
+      {
+        droop: 0.4,
+        fold: 0.2,
+        tip: "#3d6b33",
+      },
+    );
+  }
+  for (let i = 0; i < 3; i++) {
+    const az = rand() * Math.PI * 2;
+    const head = v3(
+      Math.cos(az) * R * 0.15,
+      top + h * (0.85 + 0.12 * rand()),
+      Math.sin(az) * R * 0.15,
+    );
+    stalk(m, [v3(0, top, 0), head], 0.003, "#4a7a35");
+    leaf(
+      m,
+      head.clone().add(v3(0, -0.02, 0)),
+      aim(az + Math.PI, 80 * DEG),
+      0.11,
+      0.06,
+      "#f6f5ef",
+      {
+        fold: 0.55,
+        droop: -0.15,
+        tip: "#ffffff",
+      },
+    );
+    limb(
+      m,
+      head,
+      head.clone().add(v3(0, 0.05, 0)),
+      0.006,
+      0.004,
+      mat("#efe6c4", 0.8),
+      6,
+    );
+  }
+}
+
+/** Pothos or heartleaf philodendron: a mound of heart-shaped leaves, and
+ * vines trailing over the rim to the floor (from a hanging pot when
+ * `hanging`). */
+function trailing(
+  m: Model,
+  rand: () => number,
+  potColor: string,
+  opts: { green: string; tip?: string; vines: number; hanging?: boolean },
+): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const potH = Math.min(0.18, H * 0.3);
+  const r = R * 0.45;
+  const y0 = opts.hanging ? H - potH - 0.02 : 0;
+  const top = pot(m, r, potH, potColor, { y: y0 });
+  if (opts.hanging) {
+    const hook = v3(0, H + 0.45, 0);
+    for (let k = 0; k < 3; k++) {
+      const a = (k * Math.PI * 2) / 3;
+      limb(
+        m,
+        v3(Math.cos(a) * r, top, Math.sin(a) * r),
+        hook,
+        0.002,
+        0.002,
+        mat("#d9d2c1", 0.9),
+        4,
+      );
+    }
+  }
+  const leafOf = (p: V3, dir: V3, size: number) =>
+    leaf(m, p, dir, size, size * 0.85, shades(opts.green, rand), {
+      shape: "heart",
+      fold: 0.2,
+      droop: 0.25,
+      ...(opts.tip ? { tip: opts.tip } : {}),
+    });
+  // The mound over the soil.
+  for (let i = 0; i < 16; i++) {
+    const az = i * 2.39996 + rand() * 0.4;
+    const p = v3(
+      Math.cos(az) * r * 0.6 * rand(),
+      top + 0.02 + 0.06 * rand(),
+      Math.sin(az) * r * 0.6 * rand(),
+    );
+    stalk(m, [v3(p.x * 0.5, top, p.z * 0.5), p], 0.002, "#5b7f3a");
+    leafOf(p, aim(az, (20 + rand() * 30) * DEG), 0.07 + 0.03 * rand());
+  }
+  // The vines: over the rim and down, a leaf every few inches.
+  for (let v = 0; v < opts.vines; v++) {
+    const az = v * 2.39996 + rand() * 0.5;
+    const out = v3(Math.cos(az), 0, Math.sin(az));
+    const drop = Math.max(0.05, (top - 0.02) * (0.5 + 0.5 * rand()));
+    const pts: V3[] = [
+      v3(0, top, 0).addScaledVector(out, r * 0.7),
+      v3(0, top + 0.02, 0).addScaledVector(out, r * 1.08),
+    ];
+    const steps = Math.max(2, Math.round(drop / 0.06));
+    for (let k = 1; k <= steps; k++)
+      pts.push(
+        v3(0, top - (drop * k) / steps, 0)
+          .addScaledVector(
+            out,
+            r * 1.15 + 0.03 * Math.sin(k * 1.3 + v) + 0.04 * (k / steps),
+          )
+          .add(
+            v3(-out.z, 0, out.x).multiplyScalar(
+              0.02 * Math.sin(k * 0.9 + v * 2),
+            ),
+          ),
+      );
+    stalk(m, pts, 0.0025, "#5b7f3a");
+    for (let k = 2; k < pts.length; k++)
+      leafOf(
+        pts[k]!,
+        aim(az + (k % 2 ? 0.7 : -0.7), (-35 + rand() * 30) * DEG),
+        0.055 + 0.02 * rand(),
+      );
+  }
+}
+
+/** A monstera: big split leaves held out on long curving stalks. */
+function monstera(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.38, Math.min(0.32, H * 0.28), potColor);
+  const h = H - top;
+  for (let i = 0; i < 9; i++) {
+    const az = i * 2.39996 + rand() * 0.4;
+    const out = v3(Math.cos(az), 0, Math.sin(az));
+    const reach = R * (0.2 + 0.4 * rand());
+    const lift = h * (0.45 + 0.4 * rand());
+    const end = v3(0, top + lift, 0).addScaledVector(out, reach);
+    const mid = v3(0, top + lift * 0.7, 0).addScaledVector(out, reach * 0.35);
+    stalk(m, [v3(0, top, 0), mid, end], 0.008, "#3d6a2e");
+    const len = Math.min(R * (0.55 + 0.2 * rand()), h * 0.55);
+    leaf(
+      m,
+      end,
+      aim(az, (10 + rand() * 25) * DEG),
+      len,
+      len * 0.95,
+      shades("#2b5926", rand),
+      {
+        shape: "split",
+        droop: 0.35,
+        fold: 0.08,
+        tip: "#336a2c",
+      },
+    );
+  }
+}
+
+/** A tree in a pot (a fiddle-leaf fig, a rubber plant): a trunk or two,
+ * big leaves spiralling up its top part on short stalks. */
+function pottedTree(
+  m: Model,
+  rand: () => number,
+  potColor: string,
+  opts: {
+    green: string;
+    shape: LeafShape;
+    len: number;
+    wid: number;
+    stems: number;
+    basket?: boolean;
+    sheath?: string;
+  },
+): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.45, Math.min(0.4, H * 0.25), potColor, {
+    ...(opts.basket ? { basket: true } : {}),
+  });
+  const h = H - top;
+  const scale = Math.min(1.3, Math.max(0.6, H / 1.5));
+  for (let s = 0; s < opts.stems; s++) {
+    const lean = v3(
+      (rand() - 0.5) * 0.12,
+      1,
+      (rand() - 0.5) * 0.12,
+    ).normalize();
+    const tall = h * (s === 0 ? 0.88 : 0.65 + 0.15 * rand());
+    const pts: V3[] = [];
+    for (let k = 0; k <= 4; k++)
+      pts.push(
+        v3((s - (opts.stems - 1) / 2) * 0.03, top, 0)
+          .addScaledVector(lean, (tall * k) / 4)
+          .add(
+            v3(0.015 * Math.sin(k * 1.7 + s), 0, 0.015 * Math.cos(k * 1.3 + s)),
+          ),
+      );
+    stalk(m, pts, 0.014, "#6b5a45");
+    const n = Math.round(18 + 10 * (tall / h));
+    for (let i = 0; i < n; i++) {
+      const t = 0.22 + 0.78 * (i / n);
+      const k = Math.min(3, Math.floor(t * 4));
+      const p = pts[k]!.clone().lerp(pts[k + 1]!, t * 4 - k);
+      const az = i * 2.39996 + s + rand() * 0.3;
+      const base = p.clone().addScaledVector(aim(az, 0), 0.03);
+      const len = opts.len * scale * (0.75 + 0.35 * rand()) * (1 - 0.25 * t);
+      leaf(
+        m,
+        base,
+        aim(az, (-5 + rand() * 40) * DEG),
+        len,
+        len * opts.wid,
+        shades(opts.green, rand),
+        {
+          shape: opts.shape,
+          droop: 0.15,
+          fold: 0.2,
+          tip: tone(opts.green, 1.12),
+        },
+      );
+    }
+    if (opts.sheath)
+      limb(
+        m,
+        pts[4]!,
+        pts[4]!.clone().add(v3(0, 0.06, 0)),
+        0.008,
+        0.002,
+        mat(opts.sheath, 0.6),
+        6,
+      );
+  }
+}
+
+/** A palm frond from `base`: its stalk rising then arching out toward
+ * `az`, narrow leaflets in pairs along it. */
+function frond(
+  m: Model,
+  rand: () => number,
+  base: V3,
+  az: number,
+  len: number,
+  rise: number,
+  color: string,
+  leaflet: number,
+): void {
+  const out = v3(Math.cos(az), 0, Math.sin(az));
+  const side = v3(-out.z, 0, out.x);
+  const pts: V3[] = [];
+  for (let i = 0; i <= 10; i++) {
+    const t = i / 10;
+    pts.push(
+      base
+        .clone()
+        .addScaledVector(out, len * t * 0.85)
+        .add(v3(0, rise * Math.sin(t * Math.PI * 0.55) - len * 0.3 * t * t, 0)),
+    );
+  }
+  strip(
+    m,
+    pts,
+    pts.map((_, i) => 0.009 * (1 - i / 11)),
+    side,
+    tone(color, 0.85),
+  );
+  for (let i = 2; i < 10; i++) {
+    const p = pts[i]!;
+    const ll = leaflet * Math.sin((i / 10) * Math.PI) * (0.85 + 0.3 * rand());
+    for (const s of [-1, 1]) {
+      const dir = side
+        .clone()
+        .multiplyScalar(s)
+        .addScaledVector(out, 0.55)
+        .add(v3(0, -0.35, 0))
+        .normalize();
+      strip(
+        m,
+        [
+          p,
+          p
+            .clone()
+            .addScaledVector(dir, ll * 0.5)
+            .add(v3(0, 0.01, 0)),
+          p.clone().addScaledVector(dir, ll),
+        ],
+        [0.02, 0.016, 0.002],
+        out,
+        color,
+      );
+    }
+  }
+}
+
+/** An areca or parlor palm: clumped canes, arching feathery fronds. */
+function pottedPalm(
+  m: Model,
+  rand: () => number,
+  potColor: string,
+  basket: boolean,
+): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.42, Math.min(0.35, H * 0.25), potColor, { basket });
+  const h = H - top;
+  const n = Math.round(9 + 4 * Math.min(1, h));
+  for (let i = 0; i < n; i++) {
+    const az = i * 2.39996 + rand() * 0.4;
+    const r = R * 0.15 * rand();
+    const cane = v3(Math.cos(az) * r, top, Math.sin(az) * r);
+    const up = cane
+      .clone()
+      .add(
+        v3(Math.cos(az) * 0.03, h * (0.2 + 0.35 * rand()), Math.sin(az) * 0.03),
+      );
+    stalk(m, [cane, up], 0.008, "#7c8d4a");
+    frond(
+      m,
+      rand,
+      up,
+      az,
+      R * (0.8 + 0.3 * rand()),
+      (H - up.y) * 0.75,
+      shades("#4f7f34", rand),
+      R * 0.4,
+    );
+  }
+}
+
+/** A bird of paradise: big paddle leaves held high on upright stalks. */
+function birdOfParadise(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.38, Math.min(0.4, H * 0.25), potColor, {
+    basket: true,
+  });
+  const h = H - top;
+  for (let i = 0; i < 9; i++) {
+    const az = i * 2.39996 + rand() * 0.3;
+    const end = v3(
+      Math.cos(az) * R * 0.15,
+      top + h * (0.4 + 0.25 * rand()),
+      Math.sin(az) * R * 0.15,
+    );
+    stalk(m, [v3(0, top, 0), end], 0.009, "#57744a");
+    const len = h * 0.42;
+    leaf(
+      m,
+      end,
+      aim(az, (55 + rand() * 22) * DEG),
+      len,
+      len * 0.38,
+      shades("#41693a", rand),
+      {
+        droop: 0.18,
+        fold: 0.18,
+        tip: "#4c7742",
+      },
+    );
+  }
+}
+
+/** A dracaena: bare canes of different heights, each topped with a
+ * fountain of long arching strap leaves. */
+function dracaena(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.45, Math.min(0.32, H * 0.25), potColor);
+  const h = H - top;
+  const heights = [0.55, 0.75, 0.95];
+  heights.forEach((f, c) => {
+    const a = c * 2.1;
+    const base = v3(Math.cos(a) * R * 0.15, top, Math.sin(a) * R * 0.15);
+    const head = base
+      .clone()
+      .add(v3(0.02 * Math.cos(a), h * f - 0.12, 0.02 * Math.sin(a)));
+    stalk(m, [base, head], 0.016, "#8b7355");
+    for (let i = 0; i < 18; i++) {
+      const az = i * 2.39996 + c + rand() * 0.3;
+      leaf(
+        m,
+        head,
+        aim(az, (-10 + rand() * 70) * DEG),
+        0.3 * Math.min(1.2, H / 1.3),
+        0.04,
+        shades("#3f6f2e", rand),
+        {
+          shape: "lance",
+          droop: 0.45,
+          fold: 0.2,
+          tip: "#6f9a3e",
+          edge: "#b4c06a",
+        },
+      );
+    }
+  });
+}
+
+/** A spider plant: a fountain of arching striped blades, and runners
+ * hanging with baby plants. */
+function spiderPlant(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.45, Math.min(0.2, H * 0.45), potColor);
+  const blades = (at: V3, n: number, len: number) => {
+    for (let i = 0; i < n; i++) {
+      const az = i * 2.39996 + rand() * 0.4;
+      leaf(
+        m,
+        at,
+        aim(az, (25 + rand() * 50) * DEG),
+        len * (0.8 + 0.4 * rand()),
+        0.03,
+        "#dfe6c0",
+        {
+          shape: "strap",
+          droop: 0.65,
+          fold: 0.15,
+          edge: "#4f8034",
+        },
+      );
+    }
+  };
+  blades(v3(0, top, 0), 30, Math.max(0.25, R * 1.1));
+  for (let k = 0; k < 3; k++) {
+    const az = k * 2.1 + rand();
+    const out = v3(Math.cos(az), 0, Math.sin(az));
+    const end = v3(0, Math.max(0.04, top - 0.15), 0).addScaledVector(
+      out,
+      R * 1.05,
+    );
+    const mid = v3(0, top + 0.06, 0).addScaledVector(out, R * 0.7);
+    stalk(m, [v3(0, top, 0), mid, end], 0.002, "#c9c79a");
+    blades(end, 7, 0.08);
+  }
+}
+
+/** An aloe: a rosette of thick, tapering grey-green leaves standing up
+ * and out, flecked pale. */
+function aloe(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.6, Math.min(0.14, H * 0.35), potColor);
+  for (let i = 0; i < 13; i++) {
+    const inner = i / 13;
+    const az = i * 2.39996 + rand() * 0.2;
+    leaf(
+      m,
+      v3(0, top + 0.01, 0),
+      aim(az, (30 + 45 * inner + rand() * 10) * DEG),
+      (H - top) * (0.95 - 0.3 * inner),
+      0.045,
+      shades("#7c9c6c", rand),
+      { shape: "lance", fold: 0.55, droop: 0.12, tip: "#9bb58a" },
+    );
+  }
+}
+
+/** A rosette of thick pointed leaves (an echeveria): low outside, rising
+ * to the middle, blushing at their tips. */
+function echeveria(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.6, Math.min(0.08, H * 0.5), potColor);
+  const n = 22;
+  for (let i = 0; i < n; i++) {
+    const inner = i / n;
+    const az = i * 2.39996;
+    const len = R * (0.85 - 0.5 * inner);
+    leaf(
+      m,
+      v3(0, top + 0.004 + 0.02 * inner, 0),
+      aim(az, (8 + 62 * inner) * DEG),
+      len,
+      len * 0.6,
+      "#8db29b",
+      {
+        fold: 0.35,
+        droop: 0,
+        tip: "#a3c4b0",
+        edge: "#d79aa3",
+      },
+    );
+  }
+}
+
+/** A pilea: round leaves held flat on thin stalks off a short stem. */
+function pilea(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.55, Math.min(0.14, H * 0.4), potColor);
+  const h = H - top;
+  const stem = [v3(0, top, 0), v3(0.005, top + h * 0.45, 0)];
+  stalk(m, stem, 0.006, "#6c7d45");
+  for (let i = 0; i < 15; i++) {
+    const az = i * 2.39996 + rand() * 0.3;
+    const p = stem[0]!.clone().lerp(stem[1]!, 0.3 + 0.7 * (i / 15));
+    const reach = Math.min(R * 0.8, 0.1 + 0.06 * rand());
+    const end = p
+      .clone()
+      .addScaledVector(aim(az, (20 + rand() * 40) * DEG), reach);
+    stalk(m, [p, end], 0.0015, "#7a8f4a");
+    const size = Math.min(R * 0.5, 0.06 + 0.03 * rand());
+    const d = aim(az, (5 + rand() * 20) * DEG);
+    leaf(
+      m,
+      end.clone().addScaledVector(d, -size / 2),
+      d,
+      size,
+      size,
+      shades("#5e8f3a", rand),
+      {
+        shape: "round",
+        droop: 0,
+        fold: 0.08,
+      },
+    );
+  }
+}
+
+/** A calathea: upright oval leaves on stalks, dark rims, pale feathering
+ * toward their tips. */
+function calathea(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.48, Math.min(0.2, H * 0.32), potColor);
+  const h = H - top;
+  for (let i = 0; i < 13; i++) {
+    const az = i * 2.39996 + rand() * 0.3;
+    const end = v3(
+      Math.cos(az) * R * 0.15,
+      top + h * (0.25 + 0.3 * rand()),
+      Math.sin(az) * R * 0.15,
+    );
+    stalk(m, [v3(0, top, 0), end], 0.003, "#59724a");
+    const len = h * 0.42;
+    leaf(m, end, aim(az, (45 + rand() * 25) * DEG), len, len * 0.5, "#3e6a3d", {
+      droop: 0.12,
+      fold: 0.15,
+      tip: "#8fae78",
+      edge: "#25432a",
+    });
+  }
+}
+
+/** A phalaenopsis orchid: broad leaves lying low, a staked spike arching
+ * over with white flowers. */
+function orchid(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.5, Math.min(0.13, H * 0.25), potColor);
+  for (let i = 0; i < 4; i++) {
+    const az = i * Math.PI * 0.55 + rand() * 0.3;
+    leaf(
+      m,
+      v3(0, top + 0.01, 0),
+      aim(az, 12 * DEG),
+      Math.min(0.17, R * 0.9),
+      0.07,
+      shades("#3f6a35", rand),
+      {
+        droop: 0.3,
+        fold: 0.25,
+      },
+    );
+  }
+  const az = rand() * Math.PI * 2;
+  const out = v3(Math.cos(az), 0, Math.sin(az));
+  const stake = v3(0, top + (H - top) * 0.62, 0);
+  stalk(m, [v3(0, top, 0), stake], 0.0025, "#56703b");
+  const spike = [stake];
+  for (let k = 1; k <= 5; k++)
+    spike.push(
+      stake
+        .clone()
+        .addScaledVector(out, 0.045 * k)
+        .add(v3(0, 0.06 * Math.sin(k * 0.6) - 0.012 * k * k * 0.5, 0)),
+    );
+  stalk(m, spike, 0.002, "#56703b");
+  const side = v3(-out.z, 0, out.x);
+  for (let k = 1; k <= 5; k++) {
+    const c = spike[k]!.clone().addScaledVector(out, 0.012);
+    const size = 0.055 - 0.004 * k;
+    for (let p = 0; p < 5; p++) {
+      const a = (p * Math.PI * 2) / 5 + 0.3;
+      const dir = v3(0, Math.cos(a), 0).addScaledVector(side, Math.sin(a));
+      leaf(m, c, dir, size, size * 0.85, "#f7f1f4", {
+        fold: 0.1,
+        droop: 0,
+        tip: "#ffffff",
+      });
+    }
+    m.sphere(
+      size * 0.18,
+      c.x + out.x * 0.006,
+      c.y,
+      c.z + out.z * 0.006,
+      mat("#c24f8a", 0.6),
+    );
+  }
+}
+
+/** A jade plant: thick branching stems, clusters of fleshy oval leaves. */
+function jade(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.6, Math.min(0.14, H * 0.32), potColor);
+  const h = H - top;
+  const trunk = v3(0, top + h * 0.35, 0);
+  stalk(m, [v3(0, top, 0), trunk], 0.012, "#6d6a3e");
+  for (let b = 0; b < 5; b++) {
+    const az = b * 2.39996 + rand() * 0.4;
+    const tip = trunk
+      .clone()
+      .addScaledVector(
+        aim(az, (30 + rand() * 40) * DEG),
+        h * (0.35 + 0.25 * rand()),
+      );
+    stalk(m, [trunk, tip], 0.008, "#6f7a3f");
+    for (let k = 0; k < 9; k++) {
+      const a = rand() * Math.PI * 2;
+      const r = 0.012 + 0.03 * rand();
+      clump(
+        m,
+        tip.x + Math.cos(a) * r,
+        tip.y - 0.01 + 0.03 * rand(),
+        tip.z + Math.sin(a) * r,
+        0.02,
+        0.008,
+        0.014,
+        "#4e7d3c",
+        rand,
+        0.05,
+        1,
+        { light: 0.3 },
+      );
+    }
+  }
+}
+
+/** An indoor olive: a slim grey trunk under a loose silvery crown. */
+function olive(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.42, Math.min(0.4, H * 0.22), potColor, {
+    basket: true,
+  });
+  const h = H - top;
+  const crown = v3(0.02, top + h * 0.68, -0.01);
+  stalk(
+    m,
+    [v3(0, top, 0), v3(-0.015, top + h * 0.35, 0.01), crown],
+    0.018,
+    "#7a7466",
+  );
+  foliage(
+    m,
+    crown.x,
+    crown.y,
+    crown.z,
+    R * 0.7,
+    h * 0.26,
+    R * 0.7,
+    "#7f906a",
+    rand,
+    "fine",
+    1.2,
+  );
+  for (let k = 0; k < 3; k++) {
+    const a = k * 2.1 + rand();
+    foliage(
+      m,
+      crown.x + Math.cos(a) * R * 0.45,
+      crown.y + h * (0.08 + 0.1 * rand()),
+      crown.z + Math.sin(a) * R * 0.45,
+      R * 0.35,
+      h * 0.14,
+      R * 0.35,
+      "#8a9b74",
+      rand,
+      "fine",
+      1,
+    );
+  }
+}
+
+/** Herb pots in a row: basil, rosemary, parsley. */
+function herbs(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const r = Math.min(W / 6, D / 2) * 0.85;
+  const potH = Math.min(0.13, H * 0.45);
+  [-1, 0, 1].forEach((k) => {
+    const x = (k * W) / 3;
+    const top = pot(m, r, potH, potColor, { x });
+    const h = H - top;
+    if (k === -1)
+      for (let i = 0; i < 14; i++) {
+        const az = i * 2.39996;
+        const p = v3(
+          x + Math.cos(az) * r * 0.3,
+          top + h * (0.2 + 0.6 * rand()),
+          Math.sin(az) * r * 0.3,
+        );
+        leaf(m, p, aim(az, 20 * DEG), 0.045, 0.03, shades("#4f9a3a", rand), {
+          fold: 0.3,
+          droop: 0.2,
+        });
+      }
+    else if (k === 0)
+      for (let i = 0; i < 16; i++)
+        blade(
+          m,
+          v3(x + (rand() - 0.5) * r, top, (rand() - 0.5) * r),
+          rand() * Math.PI * 2,
+          h * (0.7 + 0.3 * rand()),
+          0.15,
+          0.006,
+          "#5b7a5a",
+        );
+    else
+      foliage(
+        m,
+        x,
+        top + h * 0.5,
+        0,
+        r * 1.1,
+        h * 0.45,
+        r * 1.1,
+        "#3f7f2e",
+        rand,
+        "fine",
+        0.8,
+      );
+  });
+}
+
+/** A columnar cactus with a couple of arms. */
+function cactus(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.6, Math.min(0.14, H * 0.25), potColor);
+  const h = H - top;
+  const body = mat("#4b7c46", 0.8);
+  const r = Math.min(R * 0.35, h * 0.14);
+  m.cyl(r * 0.95, r, h - r, 0, top, 0, body, 12);
+  m.sphere(r * 0.95, 0, top + h - r, 0, body, 1, 0.8, 1);
+  for (const s of [-1, 1]) {
+    const y = top + h * (0.35 + 0.15 * rand());
+    const ar = r * 0.62;
+    const reach = r * 1.9;
+    limb(m, v3(0, y, 0), v3(s * reach, y + ar * 0.4, 0), ar, ar, body, 10);
+    const up = h * (0.22 + 0.1 * rand());
+    m.cyl(ar * 0.95, ar, up, s * reach, y, 0, body, 10);
+    m.sphere(ar * 0.95, s * reach, y + up, 0, body, 1, 0.8, 1);
+  }
+}
+
+/** A bonsai: a shallow tray, a twisting trunk, flat pads of foliage. */
+function bonsai(m: Model, rand: () => number, potColor: string): void {
+  const { W, D, H } = m;
+  m.box(W * 0.85, 0.05, D * 0.7, 0, 0, 0, mat(potColor, 0.55));
+  m.box(W * 0.8, 0.008, D * 0.62, 0, 0.045, 0, mat("#3a2a1f", 0.95));
+  const pts = [v3(0, 0.05, 0)];
+  for (let k = 1; k <= 4; k++)
+    pts.push(
+      v3(
+        0.06 * Math.sin(k * 1.4),
+        0.05 + (H * 0.55 * k) / 4,
+        0.03 * Math.cos(k * 1.1),
+      ),
+    );
+  stalk(m, pts, 0.018, "#5d4a3a");
+  for (let b = 0; b < 4; b++) {
+    const p = pts[1 + Math.min(3, b)]!;
+    const az = b * 2.2 + rand();
+    const end = p.clone().addScaledVector(aim(az, 15 * DEG), W * 0.3);
+    stalk(m, [p, end], 0.007, "#5d4a3a");
+    clump(
+      m,
+      end.x,
+      end.y + 0.02,
+      end.z,
+      W * 0.16,
+      H * 0.07,
+      D * 0.22,
+      "#3d6230",
+      rand,
+      0.2,
+      2,
+      { light: 0.6 },
+    );
+  }
+  const crown = pts[4]!;
+  clump(
+    m,
+    crown.x,
+    crown.y + 0.03,
+    crown.z,
+    W * 0.2,
+    H * 0.09,
+    D * 0.25,
+    "#3d6230",
+    rand,
+    0.2,
+    2,
+    { light: 0.6 },
+  );
+}
+
+/** A bushy leafy plant (the catalog's plain "plant"): oval leaves on
+ * stalks, low and spreading when small, taller and variegated when not. */
+function leafy(
+  m: Model,
+  rand: () => number,
+  potColor: string,
+  small: boolean,
+): void {
+  const { W, D, H } = m;
+  const R = Math.min(W, D) / 2;
+  const top = pot(m, R * 0.5, Math.min(0.22, H * 0.35), potColor);
+  const h = H - top;
+  const n = small ? 16 : 14;
+  for (let i = 0; i < n; i++) {
+    const az = i * 2.39996 + rand() * 0.3;
+    const end = v3(
+      Math.cos(az) * R * 0.12,
+      top + h * (small ? 0.1 + 0.2 * rand() : 0.25 + 0.3 * rand()),
+      Math.sin(az) * R * 0.12,
+    );
+    stalk(m, [v3(0, top, 0), end], 0.003, "#4f7a3a");
+    const len = small ? Math.min(R * 0.6, 0.09) : h * 0.45;
+    leaf(
+      m,
+      end,
+      aim(az, ((small ? 15 : 35) + rand() * 30) * DEG),
+      len,
+      len * (small ? 0.7 : 0.42),
+      shades(small ? "#2f6a2c" : "#4a7a3e", rand),
+      {
+        droop: 0.25,
+        fold: 0.2,
+        ...(small ? {} : { tip: "#a8c08a" }),
+      },
+    );
+  }
+}
+
+/** The item as a houseplant in its pot (its catalog drawing a houseplant,
+ * a plain plant, a cactus or a bonsai), else false. */
+function houseplant(m: Model, item: Item3d, o: Opts): boolean {
+  const spec = item.model;
+  if (!spec) return false;
+  const kind =
+    spec.draw === "houseplant"
+      ? str(o, "kind", "")
+      : spec.draw === "cactus"
+        ? "cactus"
+        : spec.kind === "bonsai"
+          ? "bonsai"
+          : spec.draw === "plant"
+            ? /hanging/.test(spec.kind)
+              ? "pothosHanging"
+              : /large|office/.test(spec.kind)
+                ? "dracaena"
+                : /small/.test(spec.kind)
+                  ? "leafySmall"
+                  : "leafy"
+            : "";
+  if (!kind) return false;
+  const rand = seeded(item.id);
+  const own = spec.tint ?? null;
+  const p = (d: string) => own ?? d;
+  switch (kind) {
+    case "snake":
+      snakePlant(m, rand, p(POT.charcoal));
+      return true;
+    case "zz":
+      zzPlant(m, rand, p(POT.white));
+      return true;
+    case "peace":
+      peaceLily(m, rand, p(POT.white));
+      return true;
+    case "pothos":
+      trailing(m, rand, p(POT.white), {
+        green: "#4f7f34",
+        tip: "#a9b65a",
+        vines: 6,
+      });
+      return true;
+    case "pothosHanging":
+      trailing(m, rand, p(POT.white), {
+        green: "#4f7f34",
+        tip: "#a9b65a",
+        vines: 8,
+        hanging: true,
+      });
+      return true;
+    case "philodendron":
+      trailing(m, rand, p(POT.terracotta), { green: "#3c6e2c", vines: 4 });
+      return true;
+    case "monstera":
+      monstera(m, rand, p(POT.charcoal));
+      return true;
+    case "fiddle":
+      pottedTree(m, rand, p(POT.basket), {
+        green: "#3a6a2c",
+        shape: "fiddle",
+        len: 0.34,
+        wid: 0.66,
+        stems: 1,
+        basket: !own,
+      });
+      return true;
+    case "rubber":
+      pottedTree(m, rand, p(POT.charcoal), {
+        green: "#26372a",
+        shape: "oval",
+        len: 0.27,
+        wid: 0.5,
+        stems: 2,
+        sheath: "#8a3b3b",
+      });
+      return true;
+    case "palm":
+      pottedPalm(m, rand, p(POT.basket), !own);
+      return true;
+    case "bird":
+      birdOfParadise(m, rand, p(POT.basket));
+      return true;
+    case "dracaena":
+      dracaena(m, rand, p(POT.white));
+      return true;
+    case "spider":
+      spiderPlant(m, rand, p(POT.white));
+      return true;
+    case "aloe":
+      aloe(m, rand, p(POT.terracotta));
+      return true;
+    case "succulent":
+      echeveria(m, rand, p(POT.terracotta));
+      return true;
+    case "pilea":
+      pilea(m, rand, p(POT.white));
+      return true;
+    case "calathea":
+      calathea(m, rand, p(POT.sage));
+      return true;
+    case "orchid":
+      orchid(m, rand, p(POT.white));
+      return true;
+    case "jade":
+      jade(m, rand, p(POT.terracotta));
+      return true;
+    case "olive":
+      olive(m, rand, p(POT.basket));
+      return true;
+    case "herbs":
+      herbs(m, rand, p(POT.terracotta));
+      return true;
+    case "fern": {
+      const top = pot(
+        m,
+        Math.min(m.W, m.D) * 0.25,
+        Math.min(0.24, m.H * 0.4),
+        p(POT.white),
+      );
+      fern(new Lifted(m, top, m.H - top), rand, "#4f7f34");
+      return true;
+    }
+    case "cactus":
+      cactus(m, rand, p(POT.terracotta));
+      return true;
+    case "bonsai":
+      bonsai(m, rand, p("#3b3330"));
+      return true;
+    case "leafySmall":
+      leafy(m, rand, p(POT.terracotta), true);
+      return true;
+    case "leafy":
+      leafy(m, rand, p(POT.white), false);
       return true;
   }
   return false;

@@ -182,6 +182,9 @@ const GROUNDED_CATEGORIES = new Set([
   "outdoor",
 ]);
 
+/** Catalog drawings of houseplants, each with its own model. */
+const HOUSEPLANT_DRAWS = new Set(["houseplant", "plant", "cactus"]);
+
 /** Items modelled rather than extruded (see Item3d.shape). */
 function itemShape(
   kind: string,
@@ -192,6 +195,9 @@ function itemShape(
   if (/stand|pedestal|basket/.test(kind)) return "block";
   if (/shower(?!_bench)/.test(kind)) return "shower";
   if (/tree|olive/.test(kind) && entry?.category === "outdoor") return "tree";
+  // Houseplants are modelled species by species (outdoor-models.ts).
+  if (entry && (HOUSEPLANT_DRAWS.has(entry.draw) || entry.id === "bonsai"))
+    return "block";
   if (
     /plant|monstera|fiddle|palm|cactus|bonsai|fern|succulent|orchid|pothos|calathea|_zz|rubber|dracaena|jade|pilea|aloe|herb|shrub|hedge|houseplant|bird_of_paradise|philodendron|spider|tree|olive/.test(
       kind,
