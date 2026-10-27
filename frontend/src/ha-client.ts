@@ -501,6 +501,11 @@ const OPENING_STYLE_KEYS = [
   "sill_m",
   "height_m",
   "trim_finish",
+  "trim_width_cm",
+  "trim_top_cm",
+  "trim_bottom_cm",
+  "trim_bezel_cm",
+  "trim_bezel_color",
 ] as const;
 
 /** The last roof save had to leave the light strips out (restart needed). */

@@ -226,6 +226,15 @@ export interface Opening {
   height_m?: number | null;
   /** The casing round it indoors (absent: white). */
   trim_finish?: "white" | "white_oak" | null;
+  /** ...and how wide it is, centimetres (absent: as outside): up its
+   * sides, over it and under it (absent: as its sides). */
+  trim_width_cm?: number | null;
+  trim_top_cm?: number | null;
+  trim_bottom_cm?: number | null;
+  /** A bezel round the casing's outer edge indoors: its width,
+   * centimetres, and colour (absent: matte black). */
+  trim_bezel_cm?: number | null;
+  trim_bezel_color?: string | null;
   /** A garage door's look (absent: flush). */
   garage_style?: GarageStyle;
   /** Paint for the door, garage door or shutters (#rrggbb). */

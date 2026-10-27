@@ -129,6 +129,8 @@ const TRIM_WHITE_DARK = "#9a968f";
 /** White oak casing (indoors, chosen on the opening). */
 const TRIM_OAK = "#d3b98f";
 const TRIM_OAK_DARK = "#85745a";
+/** A bezel round the casing indoors, unless coloured: matte black. */
+const TRIM_BEZEL = "#1d1d1e";
 /** An outside door's leaf. */
 const DOOR = "#f6f4ef";
 const DOOR_DARK = "#8f8b84";
@@ -2282,16 +2284,24 @@ function buildFloor(
             if (sill < clear) sill = Math.min(clear, head - 0.3);
           }
         }
-        {
-          const pad = outside ? WINDOW_TRIM_M : 0;
-          openingFaces.push({
-            a: at(hole.s0 - pad),
-            b: at(hole.s1 + pad),
-            y0: isDoor ? sill : sill - pad,
-            y1: head + pad,
-            t,
-          });
-        }
+        // Its casing's widths indoors (on an outside wall), its sides', top's
+        // and bottom's: set on it, else as outside; and a bezel round its
+        // outer edge.
+        const cmOr = (v: number | null | undefined, or: number) =>
+          v != null ? Math.max(0, v) / 100 : or;
+        const trimSide = outside
+          ? cmOr(opening.trim_width_cm, WINDOW_TRIM_M)
+          : 0;
+        const trimTop = outside ? cmOr(opening.trim_top_cm, trimSide) : 0;
+        const trimBottom = outside ? cmOr(opening.trim_bottom_cm, trimSide) : 0;
+        const bezel = outside ? cmOr(opening.trim_bezel_cm, 0) : 0;
+        openingFaces.push({
+          a: at(hole.s0 - trimSide - bezel),
+          b: at(hole.s1 + trimSide + bezel),
+          y0: isDoor ? sill : sill - trimBottom - bezel,
+          y1: head + trimTop + bezel,
+          t,
+        });
         // Under a door (a step up from a lower room) it stops a hair under
         // the floor it leads onto.
         if (sill > base)
@@ -2394,60 +2404,133 @@ function buildFloor(
         // a little proud of the siding so it reads from the street; a
         // patio door's frame splits it in two.
         if (outside && (!isDoor || outdoorDoor)) {
-          const w = WINDOW_TRIM_M;
           const d = t + 0.04;
           const trim = dark ? TRIM_WHITE_DARK : TRIM_WHITE;
-          const pieces: [number, number, number, number][] = [
-            // Each piece laps a few millimetres into the opening, so its
-            // faces never share a plane with the wall's.
-            [
-              hole.s0 - w,
-              hole.s0 + JOINT_INSET_M,
-              isDoor ? sill : sill - w,
-              head + w,
-            ],
-            [
-              hole.s1 - JOINT_INSET_M,
-              hole.s1 + w,
-              isDoor ? sill : sill - w,
-              head + w,
-            ],
-            [hole.s0, hole.s1, head - JOINT_INSET_M, head + w],
-          ];
-          if (!isDoor)
-            pieces.push([hole.s0, hole.s1, sill - w, sill + JOINT_INSET_M]);
-          if (patio) {
-            const mid = (hole.s0 + hole.s1) / 2;
-            pieces.push([mid - w / 2, mid + w / 2, sill, head]);
-          }
-          // White oak indoors: each piece in two, white outside, oak in
-          // (from across the wall's inside face).
+          /** The casing's pieces round the opening, `w` wide up its sides,
+           * `top` over it and `bot` under it. */
+          const piecesOf = (w: number, top = w, bot = w) => {
+            const pieces: [number, number, number, number][] = [
+              // Each piece laps a few millimetres into the opening, so its
+              // faces never share a plane with the wall's.
+              [
+                hole.s0 - w,
+                hole.s0 + JOINT_INSET_M,
+                isDoor ? sill : sill - bot,
+                head + top,
+              ],
+              [
+                hole.s1 - JOINT_INSET_M,
+                hole.s1 + w,
+                isDoor ? sill : sill - bot,
+                head + top,
+              ],
+              [hole.s0, hole.s1, head - JOINT_INSET_M, head + top],
+            ];
+            if (!isDoor)
+              pieces.push([hole.s0, hole.s1, sill - bot, sill + JOINT_INSET_M]);
+            if (patio) {
+              const mid = (hole.s0 + hole.s1) / 2;
+              pieces.push([
+                mid - WINDOW_TRIM_M / 2,
+                mid + WINDOW_TRIM_M / 2,
+                sill,
+                head,
+              ]);
+            }
+            return pieces;
+          };
+          // White oak indoors, other widths or a bezel there: the casing in
+          // two, white outside, its own inside (from across the wall's
+          // inside face).
           const oak =
             opening.trim_finish === "white_oak"
               ? dark
                 ? TRIM_OAK_DARK
                 : TRIM_OAK
               : null;
+          const split =
+            !!oak ||
+            bezel > 0.001 ||
+            [trimSide, trimTop, trimBottom].some(
+              (w) => Math.abs(w - WINDOW_TRIM_M) > 0.001,
+            );
           const ox = -dz * outside;
           const oz = dx * outside;
           // Never past the wall's own ends (a door hard by a corner): the
-          // wall beyond belongs to the next one.
-          for (const [s0, s1, y0, y1] of pieces) {
-            const p0 = Math.max(s0, 0);
-            const p1 = Math.min(s1, L);
-            if (p1 - p0 <= 0.005) continue;
-            if (!oak) {
-              walls.push({ ...box(p0, p1, y0, y1, d), color: trim });
-              continue;
-            }
-            // Out from the wall's middle, from one depth to the other.
-            const part = (from: number, to: number, color: string) => {
+          // wall beyond belongs to the next one; out from the wall's
+          // middle from one depth to the other.
+          const lay = (
+            pieces: [number, number, number, number][],
+            from: number,
+            to: number,
+            color: string,
+          ) => {
+            for (const [s0, s1, y0, y1] of pieces) {
+              const p0 = Math.max(s0, 0);
+              const p1 = Math.min(s1, L);
+              if (p1 - p0 <= 0.005 || y1 - y0 <= 0.005) continue;
               const b = box(p0, p1, y0, y1, to - from);
               const mid = (from + to) / 2;
               walls.push({ ...b, x: b.x + ox * mid, z: b.z + oz * mid, color });
-            };
-            part(-t / 2 + 0.002, d / 2, trim);
-            part(-d / 2, -t / 2 + 0.002, oak);
+            }
+          };
+          const outer = piecesOf(WINDOW_TRIM_M);
+          if (!split) lay(outer, -d / 2, d / 2, trim);
+          else {
+            lay(outer, -t / 2 + 0.002, d / 2, trim);
+            // Inside: its own widths (a side at nothing: just the top and
+            // bottom across).
+            lay(
+              piecesOf(trimSide, trimTop, trimBottom),
+              -d / 2,
+              -t / 2 + 0.002,
+              oak ?? trim,
+            );
+            // Its bezel: a band round the casing's outer edge, a hair proud.
+            if (bezel > 0.001) {
+              const bz = opening.trim_bezel_color ?? TRIM_BEZEL;
+              const l0 = hole.s0 - trimSide;
+              const r1 = hole.s1 + trimSide;
+              const lo = isDoor ? sill : sill - trimBottom - bezel;
+              const hi = head + trimTop + bezel;
+              const band: [number, number, number, number][] = [
+                [l0 - bezel, l0, lo, hi],
+                [r1, r1 + bezel, lo, hi],
+                [l0, r1, head + trimTop, hi],
+              ];
+              if (!isDoor) band.push([l0, r1, lo, sill - trimBottom]);
+              lay(band, -d / 2 - 0.003, -t / 2 + 0.002, bz);
+            }
+          }
+          // In white oak, its jambs lined in it too: from the inside face
+          // back to the glass, round a window or a patio door.
+          if (oak && (!isDoor || patio)) {
+            const j = 0.015;
+            const liners: [number, number, number, number][] = [
+              [hole.s0, hole.s0 + j, sill, head],
+              [hole.s1 - j, hole.s1, sill, head],
+              [hole.s0, hole.s1, head - j, head],
+            ];
+            if (!isDoor) liners.push([hole.s0, hole.s1, sill, sill + j]);
+            for (const [s0, s1, y0, y1] of liners) {
+              const from = -t / 2 + 0.001;
+              const to = -0.012;
+              if (to - from < 0.005) continue;
+              const b = box(
+                Math.max(s0, 0),
+                Math.min(s1, L),
+                y0,
+                y1,
+                to - from,
+              );
+              const mid = (from + to) / 2;
+              walls.push({
+                ...b,
+                x: b.x + ox * mid,
+                z: b.z + oz * mid,
+                color: oak,
+              });
+            }
           }
         }
         // Covers: blinds over a window, an overhead garage door. Each

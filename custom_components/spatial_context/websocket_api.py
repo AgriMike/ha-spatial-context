@@ -186,6 +186,22 @@ _OPENING_SCHEMA = {
     ),
     # The casing round it indoors: white (unset) or white oak.
     vol.Optional("trim_finish"): vol.Any(None, vol.In(["white", "white_oak"])),
+    # ...and how wide it is, cm (unset: as outside): up its sides, over
+    # and under it (unset: as its sides), and a bezel round its outer edge
+    # (its width, cm, and colour).
+    vol.Optional("trim_width_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=0, max=30))
+    ),
+    vol.Optional("trim_top_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=0, max=60))
+    ),
+    vol.Optional("trim_bottom_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=0, max=60))
+    ),
+    vol.Optional("trim_bezel_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=0, max=5))
+    ),
+    vol.Optional("trim_bezel_color"): vol.Any(None, vol.Match(r"^#[0-9a-fA-F]{6}$")),
     vol.Optional("garage_style"): vol.In(
         ["flush", "raised_short", "raised_long", "carriage", "windows", "modern"]
     ),

@@ -3878,7 +3878,7 @@ export class Floorplan3dView extends LitElement {
   ) {
     const L = (k: string) => localize(`edit3d.${k}`);
     // Its casing indoors (on an outside wall).
-    const trim = this._select<"white" | "white_oak">(
+    const trim = html`${this._select<"white" | "white_oak">(
       L("trim"),
       o.trim_finish ?? "white",
       [
@@ -3886,7 +3886,49 @@ export class Floorplan3dView extends LitElement {
         ["white_oak", L("trimWhiteOak")],
       ],
       (v) => set({ trim_finish: v === "white_oak" ? v : null }),
-    );
+    )}
+    ${this._num(
+      L("trimWidth"),
+      o.trim_width_cm ?? null,
+      (v) =>
+        set({ trim_width_cm: v == null ? null : Math.max(0, Math.min(30, v)) }),
+      { unit: "cm", min: 0, max: 30, placeholder: "8" },
+    )}
+    ${this._num(
+      L("trimTop"),
+      o.trim_top_cm ?? null,
+      (v) =>
+        set({ trim_top_cm: v == null ? null : Math.max(0, Math.min(60, v)) }),
+      { unit: "cm", min: 0, max: 60, placeholder: L("trimAsSides") },
+    )}
+    ${
+      o.type === "door"
+        ? nothing
+        : this._num(
+            L("trimBottom"),
+            o.trim_bottom_cm ?? null,
+            (v) =>
+              set({
+                trim_bottom_cm: v == null ? null : Math.max(0, Math.min(60, v)),
+              }),
+            { unit: "cm", min: 0, max: 60, placeholder: L("trimAsSides") },
+          )
+    }
+    ${this._num(
+      L("trimBezel"),
+      o.trim_bezel_cm ?? null,
+      (v) => set({ trim_bezel_cm: v ? Math.max(0, Math.min(5, v)) : null }),
+      { unit: "cm", min: 0, max: 5, step: 0.5, placeholder: "0" },
+    )}
+    ${
+      o.trim_bezel_cm
+        ? this._color(
+            L("trimBezelColor"),
+            o.trim_bezel_color ?? "#1d1d1e",
+            (v) => set({ trim_bezel_color: v }),
+          )
+        : nothing
+    }`;
     if (o.type === "door" && o.garage)
       return html`${this._select<GarageStyle>(
         L("garageStyle"),
