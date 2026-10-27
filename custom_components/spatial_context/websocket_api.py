@@ -278,6 +278,10 @@ _FURNITURE_SCHEMA = {
     vol.Optional("fullness"): vol.Any(
         None, vol.All(vol.Coerce(float), vol.Range(min=0.25, max=3))
     ),
+    # How wide a climbing plant's leaves fan round its front, degrees.
+    vol.Optional("leaf_spread_deg"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=10, max=360))
+    ),
     # A real 3D model worn instead of the drawing (see models.py): its
     # file's id and a label (its title and credit).
     vol.Optional("model_id"): vol.Any(None, vol.Match(r"^[0-9a-f]{32}$")),

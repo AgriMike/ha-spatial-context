@@ -2871,12 +2871,17 @@ function buildFloor(
               tint: own,
               ...(item.pot_cm != null ||
               item.pot_shape != null ||
-              item.fullness != null
+              item.fullness != null ||
+              item.leaf_spread_deg != null
                 ? {
                     plant: {
                       pot: item.pot_cm != null ? item.pot_cm / 100 : null,
                       shape: item.pot_shape ?? null,
                       full: item.fullness ?? null,
+                      spread:
+                        item.leaf_spread_deg != null
+                          ? (item.leaf_spread_deg * Math.PI) / 180
+                          : null,
                     },
                   }
                 : {}),

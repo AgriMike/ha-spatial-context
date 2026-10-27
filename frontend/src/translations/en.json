@@ -744,6 +744,7 @@
     "potBowl": "Low bowl",
     "potSquare": "Square",
     "fullness": "Fullness (leaves, branches)",
+    "leafSpread": "Leaf spread (90° fills a corner)",
     "frontsDoors": "Doors",
     "frontsDrawerDoors": "Drawer + doors",
     "frontsTwoDrawers": "2 drawers",

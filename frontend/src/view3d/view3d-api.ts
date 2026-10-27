@@ -176,7 +176,13 @@ export interface Item3d {
     fronts?: { drawers: number[] | null; doors: number | null };
     /** A houseplant's pot set by hand (diameter, metres; its shape) and
      * how full it grows (1 as drawn); null: the species' own. */
-    plant?: { pot: number | null; shape: string | null; full: number | null };
+    plant?: {
+      pot: number | null;
+      shape: string | null;
+      full: number | null;
+      /** How wide its leaves fan round its front, radians. */
+      spread?: number | null;
+    };
   };
   /** A site feature (see site-models.ts): a surface laid on the ground
    * (concrete, asphalt, pavers, lawn, a planting bed…) or a fence, wall

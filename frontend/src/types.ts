@@ -312,6 +312,9 @@ export interface FurnitureItem {
   pot_cm?: number | null;
   pot_shape?: "taper" | "cylinder" | "bowl" | "square" | null;
   fullness?: number | null;
+  /** How wide a climbing plant's leaves fan round its front, degrees
+   * (90 fills a corner); unset = its own. */
+  leaf_spread_deg?: number | null;
   /** A real 3D model the item wears in the 3D view instead of its drawing
    * (an uploaded .glb, see models.py): its file's id, and a label (its
    * title and credit). */

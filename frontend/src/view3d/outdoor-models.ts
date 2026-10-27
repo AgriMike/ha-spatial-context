@@ -2710,8 +2710,9 @@ const PLANT: {
   pot: number | null;
   shape: string | null;
   full: number;
+  spread: number | null;
   r: number;
-} = { pot: null, shape: null, full: 1, r: 0 };
+} = { pot: null, shape: null, full: 1, spread: null, r: 0 };
 
 /** A count of leaves, fronds or branches, scaled by the plant's fullness. */
 const more = (n: number) => Math.max(1, Math.round(n * PLANT.full));
@@ -3143,23 +3144,26 @@ function monstera(m: Model, rand: () => number, potColor: string): void {
     const y = top + h * 0.1 + (poleTop - top - h * 0.1) * f;
     const n = more(t === tiers - 1 ? 2 : 3);
     for (let k = 0; k < n; k++) {
-      // Spread across the front half, alternate tiers offset.
+      // Fanned round its front (its spread set on it, else 140°),
+      // alternate tiers offset.
+      const span = PLANT.spread ?? 0.76 * Math.PI;
       const az =
-        (0.12 + 0.76 * ((k + 0.5) / n)) * Math.PI +
-        (t % 2 ? 0.15 : -0.15) +
-        (rand() - 0.5) * 0.2;
-      const base = v3(0, y, 0.015);
+        Math.PI / 2 +
+        ((k + 0.5) / n - 0.5) * span +
+        (t % 2 ? 0.08 : -0.08) * Math.min(1, span) +
+        (rand() - 0.5) * 0.1 * Math.min(1, span);
+      const base = v3(Math.cos(az) * 0.03, y, Math.sin(az) * 0.03 - 0.02);
       const reach = (0.1 + 0.1 * rand() + 0.05 * f) * scale;
       const end = base
         .clone()
         .addScaledVector(aim(az, (15 + rand() * 20) * DEG), reach);
       stalk(m, [base, end], 0.007, "#3d6a2e");
       const len = (0.2 + 0.14 * f) * scale * (0.85 + 0.3 * rand());
-      // Hanging out and down, its face to the front.
+      // Hanging out and down, its face turned out the way it grows.
       const dir = v3(
-        Math.cos(az) * 0.35,
+        Math.cos(az) * 0.5,
         -0.55 - 0.2 * rand(),
-        Math.sin(az) * 0.3 + 0.35,
+        Math.sin(az) * 0.5,
       ).normalize();
       leaf(m, end, dir, len, len * 0.95, shades("#2b5926", rand), {
         shape: "split",
@@ -3887,6 +3891,7 @@ function houseplant(m: Model, item: Item3d, o: Opts): boolean {
   PLANT.pot = spec.plant?.pot ?? null;
   PLANT.shape = spec.plant?.shape ?? null;
   PLANT.full = Math.max(0.25, Math.min(3, spec.plant?.full ?? 1));
+  PLANT.spread = spec.plant?.spread ?? null;
   switch (kind) {
     case "snake":
       snakePlant(m, rand, p(POT.charcoal));

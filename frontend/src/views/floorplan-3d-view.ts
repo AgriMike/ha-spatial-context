@@ -3789,7 +3789,21 @@ export class Floorplan3dView extends LitElement {
               : Math.max(25, Math.min(300, v)) / 100,
         }),
       { unit: "%", min: 25, max: 300, step: 25, placeholder: "100" },
-    )}`;
+    )}
+    ${
+      catalogItem(item.kind)?.opts["kind"] === "monstera"
+        ? this._num(
+            L("leafSpread"),
+            item.leaf_spread_deg ?? null,
+            (v) =>
+              set({
+                leaf_spread_deg:
+                  v == null ? null : Math.max(10, Math.min(360, v)),
+              }),
+            { unit: "°", min: 10, max: 360, step: 15, placeholder: "140" },
+          )
+        : nothing
+    }`;
   }
 
   /** A shaker cabinet's face: one-click layouts, its drawers' heights

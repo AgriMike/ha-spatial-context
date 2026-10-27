@@ -484,6 +484,7 @@ const ITEM_FINISH_KEYS = [
   "pot_cm",
   "pot_shape",
   "fullness",
+  "leaf_spread_deg",
   "model_id",
   "model_name",
   "lift_cm",
