@@ -278,6 +278,17 @@ _FURNITURE_SCHEMA = {
     vol.Optional("fullness"): vol.Any(
         None, vol.All(vol.Coerce(float), vol.Range(min=0.25, max=3))
     ),
+    # A real 3D model worn instead of the drawing (see models.py): its
+    # file's id and a label (its title and credit).
+    vol.Optional("model_id"): vol.Any(None, vol.Match(r"^[0-9a-f]{32}$")),
+    vol.Optional("model_name"): vol.Any(None, vol.All(str, vol.Length(max=400))),
+    # A vehicle model's lift and how much bigger its tyres are, both cm.
+    vol.Optional("lift_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=-30, max=60))
+    ),
+    vol.Optional("tire_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=-20, max=40))
+    ),
 }
 
 _SCALE_SCHEMA = vol.Any(

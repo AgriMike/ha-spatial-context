@@ -2819,11 +2819,21 @@ function buildFloor(
       live2.active &&
       showLights &&
       /^(light|switch)\./.test(item.entity_id_2 ?? "");
-    const shape = itemShape(item.kind, entry);
+    // Wearing an uploaded model: a block, the model in its place.
+    const shape = item.model_id ? "block" : itemShape(item.kind, entry);
     const si = stairs.findIndex((st) => st.item === item);
     const flight = si >= 0 ? stairs[si]! : null;
     items.push({
       id: item.id,
+      ...(item.model_id ? { glb: item.model_id } : {}),
+      ...(item.model_id && (item.lift_cm || item.tire_cm)
+        ? {
+            glbFit: {
+              lift: (item.lift_cm ?? 0) / 100,
+              tire: (item.tire_cm ?? 0) / 100,
+            },
+          }
+        : {}),
       name: item.label || entry?.name || item.kind,
       footprint: itemFootprint(item, entry, prims, flip),
       width: item.width_cm / 100,

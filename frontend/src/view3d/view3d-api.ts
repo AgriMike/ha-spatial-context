@@ -105,6 +105,11 @@ export type LightBeam =
 export interface Item3d {
   id: string;
   name: string;
+  /** An uploaded model it wears instead of its own (its id: see
+   * View3dOptions.fetchModel). */
+  glb?: string;
+  /** A vehicle model's lift and its tyres' growth across, metres. */
+  glbFit?: { lift: number; tire: number };
   /** Footprint in the item's own frame, metres, centred on (0, 0) —
    * x across, z front to back. */
   footprint: Vec2[];
@@ -400,6 +405,8 @@ export interface View3dOptions {
   container: HTMLElement;
   /** A scan's glTF/GLB bytes. */
   fetchScan(id: string): Promise<ArrayBuffer>;
+  /** An item's uploaded model's GLB bytes. */
+  fetchModel?(id: string): Promise<ArrayBuffer>;
   /** A scan was dragged (or snapped) to a new pose. `final` is true when
    * the drag ends — the moment to save. */
   onScanMove?(id: string, pose: ScanPose, final: boolean): void;

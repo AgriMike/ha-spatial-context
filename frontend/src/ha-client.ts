@@ -384,6 +384,57 @@ export class HaClient {
   }
 }
 
+/** An uploaded item model (see models.py): its id, file name and, when
+ * the file carries them, its title, author and licence. */
+export interface UploadedModel {
+  id: string;
+  name: string;
+  size: number;
+  title?: string;
+  author?: string;
+  license?: string;
+  source?: string;
+}
+
+/** Uploads a .glb model for an item to the integration's own storage. */
+export async function uploadModel(
+  hass: HomeAssistant,
+  file: File,
+): Promise<UploadedModel> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await hass.fetchWithAuth(
+    "/api/spatial_context/model_upload",
+    { method: "POST", body: formData },
+  );
+  if (!response.ok) {
+    const detail = await response
+      .json()
+      .then((d: { message?: string }) => d.message)
+      .catch(() => null);
+    throw new Error(
+      detail ??
+        (response.status === 404
+          ? "Restart Home Assistant to finish installing model uploads"
+          : `Upload failed: ${response.status} ${response.statusText}`),
+    );
+  }
+  return (await response.json()) as UploadedModel;
+}
+
+/** An item model's file, as bytes for GLTFLoader. */
+export async function fetchModel(
+  hass: HomeAssistant,
+  modelId: string,
+): Promise<ArrayBuffer> {
+  const response = await hass.fetchWithAuth(
+    `/api/spatial_context/model/${encodeURIComponent(modelId)}`,
+  );
+  if (!response.ok)
+    throw new Error(`Couldn't load the model (${response.status})`);
+  return response.arrayBuffer();
+}
+
 /** A room scan's file, as bytes for GLTFLoader. */
 export async function fetchScan(
   hass: HomeAssistant,
@@ -433,6 +484,10 @@ const ITEM_FINISH_KEYS = [
   "pot_cm",
   "pot_shape",
   "fullness",
+  "model_id",
+  "model_name",
+  "lift_cm",
+  "tire_cm",
 ] as const;
 const OPENING_STYLE_KEYS = [
   "door_style",

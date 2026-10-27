@@ -1829,6 +1829,144 @@ function floorTexture(finish: FloorFinish): THREE.Texture {
   return tex;
 }
 
+/** Picks an item by its box, unseen (see glbItem). */
+const PICK_MATERIAL = new THREE.MeshBasicMaterial({ visible: false });
+
+/** A vehicle's wheels' parts, by their material's (or mesh's) name. */
+const WHEEL_PART =
+  /tire|tyre|(^|[^t])rims?|(^|[^g])wheel|brake|rotor|caliper|hub|lug/i;
+
+/** A fitted vehicle model (in its item's frame, centred, on the ground)
+ * lifted `lift` metres and on tyres `grow` metres bigger across: each
+ * wheel (its tyre, rim and brakes, found by name and split by which
+ * corner they're at) grown about its own centre with its tread still on
+ * the ground, the body raised by the lift and the bigger tyres. */
+function liftAndTires(root: THREE.Object3D, lift: number, grow: number): void {
+  root.updateMatrixWorld(true);
+  const names = (mesh: THREE.Mesh) =>
+    [
+      mesh.name,
+      ...(Array.isArray(mesh.material) ? mesh.material : [mesh.material]).map(
+        (m) => m.name,
+      ),
+    ].join(" ");
+  const wheels: THREE.Mesh[] = [];
+  const tires: THREE.Mesh[] = [];
+  const body: THREE.Mesh[] = [];
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || mesh.material === PICK_MATERIAL) return;
+    const n = names(mesh);
+    if (WHEEL_PART.test(n) && !/steer|trim/i.test(n)) {
+      wheels.push(mesh);
+      if (/tire|tyre/i.test(n)) tires.push(mesh);
+    } else body.push(mesh);
+  });
+  const corner = (v: THREE.Vector3) => (v.x > 0 ? 1 : 0) + (v.z > 0 ? 2 : 0);
+  const boxes = [0, 1, 2, 3].map(() => new THREE.Box3());
+  const v = new THREE.Vector3();
+  for (const mesh of tires.length ? tires : wheels) {
+    const pos = mesh.geometry.getAttribute("position");
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+      boxes[corner(v)]!.expandByPoint(v);
+    }
+  }
+  const centres = boxes.map((b) =>
+    b.isEmpty() ? null : b.getCenter(new THREE.Vector3()),
+  );
+  const radii = boxes.map((b) => (b.isEmpty() ? 0 : (b.max.y - b.min.y) / 2));
+  const r = Math.max(...radii);
+  const k = r > 0 ? Math.max(0.5, (2 * r + grow) / (2 * r)) : 1;
+  const rise = r * (k - 1);
+  if (k !== 1)
+    for (const mesh of wheels) {
+      const g = mesh.geometry.clone();
+      const pos = g.getAttribute("position") as THREE.BufferAttribute;
+      const inv = mesh.matrixWorld.clone().invert();
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+        const c = centres[corner(v)];
+        if (!c) continue;
+        v.sub(c).multiplyScalar(k).add(c);
+        v.y += rise;
+        v.applyMatrix4(inv);
+        pos.setXYZ(i, v.x, v.y, v.z);
+      }
+      g.computeBoundingBox();
+      g.computeBoundingSphere();
+      mesh.geometry = g;
+    }
+  // Each part raised once: not again under a part already raised (a roof
+  // rail hung off the body), and a wheel part under one put back down.
+  const raised = new Set<THREE.Object3D>(body);
+  const under = (o: THREE.Object3D) => {
+    for (let n = o.parent; n && n !== root; n = n.parent)
+      if (raised.has(n)) return true;
+    return false;
+  };
+  const move = (mesh: THREE.Mesh, dy: number) => {
+    const by = new THREE.Matrix4().makeTranslation(0, dy, 0);
+    const parent = mesh.parent?.matrixWorld ?? new THREE.Matrix4();
+    mesh.applyMatrix4(parent.clone().invert().multiply(by).multiply(parent));
+  };
+  for (const mesh of body) if (!under(mesh)) move(mesh, lift + rise);
+  for (const mesh of wheels) if (under(mesh)) move(mesh, -(lift + rise));
+  root.updateMatrixWorld(true);
+}
+
+/** Not a body's paint, by its material's name. */
+const NOT_PAINT =
+  /glass|window|chrome|tire|tyre|rim|wheel|interior|black|light|lamp|drl|logo|badge|plate|rotor|brake|caliper|mirror|trim|grille|reflector|carrier|under|rubber|seat|red|orange|exhaust|default/i;
+
+/** An uploaded model's body paint: the material covering the most surface
+ * that isn't glass, chrome, trim, tyres, lights or black plastic (by name
+ * and colour), so an item's colour can repaint it; null when there's no
+ * such thing. */
+function paintOf(model: THREE.Object3D): THREE.Material | null {
+  const area = new Map<THREE.Material, number>();
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  model.updateMatrixWorld(true);
+  model.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || Array.isArray(mesh.material)) return;
+    const m = mesh.material as THREE.MeshStandardMaterial;
+    if (NOT_PAINT.test(m.name) || m.transparent || m.opacity < 0.95) return;
+    const pos = mesh.geometry.getAttribute("position");
+    if (!pos) return;
+    const idx = mesh.geometry.index;
+    const n = idx ? idx.count : pos.count;
+    // A sample of its triangles is plenty to rank by.
+    const step = Math.max(3, Math.floor(n / 3 / 2000) * 3);
+    let sum = 0;
+    for (let i = 0; i + 2 < n; i += step) {
+      a.fromBufferAttribute(pos, idx ? idx.getX(i) : i).applyMatrix4(
+        mesh.matrixWorld,
+      );
+      b.fromBufferAttribute(pos, idx ? idx.getX(i + 1) : i + 1).applyMatrix4(
+        mesh.matrixWorld,
+      );
+      c.fromBufferAttribute(pos, idx ? idx.getX(i + 2) : i + 2).applyMatrix4(
+        mesh.matrixWorld,
+      );
+      sum += b.sub(a).cross(c.sub(a)).length() / 2;
+    }
+    // A name that says it's paint counts for more.
+    const k = /paint|metallic|pearl|body|colou?r/i.test(m.name) ? 3 : 1;
+    area.set(m, (area.get(m) ?? 0) + (k * sum * step) / 3);
+  });
+  let best: THREE.Material | null = null;
+  let most = 0;
+  for (const [m, v] of area)
+    if (v > most) {
+      most = v;
+      best = m;
+    }
+  return best;
+}
+
 function createView3d(options: View3dOptions): View3dHandle {
   const { container } = options;
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -2060,6 +2198,121 @@ function createView3d(options: View3dOptions): View3dHandle {
     return obj;
   }
 
+  // --- items wearing an uploaded model --------------------------------------
+
+  /** Uploaded models, each loaded once (by id) and shared by the items
+   * wearing it. */
+  const glbModels = new Map<string, Promise<THREE.Object3D>>();
+
+  function loadGlb(id: string): Promise<THREE.Object3D> {
+    let p = glbModels.get(id);
+    if (!p) {
+      p = (
+        options.fetchModel
+          ? options.fetchModel(id)
+          : Promise.reject(new Error("No model source"))
+      ).then(
+        (buf) =>
+          new Promise<THREE.Object3D>((resolve, reject) =>
+            loader.parse(buf, "", (gltf) => resolve(gltf.scene), reject),
+          ),
+      );
+      p.catch(() => glbModels.delete(id));
+      glbModels.set(id, p);
+    }
+    return p;
+  }
+
+  /** An item wearing an uploaded model: its own drawing until the model
+   * has loaded, then the model, its long side turned along the item's
+   * depth, scaled evenly to fit within its width and depth and
+   * standing on its floor. Picked by a box round it: a detailed model's
+   * hundreds of thousands of triangles would make every hover crawl. */
+  function glbItem(item: Item3d, id: string): THREE.Group {
+    const g = new THREE.Group();
+    const stand = outdoorModel(item) ?? furnitureModel(item);
+    if (stand) g.add(stand);
+    loadGlb(id)
+      .then((model) => {
+        if (destroyed) return;
+        const turn = new THREE.Group();
+        const copy = model.clone(true);
+        // Repainted in the item's colour.
+        const tint = item.model?.tint;
+        if (tint) {
+          if (model.userData["paint"] === undefined)
+            model.userData["paint"] = paintOf(model);
+          const paint = model.userData["paint"] as THREE.Material | null;
+          if (paint) {
+            const own = paint.clone() as THREE.MeshStandardMaterial;
+            own.color = new THREE.Color(tint);
+            own.metalness = Math.max(own.metalness, 0.35);
+            own.roughness = Math.min(own.roughness, 0.4);
+            copy.traverse((o) => {
+              const mesh = o as THREE.Mesh;
+              if (mesh.isMesh && mesh.material === paint) mesh.material = own;
+            });
+          }
+        }
+        turn.add(copy);
+        turn.updateMatrixWorld(true);
+        let box = new THREE.Box3().setFromObject(turn);
+        let size = box.getSize(new THREE.Vector3());
+        if (size.x > size.z * 1.15) {
+          turn.rotation.y = Math.PI / 2;
+          turn.updateMatrixWorld(true);
+          box = new THREE.Box3().setFromObject(turn);
+          size = box.getSize(new THREE.Vector3());
+        }
+        // To its length and width (its height follows: the catalog's
+        // height is for its own drawing).
+        const s = Math.min(
+          item.depth / Math.max(1e-6, size.z),
+          item.width / Math.max(1e-6, size.x),
+        );
+        const centre = box.getCenter(new THREE.Vector3());
+        const fit = new THREE.Group();
+        fit.add(turn);
+        fit.scale.setScalar(s);
+        fit.position.set(-centre.x * s, -box.min.y * s, -centre.z * s);
+        // Lifted, on bigger tyres (a vehicle's own build).
+        const mods = item.glbFit;
+        if (mods && (mods.lift || mods.tire)) {
+          const holder = new THREE.Group();
+          holder.add(fit);
+          liftAndTires(holder, mods.lift, mods.tire);
+          fit.removeFromParent();
+          // Its parts moved within it: where it stands now.
+          const after = new THREE.Box3().setFromObject(holder);
+          size = after.getSize(new THREE.Vector3()).divideScalar(s);
+        }
+        fit.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+          mesh.raycast = () => {};
+        });
+        const pick = new THREE.Mesh(
+          new THREE.BoxGeometry(size.x * s, size.y * s, size.z * s),
+          PICK_MATERIAL,
+        );
+        pick.position.y = (size.y * s) / 2;
+        if (stand) {
+          g.remove(stand);
+          retired.push(stand);
+        }
+        g.add(fit, pick);
+        placeSun();
+        refreshFixtureShadows();
+        invalidate();
+      })
+      .catch((err: unknown) =>
+        console.warn("Spatial Context: couldn't load an item's model", err),
+      );
+    return g;
+  }
+
   function buildItemObject(item: Item3d, baseY: number): THREE.Object3D {
     // On the ground: the terrain's height (or the flat ground's), in the
     // item's floor's frame.
@@ -2089,9 +2342,11 @@ function createView3d(options: View3dOptions): View3dHandle {
       : item.shape !== "block"
         ? null
         : keptModel(itemModels, itemModelsNext, item.id, key, () =>
-            item.counter
-              ? counterModel(item.footprint, item.height, item.tint ?? null)
-              : (outdoorModel(item) ?? furnitureModel(item)),
+            item.glb
+              ? glbItem(item, item.glb)
+              : item.counter
+                ? counterModel(item.footprint, item.height, item.tint ?? null)
+                : (outdoorModel(item) ?? furnitureModel(item)),
           );
     if (furniture) {
       furniture.name = item.name;

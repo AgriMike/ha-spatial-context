@@ -30,6 +30,7 @@ from .const import (
     SIDEBAR_TITLE,
     URL_BASE,
 )
+from .models import async_register_model_views
 from .scans import async_register_scan_views
 
 _LOGGER = logging.getLogger(__name__)
@@ -98,6 +99,7 @@ async def async_register_static_paths(hass: HomeAssistant) -> None:
         _LOGGER.debug("Static path already registered: %s", URL_BASE)
     hass.http.register_view(PanelBundleView())
     async_register_scan_views(hass)
+    async_register_model_views(hass)
 
 
 def async_register_sidebar_panel(hass: HomeAssistant, token: str) -> None:

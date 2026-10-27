@@ -312,6 +312,15 @@ export interface FurnitureItem {
   pot_cm?: number | null;
   pot_shape?: "taper" | "cylinder" | "bowl" | "square" | null;
   fullness?: number | null;
+  /** A real 3D model the item wears in the 3D view instead of its drawing
+   * (an uploaded .glb, see models.py): its file's id, and a label (its
+   * title and credit). */
+  model_id?: string | null;
+  model_name?: string | null;
+  /** A vehicle model's lift (its body raised off its wheels) and how much
+   * bigger across its tyres are, centimetres; unset = as modelled. */
+  lift_cm?: number | null;
+  tire_cm?: number | null;
 }
 
 /** A phone room scan (glTF/GLB) laid over a floor in the 3D view — see

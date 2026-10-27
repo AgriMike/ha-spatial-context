@@ -6,6 +6,8 @@ import { localize } from "../i18n";
 import {
   HaClient,
   fetchScan,
+  fetchModel,
+  uploadModel,
   groundGridUnsaved,
   layoutFinishesUnsaved,
   roofLightsUnsaved,
@@ -699,6 +701,13 @@ export class Floorplan3dView extends LitElement {
       .editor [hidden] {
         display: none !important;
       }
+      .editor .model-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        text-align: right;
+      }
       .editor furniture-library-sidebar {
         --sc-chip-wrap: nowrap;
         position: static;
@@ -912,6 +921,10 @@ export class Floorplan3dView extends LitElement {
         fetchScan: (id) =>
           this.hass
             ? fetchScan(this.hass, id)
+            : Promise.reject(new Error("offline")),
+        fetchModel: (id) =>
+          this.hass
+            ? fetchModel(this.hass, id)
             : Promise.reject(new Error("offline")),
         onScanMove: this._onScanMove,
         onEditPointer: (e) => this._onEditPointer(e),
@@ -3658,6 +3671,89 @@ export class Floorplan3dView extends LitElement {
     </div>`;
   }
 
+  @state() private _modelBusy = false;
+  @state() private _modelError: string | null = null;
+
+  /** A real 3D model the item wears instead of its drawing: upload one
+   * (.glb), see whose it is, take it off. */
+  private _renderItemModel(item: FurnitureItem) {
+    const L = (k: string) => localize(`edit3d.${k}`);
+    const patch = (p: Partial<FurnitureItem>) => {
+      // The layout as it is now: an upload takes a while.
+      if (this.layout) this._edit(patchItem(this.layout, item.id, p));
+    };
+    const pick = () => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".glb,model/gltf-binary";
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (!file || !this.hass) return;
+        this._modelBusy = true;
+        this._modelError = null;
+        try {
+          const up = await uploadModel(this.hass, file);
+          const label = [
+            up.title ?? up.name,
+            up.author ? `by ${up.author}` : "",
+            up.license ? `(${up.license})` : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
+          patch({ model_id: up.id, model_name: label.slice(0, 400) });
+        } catch (err) {
+          this._modelError = err instanceof Error ? err.message : String(err);
+        } finally {
+          this._modelBusy = false;
+        }
+      };
+      input.click();
+    };
+    return html`<div class="row">
+        <span>${L("model")}</span>
+        <span class="model-name" title=${item.model_name ?? ""}
+          >${
+            this._modelBusy
+              ? L("modelUploading")
+              : item.model_id
+                ? (item.model_name ?? L("modelCustom"))
+                : L("modelNone")
+          }</span
+        >
+      </div>
+      ${
+        item.model_id
+          ? html`${this._num(
+              L("modelLift"),
+              item.lift_cm ?? null,
+              (v) => patch({ lift_cm: v || null }),
+              { unit: "cm", placeholder: "0" },
+            )}
+            ${this._num(
+              L("modelTires"),
+              item.tire_cm ?? null,
+              (v) => patch({ tire_cm: v || null }),
+              { unit: "cm", placeholder: "0" },
+            )}`
+          : nothing
+      }
+      <div class="buttons">
+        <button ?disabled=${this._modelBusy} @click=${pick}>
+          ${L("modelUpload")}
+        </button>
+        ${
+          item.model_id
+            ? html`<button
+                @click=${() => patch({ model_id: null, model_name: null })}
+              >
+                ${L("modelRemove")}
+              </button>`
+            : nothing
+        }
+      </div>
+      ${this._modelError ? html`<span class="hint">${this._modelError}</span>` : nothing}`;
+  }
+
   /** A houseplant's pot (its colour is the item's) and how full it is. */
   private _renderPlantPot(
     item: FurnitureItem,
@@ -4543,6 +4639,7 @@ export class Floorplan3dView extends LitElement {
         ${entry && (["houseplant", "plant", "cactus"].includes(entry.draw) || entry.id === "bonsai") ? this._renderPlantPot(item, set) : nothing}
         ${this._num(localize("edit3d.rotation"), item.rotation_deg, (v) => v !== null && set({ rotation_deg: ((v % 360) + 360) % 360 }), { unit: "°" })}
         ${this._color(localize("edit3d.color"), item.color, (v) => set({ color: v }))}
+        ${this._renderItemModel(item)}
         <label class="row">
           <span>${localize("edit3d.mirrored")}</span>
           <input
