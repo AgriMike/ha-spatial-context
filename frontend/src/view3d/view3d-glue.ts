@@ -54,7 +54,7 @@ const SLAB_M = 0.04;
 const MAX_POINT_LIGHTS = 8;
 /** Outdoor fixtures' lights (spots, floods, lanterns), on top of those:
  * the brightest get one (two for an up & down light). */
-const MAX_OUTDOOR_LIGHTS = 12;
+const MAX_OUTDOOR_LIGHTS = 18;
 /** Of those spots and floods, the brightest cast shadows (a soffit stops an
  * uplight's wash, a shrub shades a wall): their maps drawn once each time
  * the scene changes, not every frame. The rest stop at the first roof over
@@ -1710,7 +1710,7 @@ const FLOOR_TEXTURES = new Map<FloorFinish, THREE.Texture>();
 const FLOOR_TILE_M: Record<FloorFinish, number> = {
   plain: 1,
   wood: 1.6,
-  // Long, wide planks: ten 23 cm boards across a 2.3 m repeat.
+  // Long planks: twenty 11.5 cm boards across a 2.3 m repeat.
   lato: 2.3,
   tile: 1.2,
   carpet: 1.5,
@@ -1779,9 +1779,9 @@ function floorTexture(finish: FloorFinish): THREE.Texture {
       boards([150, 112, 80], 10, "rgba(35,25,18,0.9)", 4);
       break;
     case "lato":
-      // Flooret Lato: pale, whitewashed blonde oak in long wide planks,
-      // little change board to board, fine grain, barely-there seams.
-      boards([227, 217, 201], 10, "rgba(140,120,98,0.35)", 1, {
+      // Flooret Lato: pale, whitewashed blonde oak in long planks, little
+      // change board to board, fine grain, barely-there seams.
+      boards([227, 217, 201], 20, "rgba(140,120,98,0.35)", 1, {
         spread: 0.06,
         long: true,
         grain: 9,
@@ -2861,8 +2861,26 @@ function createView3d(options: View3dOptions): View3dHandle {
         const l = o as THREE.SpotLight;
         if (l.isSpotLight && l.userData["fixture"]) spots.push(l);
       });
+    // First the washes under a roof (a garage's, a porch's: without a
+    // shadow their wide cones would shine through it onto the house
+    // behind), then other washes, the brightest first.
+    root.updateMatrixWorld(true);
+    const ray = new THREE.Raycaster();
+    const at = new THREE.Vector3();
+    const sheltered = new Map<THREE.SpotLight, boolean>();
+    for (const l of spots) {
+      let under = false;
+      if (roof && l.userData["wash"]) {
+        l.getWorldPosition(at);
+        ray.set(at, new THREE.Vector3(0, 1, 0));
+        ray.far = 8;
+        under = ray.intersectObject(roof, false).length > 0;
+      }
+      sheltered.set(l, under);
+    }
     spots.sort(
       (a, b) =>
+        Number(!!sheltered.get(b)) - Number(!!sheltered.get(a)) ||
         Number(!!b.userData["wash"]) - Number(!!a.userData["wash"]) ||
         b.intensity - a.intensity,
     );
