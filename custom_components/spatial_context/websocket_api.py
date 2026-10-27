@@ -184,6 +184,8 @@ _OPENING_SCHEMA = {
     vol.Optional("height_m"): vol.Any(
         None, vol.All(vol.Coerce(float), vol.Range(min=0.1, max=10))
     ),
+    # The casing round it indoors: white (unset) or white oak.
+    vol.Optional("trim_finish"): vol.Any(None, vol.In(["white", "white_oak"])),
     vol.Optional("garage_style"): vol.In(
         ["flush", "raised_short", "raised_long", "carriage", "windows", "modern"]
     ),
@@ -277,6 +279,10 @@ _FURNITURE_SCHEMA = {
     ),
     vol.Optional("fullness"): vol.Any(
         None, vol.All(vol.Coerce(float), vol.Range(min=0.25, max=3))
+    ),
+    # How far a backsplash's tile stops short of a window or door, cm.
+    vol.Optional("opening_gap_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=0, max=50))
     ),
     # How wide a climbing plant's leaves fan round its front, degrees.
     vol.Optional("leaf_spread_deg"): vol.Any(

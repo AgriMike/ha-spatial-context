@@ -126,6 +126,9 @@ const POST_M = 0.15;
 const WINDOW_TRIM_M = 0.08;
 const TRIM_WHITE = "#f3f1ec";
 const TRIM_WHITE_DARK = "#9a968f";
+/** White oak casing (indoors, chosen on the opening). */
+const TRIM_OAK = "#d3b98f";
+const TRIM_OAK_DARK = "#85745a";
 /** An outside door's leaf. */
 const DOOR = "#f6f4ef";
 const DOOR_DARK = "#8f8b84";
@@ -2417,13 +2420,34 @@ function buildFloor(
             const mid = (hole.s0 + hole.s1) / 2;
             pieces.push([mid - w / 2, mid + w / 2, sill, head]);
           }
+          // White oak indoors: each piece in two, white outside, oak in
+          // (from across the wall's inside face).
+          const oak =
+            opening.trim_finish === "white_oak"
+              ? dark
+                ? TRIM_OAK_DARK
+                : TRIM_OAK
+              : null;
+          const ox = -dz * outside;
+          const oz = dx * outside;
           // Never past the wall's own ends (a door hard by a corner): the
           // wall beyond belongs to the next one.
           for (const [s0, s1, y0, y1] of pieces) {
             const p0 = Math.max(s0, 0);
             const p1 = Math.min(s1, L);
-            if (p1 - p0 > 0.005)
+            if (p1 - p0 <= 0.005) continue;
+            if (!oak) {
               walls.push({ ...box(p0, p1, y0, y1, d), color: trim });
+              continue;
+            }
+            // Out from the wall's middle, from one depth to the other.
+            const part = (from: number, to: number, color: string) => {
+              const b = box(p0, p1, y0, y1, to - from);
+              const mid = (from + to) / 2;
+              walls.push({ ...b, x: b.x + ox * mid, z: b.z + oz * mid, color });
+            };
+            part(-t / 2 + 0.002, d / 2, trim);
+            part(-d / 2, -t / 2 + 0.002, oak);
           }
         }
         // Covers: blinds over a window, an overhead garage door. Each
@@ -3028,9 +3052,15 @@ function buildFloor(
     }
   }
 
-  // A backsplash stops round a window (or door) in the wall behind it.
+  // A backsplash stops round a window (or door) in the wall behind it, a
+  // gap set on it short of its casing.
   for (const sp of items) {
     if (!sp.model?.kind.startsWith("backsplash_")) continue;
+    const pad =
+      Math.max(
+        0,
+        layout.furniture.find((f) => f.id === sp.id)?.opening_gap_cm ?? 0,
+      ) / 100;
     const cos = Math.cos(sp.angle);
     const sin = Math.sin(sp.angle);
     // Its own across (x) and out (z) directions, and its back's middle.
@@ -3048,11 +3078,11 @@ function buildFloor(
       const off = Math.abs(((bx - f.a[0]) * lz - (bz - f.a[1]) * lx) / len);
       if (off > f.t / 2 + sp.depth + 0.05) continue;
       const along = (p: Vec2) => (p[0] - sp.x) * ux + (p[1] - sp.z) * uz;
-      let x0 = Math.min(along(f.a), along(f.b));
-      let x1 = Math.max(along(f.a), along(f.b));
+      let x0 = Math.min(along(f.a), along(f.b)) - pad;
+      let x1 = Math.max(along(f.a), along(f.b)) + pad;
       if (sp.model.flip) [x0, x1] = [-x1, -x0];
-      const y0 = f.y0 - sp.y0;
-      const y1 = f.y1 - sp.y0;
+      const y0 = f.y0 - sp.y0 - pad;
+      const y1 = f.y1 - sp.y0 + pad;
       if (x1 <= -sp.width / 2 || x0 >= sp.width / 2) continue;
       if (y1 <= 0 || y0 >= sp.height) continue;
       (sp.model.gaps ??= []).push({ x0, x1, y0, y1 });

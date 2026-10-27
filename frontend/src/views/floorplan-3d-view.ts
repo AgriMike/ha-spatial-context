@@ -3877,6 +3877,16 @@ export class Floorplan3dView extends LitElement {
     set: (patch: Partial<Opening>) => void,
   ) {
     const L = (k: string) => localize(`edit3d.${k}`);
+    // Its casing indoors (on an outside wall).
+    const trim = this._select<"white" | "white_oak">(
+      L("trim"),
+      o.trim_finish ?? "white",
+      [
+        ["white", L("trimWhite")],
+        ["white_oak", L("trimWhiteOak")],
+      ],
+      (v) => set({ trim_finish: v === "white_oak" ? v : null }),
+    );
     if (o.type === "door" && o.garage)
       return html`${this._select<GarageStyle>(
         L("garageStyle"),
@@ -3891,7 +3901,8 @@ export class Floorplan3dView extends LitElement {
         ],
         (v) => v && set({ garage_style: v }),
       )}
-      ${this._color(L("paint"), o.paint_color, (v) => set({ paint_color: v }))}`;
+      ${this._color(L("paint"), o.paint_color, (v) => set({ paint_color: v }))}
+      ${trim}`;
     if (o.type === "door")
       return html`${this._select<DoorStyle>(
         L("doorStyle"),
@@ -3907,7 +3918,8 @@ export class Floorplan3dView extends LitElement {
         ],
         (v) => v && set({ door_style: v }),
       )}
-      ${this._color(L("paint"), o.paint_color, (v) => set({ paint_color: v }))}`;
+      ${this._color(L("paint"), o.paint_color, (v) => set({ paint_color: v }))}
+      ${trim}`;
     // Where it sits in the wall (blank: from its style and the wall).
     const cm = (v: number | null, lo: number) =>
       v == null ? null : Math.max(lo, Math.min(1000, v)) / 100;
@@ -3945,6 +3957,7 @@ export class Floorplan3dView extends LitElement {
         ],
         (v) => v && set({ window_grid: v }),
       )}
+      ${trim}
       <label class="row">
         <span>${L("shutters")}</span>
         <input
@@ -4651,6 +4664,7 @@ export class Floorplan3dView extends LitElement {
         ${this._num(localize("edit3d.elevation"), item.elevation_cm ?? null, (v) => set({ elevation_cm: v }), { unit: "cm", placeholder: localize("edit3d.auto") })}
         ${entry?.opts["shaker"] && entry.opts["shaker"] !== "hood" ? this._renderCabinetFronts(item, set) : nothing}
         ${entry && (["houseplant", "plant", "cactus"].includes(entry.draw) || entry.id === "bonsai") ? this._renderPlantPot(item, set) : nothing}
+        ${entry?.id.startsWith("backsplash_") ? this._num(localize("edit3d.openingGap"), item.opening_gap_cm ?? null, (v) => set({ opening_gap_cm: v == null ? null : Math.max(0, Math.min(50, v)) }), { unit: "cm", min: 0, max: 50, placeholder: "0" }) : nothing}
         ${this._num(localize("edit3d.rotation"), item.rotation_deg, (v) => v !== null && set({ rotation_deg: ((v % 360) + 360) % 360 }), { unit: "°" })}
         ${this._color(localize("edit3d.color"), item.color, (v) => set({ color: v }))}
         ${this._renderItemModel(item)}

@@ -485,6 +485,7 @@ const ITEM_FINISH_KEYS = [
   "pot_shape",
   "fullness",
   "leaf_spread_deg",
+  "opening_gap_cm",
   "model_id",
   "model_name",
   "lift_cm",
@@ -499,6 +500,7 @@ const OPENING_STYLE_KEYS = [
   "paint_color",
   "sill_m",
   "height_m",
+  "trim_finish",
 ] as const;
 
 /** The last roof save had to leave the light strips out (restart needed). */

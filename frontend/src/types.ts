@@ -224,6 +224,8 @@ export interface Opening {
   sill_m?: number | null;
   /** A window's own height, metres, set by hand (absent: its style's). */
   height_m?: number | null;
+  /** The casing round it indoors (absent: white). */
+  trim_finish?: "white" | "white_oak" | null;
   /** A garage door's look (absent: flush). */
   garage_style?: GarageStyle;
   /** Paint for the door, garage door or shutters (#rrggbb). */
@@ -312,6 +314,9 @@ export interface FurnitureItem {
   pot_cm?: number | null;
   pot_shape?: "taper" | "cylinder" | "bowl" | "square" | null;
   fullness?: number | null;
+  /** How far a backsplash's tile stops short of a window or door in the
+   * wall behind it, centimetres (absent: right up to its casing). */
+  opening_gap_cm?: number | null;
   /** How wide a climbing plant's leaves fan round its front, degrees
    * (90 fills a corner); unset = its own. */
   leaf_spread_deg?: number | null;
