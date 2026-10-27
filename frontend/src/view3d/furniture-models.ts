@@ -1251,7 +1251,7 @@ const shaker: Builder = (m, o, tint, item) => {
       0,
       H - top,
       0.0125,
-      mat("#ecebe6", 0.35),
+      quartzMaterial(),
       cuts,
     );
   const gap = 0.003;
@@ -1398,8 +1398,16 @@ function cutTop(
   const mine = holes.filter(
     (h) => h.bx0 < x1 && h.bx1 > x0 && h.bz0 < z1 && h.bz1 > z0,
   );
+  // Each piece's texture laid at its real size (see planarUv).
+  const slab = (sw: number, sd: number, sx: number, sz: number) => {
+    if (sw <= 0 || sd <= 0) return;
+    const g = new THREE.BoxGeometry(sw, t, sd);
+    g.translate(sx, y + t / 2, sz);
+    planarUv(g, QUARTZ_TILE_M);
+    m.add(g, mt);
+  };
   if (!mine.length) {
-    m.box(w, t, d, x, y, z, mt);
+    slab(w, d, x, z);
     return;
   }
   const e = 0.005;
@@ -1412,10 +1420,10 @@ function cutTop(
     const hx1 = Math.min(x1, crossing.bx1);
     const hz0 = Math.max(z0, crossing.bz0);
     const hz1 = Math.min(z1, crossing.bz1);
-    m.box(w, t, hz0 - z0, x, y, (z0 + hz0) / 2, mt);
-    m.box(w, t, z1 - hz1, x, y, (hz1 + z1) / 2, mt);
-    m.box(hx0 - x0, t, hz1 - hz0, (x0 + hx0) / 2, y, (hz0 + hz1) / 2, mt);
-    m.box(x1 - hx1, t, hz1 - hz0, (hx1 + x1) / 2, y, (hz0 + hz1) / 2, mt);
+    slab(w, hz0 - z0, x, (z0 + hz0) / 2);
+    slab(w, z1 - hz1, x, (hz1 + z1) / 2);
+    slab(hx0 - x0, hz1 - hz0, (x0 + hx0) / 2, (hz0 + hz1) / 2);
+    slab(x1 - hx1, hz1 - hz0, (hx1 + x1) / 2, (hz0 + hz1) / 2);
     return;
   }
   // Shape coordinates (x, -z): extruded up, then stood on y. Its outline
@@ -1434,7 +1442,117 @@ function cutTop(
   const g = new THREE.ExtrudeGeometry(shape, { depth: t, bevelEnabled: false });
   g.rotateX(-Math.PI / 2);
   g.translate(0, y, 0);
+  g.computeVertexNormals();
+  planarUv(g, QUARTZ_TILE_M);
   m.add(g, mt);
+}
+
+/** A geometry's UVs laid flat at real size, `tile` metres to a repeat:
+ * across its top from x and z, up its sides from along them and y. */
+function planarUv(g: THREE.BufferGeometry, tile: number): void {
+  const pos = g.getAttribute("position");
+  const nor = g.getAttribute("normal");
+  const uv = new Float32Array(pos.count * 2);
+  for (let i = 0; i < pos.count; i++) {
+    const nx = Math.abs(nor.getX(i));
+    const ny = Math.abs(nor.getY(i));
+    const nz = Math.abs(nor.getZ(i));
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const [u, v] = ny >= nx && ny >= nz ? [x, z] : nz >= nx ? [x, y] : [z, y];
+    uv[i * 2] = u / tile;
+    uv[i * 2 + 1] = v / tile;
+  }
+  g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+}
+
+/** Silestone Blanco Maple quartz: a warm white, densely flecked with
+ * small chips (a few millimetres) of white, pale grey and sand, a few
+ * darker grains among them; one seamless repeat `QUARTZ_TILE_M` across. */
+const QUARTZ_TILE_M = 0.4;
+let quartzMat: THREE.MeshStandardMaterial | null = null;
+function quartzMaterial(): THREE.MeshStandardMaterial {
+  if (quartzMat) return quartzMat;
+  const N = 1024;
+  const cv = document.createElement("canvas");
+  cv.width = N;
+  cv.height = N;
+  const ctx = cv.getContext("2d");
+  if (ctx) {
+    ctx.fillStyle = "#efede8";
+    ctx.fillRect(0, 0, N, N);
+    let seed = 11;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    // px per millimetre.
+    const mm = N / (QUARTZ_TILE_M * 1000);
+    const chip = (cx: number, cy: number, r: number, color: string) => {
+      const n = 5 + Math.floor(rnd() * 3);
+      const pts: [number, number][] = [];
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * Math.PI * 2 + rnd() * 0.6;
+        const rr = r * (0.55 + 0.6 * rnd());
+        pts.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr]);
+      }
+      ctx.fillStyle = color;
+      // Drawn again across each edge it runs over, so the repeat is
+      // seamless.
+      for (const ox of [-N, 0, N])
+        for (const oy of [-N, 0, N]) {
+          if (
+            cx + ox < -r ||
+            cx + ox > N + r ||
+            cy + oy < -r ||
+            cy + oy > N + r
+          )
+            continue;
+          ctx.beginPath();
+          pts.forEach(([px, py], k) =>
+            k ? ctx.lineTo(px + ox, py + oy) : ctx.moveTo(px + ox, py + oy),
+          );
+          ctx.closePath();
+          ctx.fill();
+        }
+    };
+    const pick = (list: [string, number][]) => {
+      let r = rnd();
+      for (const [c, w] of list) if ((r -= w) <= 0) return c;
+      return list[0]![0];
+    };
+    // Fine grains, then the chips over them.
+    for (let i = 0; i < 16000; i++)
+      chip(
+        rnd() * N,
+        rnd() * N,
+        (0.3 + rnd() * 0.5) * mm,
+        pick([
+          ["#e4e1da", 0.45],
+          ["#f8f7f3", 0.35],
+          ["#d6d2ca", 0.15],
+          ["#bdb8ae", 0.05],
+        ]),
+      );
+    for (let i = 0; i < 7500; i++)
+      chip(
+        rnd() * N,
+        rnd() * N,
+        (0.6 + rnd() * rnd() * 2.2) * mm,
+        pick([
+          ["#f9f8f5", 0.34],
+          ["#e3e0da", 0.32],
+          ["#d6d2ca", 0.17],
+          ["#e8e2d6", 0.14],
+          ["#bab5ab", 0.03],
+        ]),
+      );
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  quartzMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.3 });
+  return quartzMat;
 }
 
 /** Delta's Everest workstation sink, undermount (its rim at the stone
@@ -1711,7 +1829,7 @@ const kitchenIsland: Builder = (m, _o, tint, item) => {
   const L = W - 2 * overhang;
   const zc = -D / 2 + overhang + cd / 2;
   const cuts = item.model?.cuts;
-  cutTop(m, W, top, D, 0, H - top, 0, mat("#eceae5", 0.3), cuts);
+  cutTop(m, W, top, D, 0, H - top, 0, quartzMaterial(), cuts);
   // The cabinets' box, its recessed kick on the working side.
   carcass(m, L, H - top - kick, cd, 0, kick, zc, paint, !!cuts);
   m.box(
