@@ -108,6 +108,9 @@ export interface Item3d {
   /** An uploaded model it wears instead of its own (its id: see
    * View3dOptions.fetchModel). */
   glb?: string;
+  /** It stands in a room (not out in the yard): the outdoor fixtures'
+   * beams never reach it. */
+  indoor?: boolean;
   /** A vehicle model's lift and its tyres' growth across, metres. */
   glbFit?: { lift: number; tire: number };
   /** Footprint in the item's own frame, metres, centred on (0, 0) —

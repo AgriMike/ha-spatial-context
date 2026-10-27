@@ -2819,6 +2819,43 @@ function buildFloor(
     }
   }
 
+  // Under the drawn roof, a room with no floor over it has a ceiling at
+  // its walls' height (cut away, it's left open to look into). One that a
+  // room above covers only in part is left open.
+  if (exterior.roofShown)
+    for (const room of layout.rooms) {
+      if (room.outdoor || room.points.length < 3) continue;
+      const xs = room.points.map((p) => p[0]);
+      const ys = room.points.map((p) => p[1]);
+      const [x0, x1] = [Math.min(...xs), Math.max(...xs)];
+      const [y0, y1] = [Math.min(...ys), Math.max(...ys)];
+      let covered = false;
+      for (let i = 0; i < 8 && !covered; i++)
+        for (let j = 0; j < 8 && !covered; j++) {
+          const px = x0 + ((x1 - x0) * (i + 0.5)) / 8;
+          const py = y0 + ((y1 - y0) * (j + 0.5)) / 8;
+          if (
+            pointInPolygon(px, py, room.points) &&
+            floorAbove(px * m, py * m) !== null
+          )
+            covered = true;
+        }
+      if (covered) continue;
+      slabs.push({
+        id: `${room.id}:ceiling`,
+        name: `${room.name} ceiling`,
+        y: (room.floor_offset_m ?? 0) + H - LID_DROP_M,
+        points: room.points.map(([x, y]): Vec2 => [x * m, y * m]),
+        color: dark ? "#8a8580" : "#f4f1ec",
+        finish: "plain",
+        tinted: true,
+        emissive: null,
+        emissiveIntensity: 0,
+        outdoor: false,
+        lid: true,
+      });
+    }
+
   // Furniture.
   const states = computeItemStates(layout.furniture, hass);
   const items: Item3d[] = [];
@@ -2954,6 +2991,14 @@ function buildFloor(
     const flight = si >= 0 ? stairs[si]! : null;
     items.push({
       id: item.id,
+      ...(layout.rooms.some(
+        (r) =>
+          !r.outdoor &&
+          r.points.length >= 3 &&
+          pointInPolygon(item.x, item.y, r.points),
+      )
+        ? { indoor: true }
+        : {}),
       ...(item.model_id ? { glb: item.model_id } : {}),
       ...(item.model_id && (item.lift_cm || item.tire_cm)
         ? {

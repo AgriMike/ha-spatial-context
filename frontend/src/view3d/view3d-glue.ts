@@ -245,6 +245,39 @@ const INDOOR_LIGHTS = (indoor: string): string => {
   );
 };
 
+/** Each furniture material's copy that the outdoor spotlights don't light
+ * (see indoorOnly), for the things in a room. */
+const INDOOR_COPIES = new WeakMap<THREE.Material, THREE.Material>();
+
+/** An item standing in a room: its materials the copies the outdoor
+ * fixtures' beams don't reach (they'd shine through the walls onto it,
+ * their cones' soft edges banding a counter top). */
+function keepIndoors(obj: THREE.Object3D): void {
+  const swap = (mat: THREE.Material): THREE.Material => {
+    if (mat === PICK_MATERIAL || mat.userData["indoorCopy"]) return mat;
+    let copy = INDOOR_COPIES.get(mat);
+    if (!copy) {
+      // Only plain lit materials (a shader of its own is left as it is).
+      if (
+        !(mat as THREE.MeshStandardMaterial).isMeshStandardMaterial ||
+        mat.onBeforeCompile !== THREE.Material.prototype.onBeforeCompile
+      )
+        return mat;
+      copy = indoorOnly(mat.clone());
+      copy.userData["indoorCopy"] = true;
+      INDOOR_COPIES.set(mat, copy);
+    }
+    return copy;
+  };
+  obj.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    mesh.material = Array.isArray(mesh.material)
+      ? mesh.material.map(swap)
+      : swap(mesh.material);
+  });
+}
+
 /** A material that outdoor spotlights don't light (an indoor floor). */
 function indoorOnly<M extends THREE.Material>(mat: M): M {
   mat.onBeforeCompile = (shader) => {
@@ -2161,6 +2194,7 @@ function createView3d(options: View3dOptions): View3dHandle {
 
   function buildItem(item: Item3d, baseY = 0): THREE.Object3D {
     const obj = buildItemObject(item, baseY);
+    if (item.indoor) keepIndoors(obj);
     // Out in the yard it rides the ground as it's dragged.
     if (item.grounded) {
       obj.userData["grounded"] = true;
@@ -2304,6 +2338,7 @@ function createView3d(options: View3dOptions): View3dHandle {
           retired.push(stand);
         }
         g.add(fit, pick);
+        if (item.indoor) keepIndoors(fit);
         placeSun();
         refreshFixtureShadows();
         invalidate();
