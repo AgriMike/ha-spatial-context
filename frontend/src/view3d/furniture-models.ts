@@ -1621,19 +1621,63 @@ function tileMaterial(tint: string): THREE.MeshStandardMaterial {
   return m;
 }
 
+/** A panel `w` across (centred) and `h` up less the gaps in it: the
+ * pieces left, each [x0, x1, y0, y1]. */
+function panelPieces(
+  w: number,
+  h: number,
+  gaps: { x0: number; x1: number; y0: number; y1: number }[] | undefined,
+): [number, number, number, number][] {
+  const xs = [-w / 2, w / 2];
+  for (const g of gaps ?? [])
+    for (const x of [g.x0, g.x1]) if (x > -w / 2 && x < w / 2) xs.push(x);
+  xs.sort((a, b) => a - b);
+  const out: [number, number, number, number][] = [];
+  for (let i = 0; i + 1 < xs.length; i++) {
+    const xa = xs[i]!;
+    const xb = xs[i + 1]!;
+    if (xb - xa < 0.002) continue;
+    const xm = (xa + xb) / 2;
+    const cut = (gaps ?? [])
+      .filter((g) => g.x0 < xm && g.x1 > xm)
+      .map((g): [number, number] => [Math.max(0, g.y0), Math.min(h, g.y1)])
+      .filter(([a, b]) => b > a)
+      .sort((p, q) => p[0] - q[0]);
+    let y = 0;
+    for (const [a, b] of cut) {
+      if (a - y > 0.002) out.push([xa, xb, y, a]);
+      y = Math.max(y, b);
+    }
+    if (h - y > 0.002) out.push([xa, xb, y, h]);
+  }
+  return out;
+}
+
 /** A tile backsplash (its back at -z, against the wall): a thin slab,
  * its face tiled in small grey hexagons with dark grout at their real
- * size however big it's drawn; a colour tints the tiles. */
-const backsplash: Builder = (m, _o, tint) => {
+ * size however big it's drawn, stopping round any window or door in the
+ * wall behind it (see scene3d); a colour tints the tiles. */
+const backsplash: Builder = (m, _o, tint, item) => {
   const { W, D, H } = m;
   const t = Math.min(D, 0.012);
-  m.box(W, H, t, 0, 0, -D / 2 + t / 2, mat("#3b3b3c", 0.8));
-  const g = new THREE.PlaneGeometry(W, H);
-  const uv = g.getAttribute("uv") as THREE.BufferAttribute;
-  for (let i = 0; i < uv.count; i++)
-    uv.setXY(i, (uv.getX(i) * W) / HEX_TILE[0], (uv.getY(i) * H) / HEX_TILE[1]);
-  g.translate(0, H / 2, -D / 2 + t + 0.0005);
-  m.add(g, tileMaterial(tint ?? "#ffffff"));
+  const grout = mat("#3b3b3c", 0.8);
+  const tile = tileMaterial(tint ?? "#ffffff");
+  for (const [x0, x1, y0, y1] of panelPieces(W, H, item.model?.gaps)) {
+    const w = x1 - x0;
+    const h = y1 - y0;
+    m.box(w, h, t, (x0 + x1) / 2, y0, -D / 2 + t / 2, grout);
+    // Its tiles laid from the panel's corner, so the pieces line up.
+    const g = new THREE.PlaneGeometry(w, h);
+    const uv = g.getAttribute("uv") as THREE.BufferAttribute;
+    for (let i = 0; i < uv.count; i++)
+      uv.setXY(
+        i,
+        (x0 + W / 2 + uv.getX(i) * w) / HEX_TILE[0],
+        (y0 + uv.getY(i) * h) / HEX_TILE[1],
+      );
+    g.translate((x0 + x1) / 2, y0 + h / 2, -D / 2 + t + 0.0005);
+    m.add(g, tile);
+  }
 };
 
 /** A model drawing into another turned half round (its back is the

@@ -786,6 +786,16 @@ function buildFloor(
   const covers = computeCoverOpenness(layout.openings, hass);
   const walls: Box3d[] = [];
   const panes: Pane3d[] = [];
+  /** Each window's and door's face on its wall, its casing included: its
+   * ends along the wall's line, its bottom and top, the wall's
+   * thickness (a backsplash stops round it). */
+  const openingFaces: {
+    a: Vec2;
+    b: Vec2;
+    y0: number;
+    y1: number;
+    t: number;
+  }[] = [];
   const porches: Porch3d[] = [];
   const wallFaces: Floor3d["wallFaces"] = [];
   const offsetRooms = layout.rooms.filter(
@@ -2269,6 +2279,16 @@ function buildFloor(
             if (sill < clear) sill = Math.min(clear, head - 0.3);
           }
         }
+        {
+          const pad = outside ? WINDOW_TRIM_M : 0;
+          openingFaces.push({
+            a: at(hole.s0 - pad),
+            b: at(hole.s1 + pad),
+            y0: isDoor ? sill : sill - pad,
+            y1: head + pad,
+            t,
+          });
+        }
         // Under a door (a step up from a lower room) it stops a hair under
         // the floor it leads onto.
         if (sill > base)
@@ -3005,6 +3025,37 @@ function buildFloor(
         a,
         r: 0.012,
       });
+    }
+  }
+
+  // A backsplash stops round a window (or door) in the wall behind it.
+  for (const sp of items) {
+    if (!sp.model?.kind.startsWith("backsplash_")) continue;
+    const cos = Math.cos(sp.angle);
+    const sin = Math.sin(sp.angle);
+    // Its own across (x) and out (z) directions, and its back's middle.
+    const ux = cos;
+    const uz = -sin;
+    const bx = sp.x - sin * (sp.depth / 2);
+    const bz = sp.z - cos * (sp.depth / 2);
+    for (const f of openingFaces) {
+      const lx = f.b[0] - f.a[0];
+      const lz = f.b[1] - f.a[1];
+      const len = Math.hypot(lx, lz);
+      if (len < 1e-6) continue;
+      // Along the same wall: parallel to it, its back on the wall's face.
+      if (Math.abs((ux * lz - uz * lx) / len) > 0.1) continue;
+      const off = Math.abs(((bx - f.a[0]) * lz - (bz - f.a[1]) * lx) / len);
+      if (off > f.t / 2 + sp.depth + 0.05) continue;
+      const along = (p: Vec2) => (p[0] - sp.x) * ux + (p[1] - sp.z) * uz;
+      let x0 = Math.min(along(f.a), along(f.b));
+      let x1 = Math.max(along(f.a), along(f.b));
+      if (sp.model.flip) [x0, x1] = [-x1, -x0];
+      const y0 = f.y0 - sp.y0;
+      const y1 = f.y1 - sp.y0;
+      if (x1 <= -sp.width / 2 || x0 >= sp.width / 2) continue;
+      if (y1 <= 0 || y0 >= sp.height) continue;
+      (sp.model.gaps ??= []).push({ x0, x1, y0, y1 });
     }
   }
 
