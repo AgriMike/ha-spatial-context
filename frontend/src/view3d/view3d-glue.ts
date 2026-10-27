@@ -2039,6 +2039,29 @@ function createView3d(options: View3dOptions): View3dHandle {
   controls.dampingFactor = 0.12;
   controls.screenSpacePanning = true;
   controls.maxPolarAngle = Math.PI * 0.495;
+  // Zooming heads for what's under the pointer.
+  controls.zoomToCursor = true;
+  /** Close in, the point it orbits and pans about stays this far ahead
+   * (metres): zooming carries on moving in, and a pan (as fast as the
+   * target is far) doesn't slow to a crawl. */
+  const NEAR_TARGET_M = 2.5;
+  const ahead = new THREE.Vector3();
+  function keepTargetAhead(): void {
+    const dist = camera.position.distanceTo(controls.target);
+    if (dist >= NEAR_TARGET_M) return;
+    camera.getWorldDirection(ahead);
+    controls.target.copy(camera.position).addScaledVector(ahead, NEAR_TARGET_M);
+  }
+  /** The near clipping plane from how close the camera is, so a close
+   * look at an item isn't cut away. */
+  function fitNear(): void {
+    const dist = camera.position.distanceTo(controls.target);
+    const near = Math.min(0.5, Math.max(0.02, dist / 400));
+    if (near < camera.near * 0.8 || near > camera.near * 1.25) {
+      camera.near = near;
+      camera.updateProjectionMatrix();
+    }
+  }
 
   /** Everything that's exported: floors, furniture, lights, scans. */
   const root = new THREE.Group();
@@ -2126,7 +2149,13 @@ function createView3d(options: View3dOptions): View3dHandle {
     renderer.shadowMap.needsUpdate = true;
     redraw();
   };
-  controls.addEventListener("change", redraw);
+  // After each move (a wheel zooms within its own event, not the frame's
+  // update).
+  controls.addEventListener("change", () => {
+    keepTargetAhead();
+    fitNear();
+    redraw();
+  });
 
   /** Frees what's retired, except what the scene still uses (a cached
    * site model, a shared material). */
