@@ -1583,7 +1583,7 @@ function hexTileTexture(): THREE.Texture {
     let seed = 7;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
     const greys = Array.from({ length: 36 }, () =>
-      Math.round(160 + 12 * rnd()),
+      Math.round(164 + 4 * rnd()),
     );
     for (let row = -1; row <= 6; row++)
       for (let col = -1; col <= 6; col++) {
