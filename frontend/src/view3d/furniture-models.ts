@@ -1578,13 +1578,18 @@ function hexTileTexture(): THREE.Texture {
     const dx = cv.width / 6;
     const dy = cv.height / 6;
     const r = dx / Math.sqrt(3) - 2.2;
+    // Each tile's grey, only just varied; the tiles cut off at an edge
+    // the same as their other halves across it, so the repeat is seamless.
     let seed = 7;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const greys = Array.from({ length: 36 }, () =>
+      Math.round(160 + 12 * rnd()),
+    );
     for (let row = -1; row <= 6; row++)
       for (let col = -1; col <= 6; col++) {
         const cx = col * dx + (row % 2 ? dx / 2 : 0) + dx / 2;
         const cy = row * dy + dy / 2;
-        const g = Math.round(150 + 40 * rnd());
+        const g = greys[((row + 6) % 6) * 6 + ((col + 6) % 6)]!;
         ctx.fillStyle = `rgb(${g},${g + 2},${g + 4})`;
         ctx.beginPath();
         for (let k = 0; k < 6; k++) {
