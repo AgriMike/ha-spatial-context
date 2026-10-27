@@ -734,7 +734,7 @@ const KITCHEN: Row[] = [
     46,
     50,
     "stool",
-    { h3d: 0.98 },
+    { h3d: 1.04 },
   ],
   ["toaster", "Toaster", 30, 20, "appliance", { slots: true }],
   ["toaster_oven", "Toaster oven", 45, 35, "appliance", { window: true }],

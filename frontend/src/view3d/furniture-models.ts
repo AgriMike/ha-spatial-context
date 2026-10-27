@@ -2029,10 +2029,10 @@ function shellGeometry(
  * front and a stretcher across the back. */
 const bucketStool: Builder = (m, _o, tint) => {
   const { W, D, H } = m;
-  const hide = leather(tint ?? "#b06a35");
+  const hide = leather(tint ?? "#94603e");
   const black = mat("#1d1d1f", 0.45, 0.6);
   const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
-  const seatY = Math.min(0.66, Math.max(0.4, H - 0.3));
+  const seatY = Math.min(0.66, Math.max(0.4, H - 0.38));
   const backH = H - seatY;
   // The frame: under the seat's corners, splayed out to the floor.
   const sx = W / 2 - 0.07;
@@ -2058,20 +2058,22 @@ const bucketStool: Builder = (m, _o, tint) => {
   // rolled front edge, the shallow seat, up the raked back. Its sides
   // curl a little toward its face (a lip round the seat, the back's
   // edges wrapping forward), its top corners rounded off.
-  const back = -D / 2 + 0.02;
+  const back = -D / 2 + 0.04;
   const mid: [number, number][] = [
-    [D / 2 - 0.015, -0.01],
-    [D / 2 - 0.03, 0.04],
-    [D / 2 - 0.085, 0.03],
-    [0.03, 0.012],
-    [back + 0.13, 0.016],
-    [back + 0.045, 0.06],
-    [back + 0.012, 0.15],
-    [back - 0.004, 0.24],
-    [back - 0.02, backH],
+    [D / 2 - 0.01, 0.006],
+    [D / 2 - 0.05, 0.022],
+    [D / 2 - 0.12, 0.022],
+    [0.0, 0.02],
+    [back + 0.1, 0.026],
+    [back + 0.03, 0.075],
+    [back + 0.006, 0.16],
+    [back - 0.01, 0.26],
+    [back - 0.014, backH - 0.04],
+    [back - 0.006, backH],
   ];
-  // How far the sides curl toward its face along it.
-  const curl = [0.01, 0.02, 0.03, 0.045, 0.06, 0.06, 0.045, 0.035, 0.03];
+  // How far the sides curl toward its face along it: barely at the
+  // front, rising round the seat's back into a gently cupped back.
+  const curl = [0, 0.006, 0.014, 0.024, 0.038, 0.048, 0.045, 0.04, 0.034, 0.03];
   const along = (pts: number[][], t: number): number[] => {
     const f = t * (pts.length - 1);
     const k = Math.min(pts.length - 2, Math.floor(f));
@@ -2092,8 +2094,12 @@ const bucketStool: Builder = (m, _o, tint) => {
   };
   const half = W / 2 - 0.02;
   const shell = shellGeometry(
-    (u, t) => {
+    (u, t0) => {
       const x = u * 2 - 1;
+      // Its top corners rounded: there it stops a little short along
+      // the back (so they stay on its surface).
+      const k = Math.max(0, (t0 - 0.86) / 0.14);
+      const t = t0 - 0.07 * k * k * Math.pow(Math.abs(x), 4);
       const [cz, cy] = along(mid, t) as [number, number];
       // The profile's face normal (toward the sitter), from its slope.
       const [az0, ay0] = along(mid, Math.max(0, t - 0.01)) as [number, number];
@@ -2106,22 +2112,21 @@ const bucketStool: Builder = (m, _o, tint) => {
       const e = Math.pow(Math.abs(x), 2.6);
       const c =
         along(
-          curl.map((k) => [k]),
+          curl.map((q) => [q]),
           t,
         )[0]! * e;
-      // A touch wider up the back; its top corners rounded.
-      const wide = half * (1 + (0.05 * Math.max(0, t - 0.55)) / 0.45);
-      const k = Math.max(0, (t - 0.86) / 0.14);
-      const drop = 0.05 * k * k * Math.pow(Math.abs(x), 5);
-      return v(
-        x * wide * (1 - 0.06 * e),
-        seatY + cy + ny * c - drop,
-        cz + nz * c,
-      );
+      // Narrowing a little where the seat turns up into the back, and a
+      // touch wider at the back's top.
+      const wide =
+        half *
+        (1 -
+          0.04 * Math.exp(-(((t - 0.62) / 0.13) ** 2)) +
+          0.03 * Math.max(0, (t - 0.75) / 0.25));
+      return v(x * wide * (1 - 0.06 * e), seatY + cy + ny * c, cz + nz * c);
     },
     20,
     44,
-    0.022,
+    0.028,
   );
   m.add(shell, hide);
 };
