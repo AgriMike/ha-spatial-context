@@ -2690,216 +2690,666 @@ const carHauler: Builder = (m, _o, tint) => {
   }
 };
 
-/** A car's side profile (z along its length, front at +z; y up) swept
- * across `width`, centred: a body panel, the glasshouse. */
-function profile(
-  m: Model,
-  pts: [number, number][],
-  width: number,
-  material: THREE.Material,
-  bevel = 0.04,
-): void {
-  const shape = new THREE.Shape(pts.map(([z, y]) => new THREE.Vector2(z, y)));
-  const b = Math.min(bevel, width / 4);
-  const g = new THREE.ExtrudeGeometry(shape, {
-    depth: Math.max(0.01, width - 2 * b),
-    bevelEnabled: b > 0,
-    bevelThickness: b,
-    bevelSize: b,
-    bevelSegments: 2,
-    curveSegments: 6,
-  });
-  // (z, y, across) → x across, centred.
-  g.rotateY(-Math.PI / 2);
-  g.translate(width / 2 - b, 0, 0);
-  g.computeVertexNormals();
-  m.add(g, material);
+/** A value along a car's length from keyframes ([t, value], t 0 at its
+ * tail … 1 at its nose), straight between them. */
+function keyed(keys: [number, number][], t: number): number {
+  if (t <= keys[0]![0]) return keys[0]![1];
+  for (let i = 1; i < keys.length; i++) {
+    const [t1, v1] = keys[i]!;
+    if (t <= t1) {
+      const [t0, v0] = keys[i - 1]!;
+      return v0 + ((v1 - v0) * (t - t0)) / Math.max(1e-6, t1 - t0);
+    }
+  }
+  return keys[keys.length - 1]![1];
 }
 
-/** A wheel at (x, z): tyre, rim, and its arch's black lining above. */
+/** One cross-section of a lofted car part at `z`: from `y0` (its foot,
+ * half-width `hw0`) to `y1` (its top, half-width `hw1`), its top corners
+ * rounded `r`, its foot's `rb`. */
+interface CarSection {
+  z: number;
+  y0: number;
+  y1: number;
+  hw0: number;
+  hw1: number;
+  r: number;
+  rb: number;
+}
+
+/** A car part lofted through its sections (tail to nose): a smooth skin
+ * round each rounded section, capped flat at both ends. */
+function loft(
+  m: Model,
+  sections: CarSection[],
+  material: THREE.Material,
+): void {
+  const arc = 5;
+  const ring = (s: CarSection): [number, number][] => {
+    const h = Math.max(0.002, s.y1 - s.y0);
+    const r = Math.min(s.r, h * 0.48, s.hw1 * 0.9);
+    const rb = Math.min(s.rb, h * 0.3, s.hw0 * 0.9);
+    const pts: [number, number][] = [];
+    const corner = (cx: number, cy: number, rr: number, a0: number) => {
+      for (let k = 0; k < arc; k++) {
+        const a = a0 + ((Math.PI / 2) * k) / (arc - 1);
+        pts.push([cx + rr * Math.cos(a), cy + rr * Math.sin(a)]);
+      }
+    };
+    corner(s.hw0 - rb, s.y0 + rb, rb, -Math.PI / 2);
+    corner(s.hw1 - r, s.y1 - r, r, 0);
+    corner(-s.hw1 + r, s.y1 - r, r, Math.PI / 2);
+    corner(-s.hw0 + rb, s.y0 + rb, rb, Math.PI);
+    return pts;
+  };
+  const rings = sections.map(ring);
+  const n = rings[0]!.length;
+  const pos: number[] = [];
+  for (let k = 0; k < sections.length; k++)
+    for (const [x, y] of rings[k]!) pos.push(x, y, sections[k]!.z);
+  const idx: number[] = [];
+  for (let k = 0; k + 1 < sections.length; k++)
+    for (let i = 0; i < n; i++) {
+      const a = k * n + i;
+      const a1 = k * n + ((i + 1) % n);
+      const b = (k + 1) * n + i;
+      const b1 = (k + 1) * n + ((i + 1) % n);
+      idx.push(a, a1, b, a1, b1, b);
+    }
+  const skin = new THREE.BufferGeometry();
+  skin.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  skin.setIndex(idx);
+  skin.computeVertexNormals();
+  m.add(skin, material);
+  // The ends: flat caps, the tail's facing back, the nose's forward.
+  for (const [k, sign] of [
+    [0, -1],
+    [sections.length - 1, 1],
+  ] as const) {
+    const s = sections[k]!;
+    const pts = rings[k]!;
+    const cx = 0;
+    const cy = (s.y0 + s.y1) / 2;
+    const cap: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const [x0, y0] = pts[i]!;
+      const [x1, y1] = pts[(i + 1) % n]!;
+      if (sign > 0) cap.push(cx, cy, s.z, x0, y0, s.z, x1, y1, s.z);
+      else cap.push(cx, cy, s.z, x1, y1, s.z, x0, y0, s.z);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(cap, 3));
+    g.computeVertexNormals();
+    m.add(g, material);
+  }
+}
+
+/** A skin lying on a car's glasshouse sides (a pillar), over t0…t1
+ * along it and from `f0` to `f1` of the way up its side (0 the belt, 1
+ * where the roof's curve begins), a hair proud of the glass. */
+function houseSkin(
+  m: Model,
+  house: (t: number) => CarSection,
+  t0: number,
+  t1: number,
+  f0: number,
+  f1: number,
+  material: THREE.Material,
+): void {
+  const nT = 8;
+  const nF = 3;
+  const at = (t: number, f: number, side: number): [number, number, number] => {
+    const c = house(t);
+    const h = Math.max(0.002, c.y1 - c.y0);
+    const r = Math.min(c.r, h * 0.48, c.hw1 * 0.9);
+    const rb = Math.min(c.rb, h * 0.3, c.hw0 * 0.9);
+    const x = c.hw0 + (c.hw1 - c.hw0) * f + 0.006;
+    const y = c.y0 + rb + (c.y1 - r - c.y0 - rb) * f;
+    return [side * x, y, c.z];
+  };
+  for (const side of [-1, 1]) {
+    const pos: number[] = [];
+    for (let i = 0; i < nT; i++)
+      for (let j = 0; j < nF; j++) {
+        const ta = t0 + ((t1 - t0) * i) / nT;
+        const tb = t0 + ((t1 - t0) * (i + 1)) / nT;
+        const fa = f0 + ((f1 - f0) * j) / nF;
+        const fb = f0 + ((f1 - f0) * (j + 1)) / nF;
+        const p00 = at(ta, fa, side);
+        const p01 = at(ta, fb, side);
+        const p10 = at(tb, fa, side);
+        const p11 = at(tb, fb, side);
+        const quad =
+          side > 0
+            ? [p00, p01, p10, p01, p11, p10]
+            : [p00, p10, p01, p01, p10, p11];
+        for (const q of quad) pos.push(...q);
+      }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    g.computeVertexNormals();
+    m.add(g, material);
+  }
+}
+
+/** A car's shape, its tail at t 0 and nose at t 1 (each value keyed
+ * along it): its body from its sills or bumpers (`bottom`) to its belt
+ * and bonnet (`top`), its glasshouse from the belt to the roof (`roof`,
+ * over `glass` t0…t1), their half-widths as fractions of `half`, and
+ * its wheels. */
+interface CarSpec {
+  half: number;
+  /** Its real length (metres): the axles keep their places on it at
+   * whatever length it's drawn. */
+  length: number;
+  bottom: [number, number][];
+  top: [number, number][];
+  width: [number, number][];
+  glass: [number, number];
+  roof: [number, number][];
+  /** The glasshouse's half-width at the belt and the roof (of `half`). */
+  belt: number;
+  crown: number;
+  /** The painted roof panel over t0…t1. */
+  panel: [number, number];
+  wheelR: number;
+  /** The axles' distance back from the nose, metres. */
+  front: number;
+  base: number;
+}
+
+/** Builds a car from its spec (front at +z): the lofted body, glass and
+ * roof, wheels in arches; returns where things are for its details. */
+function carShape(
+  m: Model,
+  spec: CarSpec,
+  paint: THREE.Material,
+  glass: THREE.Material,
+  rim: THREE.Material,
+  wheel: { spokes?: number; twin?: boolean } = {},
+) {
+  const L = m.D;
+  const zOf = (t: number) => -L / 2 + t * L;
+  const ts: number[] = [0, 0.005, 0.015, 0.03];
+  for (let k = 1; k < 30; k++) ts.push(0.03 + (0.94 * k) / 30);
+  ts.push(0.97, 0.985, 0.995, 1);
+  const body = ts.map((t) => ({
+    z: zOf(t),
+    y0: keyed(spec.bottom, t),
+    y1: keyed(spec.top, t),
+    hw0: spec.half * keyed(spec.width, t) * 0.96,
+    hw1: spec.half * keyed(spec.width, t) * 0.97,
+    r: 0.14,
+    rb: 0.06,
+  }));
+  loft(m, body, paint);
+  const [g0, g1] = spec.glass;
+  const gts: number[] = [];
+  for (let k = 0; k <= 28; k++) gts.push(g0 + ((g1 - g0) * k) / 28);
+  const halfAt = (t: number) => spec.half * keyed(spec.width, t);
+  const house = (t: number): CarSection => ({
+    z: zOf(t),
+    y0: keyed(spec.top, t) - 0.02,
+    y1: keyed(spec.roof, t),
+    hw0: halfAt(t) * spec.belt,
+    hw1: halfAt(t) * spec.crown,
+    r: 0.1,
+    rb: 0.005,
+  });
+  loft(m, gts.map(house), glass);
+  // The roof panel, a skin over the glass's top.
+  const [p0, p1] = spec.panel;
+  const pts: number[] = [];
+  for (let k = 0; k <= 16; k++) pts.push(p0 + ((p1 - p0) * k) / 16);
+  loft(
+    m,
+    pts.map((t) => {
+      const s = house(t);
+      return {
+        z: s.z,
+        y0: s.y1 - 0.05,
+        y1: s.y1 + 0.012,
+        hw0: s.hw1 + 0.004,
+        hw1: s.hw1 - 0.02,
+        r: 0.06,
+        rb: 0.004,
+      };
+    }),
+    paint,
+  );
+  // Wheels, each in a dark arch.
+  const r = spec.wheelR;
+  const k = L / spec.length;
+  const zf = L / 2 - spec.front * k;
+  const zr = zf - spec.base * k;
+  const dark = mat("#141414", 0.9);
+  for (const z of [zf, zr]) {
+    const t = (z + L / 2) / L;
+    const hw = halfAt(t) * 0.96;
+    for (const s of [-1, 1]) {
+      m.cyl(r + 0.06, r + 0.06, 0.02, s * (hw + 0.002), r, z, dark, 28, "x");
+      carWheel(m, s * (hw - 0.12), z, r, rim, wheel.spokes, wheel.twin);
+    }
+  }
+  return {
+    zOf,
+    halfAt,
+    house,
+    skin: (
+      t0: number,
+      t1: number,
+      f0: number,
+      f1: number,
+      material: THREE.Material,
+    ) => houseSkin(m, house, t0, t1, f0, f1, material),
+    top: (t: number) => keyed(spec.top, t),
+    roof: (t: number) => keyed(spec.roof, t),
+  };
+}
+
+/** A wheel at (x, z): tyre, an alloy of `spokes` spokes (paired when
+ * `twin`), the hub. */
 function carWheel(
   m: Model,
   x: number,
   z: number,
   r: number,
   rim: THREE.Material,
+  spokes = 5,
+  twin = false,
 ): void {
   const tyre = mat(C.rubber, 0.9);
   const side = Math.sign(x) || 1;
-  m.cyl(r, r, 0.26, x, r, z, tyre, 28, "x");
-  m.cyl(r * 0.66, r * 0.66, 0.265, x, r, z, rim, 20, "x");
-  m.cyl(r * 0.2, r * 0.2, 0.27, x, r, z, mat(C.charcoal, 0.4, 0.6), 12, "x");
-  // Spokes across the rim's face.
-  for (let k = 0; k < 5; k++) {
-    const g = new THREE.BoxGeometry(0.02, r * 1.2, 0.05);
-    g.rotateX((k * Math.PI) / 5);
-    g.translate(x + side * 0.133, r, z);
+  const face = x + side * 0.128;
+  m.cyl(r, r, 0.26, x, r, z, tyre, 32, "x");
+  m.cyl(r * 0.74, r * 0.74, 0.262, x, r, z, mat("#262626", 0.6), 28, "x");
+  m.cyl(r * 0.17, r * 0.17, 0.27, x, r, z, rim, 14, "x");
+  const n = twin ? spokes * 2 : spokes;
+  for (let k = 0; k < n; k++) {
+    const a = twin
+      ? (Math.floor(k / 2) * 2 * Math.PI) / spokes + (k % 2 ? 0.09 : -0.09)
+      : (k * 2 * Math.PI) / spokes;
+    const g = new THREE.BoxGeometry(0.025, r * 0.6, twin ? 0.03 : 0.05);
+    g.translate(0, r * 0.15 + r * 0.3, 0);
+    g.rotateX(a);
+    g.translate(face, r, z);
     m.add(g, rim);
   }
+  const lip = new THREE.TorusGeometry(r * 0.73, 0.012, 6, 32);
+  lip.rotateY(Math.PI / 2);
+  lip.translate(face, r, z);
+  m.add(lip, rim);
 }
 
-/** A Land Rover Discovery (front at +z): tall and square, an upright
- * tailgate, the roof stepped up behind the front doors with rails,
- * black pillars under a "floating" roof, vertical tail lights and the
- * number plate off to one side. Red unless coloured. */
+/** A Land Rover Discovery (5th generation; front at +z), to its real
+ * shape: a high flat bonnet and blunt nose, a steeply raked screen and a
+ * long flat roof ending in a spoiler, the belt rising toward the tail, a
+ * black B-pillar, a thick body-coloured C-pillar and the rear quarter
+ * window kicked up above the belt, slim wrap-round lights, a vent in the
+ * front wing, black sills, the number plate offset on the tailgate over
+ * a silver skid plate, big multi-spoke alloys. Red unless coloured. */
 const discovery: Builder = (m, _o, tint) => {
-  const { W, D } = m;
-  const L = D;
-  const w = Math.min(W * 0.92, 2.05);
-  const paint = mat(tint ?? "#8e1a1f", 0.28, 0.55);
-  const glass = mat("#20303c", 0.06, 0.4);
-  const black = mat(C.black, 0.55);
-  const rim = mat("#9aa0a6", 0.3, 0.8);
-  const f = L / 2;
-  const r = 0.39;
-  // The body: bumpers to the belt line, bonnet sloping to the screen.
-  profile(
+  const { W } = m;
+  const paint = mat(tint ?? "#a01c22", 0.25, 0.55);
+  const glass = mat("#121a22", 0.05, 0.45);
+  const black = mat("#131313", 0.45);
+  const trim = mat("#2a2a2c", 0.5, 0.3);
+  const silver = mat("#b4b8bc", 0.3, 0.7);
+  const rim = mat("#b8bcc0", 0.25, 0.85);
+  const half = Math.min(W / 2 - 0.08, 1.035);
+  const c = carShape(
     m,
-    [
-      [-f, 0.42],
-      [-f, 1.12],
-      [-f + 0.1, 1.15],
-      [f - 1.25, 1.15],
-      [f - 0.1, 1.06],
-      [f, 0.95],
-      [f, 0.42],
-      [f - 0.35, 0.33],
-      [-f + 0.3, 0.33],
-    ],
-    w,
+    {
+      half,
+      length: 4.956,
+      bottom: [
+        [0, 0.56],
+        [0.02, 0.49],
+        [0.06, 0.44],
+        [0.2, 0.43],
+        [0.8, 0.43],
+        [0.94, 0.41],
+        [0.985, 0.4],
+        [1, 0.46],
+      ],
+      top: [
+        [0, 1.1],
+        [0.012, 1.19],
+        [0.05, 1.22],
+        [0.25, 1.17],
+        [0.5, 1.13],
+        [0.72, 1.11],
+        [0.8, 1.1],
+        [0.95, 1.085],
+        [0.985, 1.06],
+        [1, 1.0],
+      ],
+      width: [
+        [0, 0.86],
+        [0.012, 0.94],
+        [0.05, 0.99],
+        [0.1, 1],
+        [0.92, 1],
+        [0.97, 0.97],
+        [0.99, 0.93],
+        [1, 0.88],
+      ],
+      glass: [0.012, 0.73],
+      roof: [
+        [0.012, 1.22],
+        [0.02, 1.62],
+        [0.034, 1.84],
+        [0.06, 1.885],
+        [0.44, 1.89],
+        [0.47, 1.87],
+        [0.54, 1.86],
+        [0.6, 1.66],
+        [0.73, 1.11],
+      ],
+      belt: 0.94,
+      crown: 0.82,
+      panel: [0.03, 0.545],
+      wheelR: 0.4,
+      front: 0.86,
+      base: 2.923,
+    },
     paint,
-  );
-  // The glasshouse: steep screen, the roof stepping up at the B pillar,
-  // the tailgate glass near upright.
-  profile(
-    m,
-    [
-      [-f + 0.12, 1.15],
-      [-f + 0.2, 1.78],
-      [-0.1, 1.8],
-      [-0.1, 1.76],
-      [f - 1.75, 1.76],
-      [f - 1.25, 1.15],
-    ],
-    w * 0.9,
     glass,
-    0.03,
+    rim,
+    { spokes: 10, twin: true },
   );
-  // The roof's paint over it (stepped), its rails.
+  const { zOf, house, skin } = c;
+  // The pillars: black B, a thick body-coloured C, the quarter window's
+  // foot kicked up above the belt, the body-coloured tail of it.
+  skin(0.44, 0.475, 0, 1, black);
+  skin(0.232, 0.272, 0, 1, paint);
+  skin(0.05, 0.232, 0, 0.16, paint);
+  skin(0.012, 0.05, 0, 1, paint);
+  // The windscreen's black pillars, the roof's spoiler and its dark
+  // glass panels.
+  for (const s of [-1, 1]) {
+    const a = house(0.728);
+    const b = house(0.548);
+    rod(
+      m,
+      new THREE.Vector3(s * (a.hw0 + 0.006), a.y0 + 0.02, a.z),
+      new THREE.Vector3(s * (b.hw1 + 0.006), b.y1 - 0.07, b.z),
+      0.028,
+      black,
+    );
+  }
+  const roof = house(0.25);
   m.box(
-    w * 0.86,
-    0.06,
-    f - 0.1 - 0.12 + 0.05,
+    roof.hw1 * 2 - 0.08,
+    0.03,
+    zOf(0.045) - zOf(-0.006),
     0,
-    1.8,
-    (-f + 0.17 - 0.1) / 2,
+    roof.y1 - 0.01,
+    (zOf(0.045) + zOf(-0.006)) / 2,
     paint,
   );
-  m.box(w * 0.84, 0.05, f - 1.75 + 0.1, 0, 1.76, (f - 1.75 - 0.1) / 2, paint);
-  for (const s of [-1, 1]) {
-    m.box(0.04, 0.05, L * 0.6, s * w * 0.4, 1.86, -0.15, black);
-    // Black pillars, the "floating" roof.
-    m.box(0.03, 0.62, 0.12, s * (w * 0.45 + 0.005), 1.16, -f + 0.32, black);
-    m.box(0.03, 0.6, 0.1, s * (w * 0.45 + 0.005), 1.16, -0.12, black);
-    // Mirrors.
-    m.soft(0.22, 0.13, 0.1, s * (w / 2 + 0.08), 1.08, f - 1.3, paint, 0.03);
-    // Black arch linings and sills.
-    m.box(0.06, 0.12, L * 0.55, s * (w / 2 - 0.02), 0.33, -0.1, black);
+  for (const [t0, t1] of [
+    [0.09, 0.27],
+    [0.3, 0.52],
+  ] as const) {
+    const h = house((t0 + t1) / 2);
+    m.box(
+      h.hw1 * 2 - 0.22,
+      0.006,
+      zOf(t1) - zOf(t0),
+      0,
+      h.y1 + 0.009,
+      (zOf(t0) + zOf(t1)) / 2,
+      glass,
+    );
   }
-  // Wheels.
-  const zf = f - 0.95;
-  const zr = -f + 1.12;
+  // The flanks: mirrors, the wing vent, door handles, black sills.
+  const fender = (t: number) => c.halfAt(t) * 0.97;
+  for (const s of [-1, 1]) {
+    m.soft(
+      0.07,
+      0.13,
+      0.24,
+      s * (half + 0.04),
+      c.top(0.69) - 0.01,
+      zOf(0.69),
+      paint,
+      0.035,
+    );
+    m.box(
+      0.02,
+      0.035,
+      0.24,
+      s * (fender(0.82) + 0.002),
+      0.98,
+      zOf(0.82),
+      black,
+    );
+    m.box(
+      0.022,
+      0.008,
+      0.24,
+      s * (fender(0.82) + 0.003),
+      1.0,
+      zOf(0.82),
+      silver,
+    );
+    for (const t of [0.6, 0.36])
+      m.box(0.02, 0.022, 0.16, s * (fender(t) + 0.004), 1.04, zOf(t), paint);
+    m.box(
+      0.035,
+      0.12,
+      zOf(0.66) - zOf(0.3),
+      s * (fender(0.5) - 0.005),
+      0.42,
+      (zOf(0.66) + zOf(0.3)) / 2,
+      black,
+    );
+    // Tail lights wrapping round onto the flanks.
+    m.box(
+      0.02,
+      0.05,
+      zOf(0.05) - zOf(0.004),
+      s * (fender(0.03) + 0.003),
+      1.1,
+      (zOf(0.05) + zOf(0.004)) / 2,
+      mat("#9e1218", 0.3, 0, { glow: "#ff2020", glowLevel: 0.1 }),
+    );
+    // Headlights wrapping round onto the wings.
+    m.box(
+      0.02,
+      0.05,
+      zOf(0.998) - zOf(0.955),
+      s * (fender(0.975) + 0.002),
+      0.98,
+      (zOf(0.998) + zOf(0.955)) / 2,
+      mat("#e9eef2", 0.15, 0.3, { glow: "#ffffff", glowLevel: 0.12 }),
+    );
+  }
+  // The nose: slim headlights at its top corners, the black mesh grille
+  // between them, the bumper's side intakes and a silver skid plate.
+  const nose = m.D / 2 + 0.006;
+  const nw = c.halfAt(1) * 0.92;
+  const lamp = mat("#e9eef2", 0.15, 0.3, { glow: "#ffffff", glowLevel: 0.12 });
+  const drl = mat("#ffffff", 0.2, 0, { glow: "#ffffff", glowLevel: 0.5 });
+  for (const s of [-1, 1]) {
+    m.box(nw * 0.34, 0.06, 0.012, s * nw * 0.6, 0.92, nose, lamp);
+    m.box(nw * 0.32, 0.01, 0.014, s * nw * 0.6, 0.925, nose, drl);
+    m.box(nw * 0.12, 0.2, 0.012, s * nw * 0.78, 0.55, nose, black);
+  }
+  m.box(nw * 0.84, 0.15, 0.012, 0, 0.8, nose, black);
+  for (let k = 0; k < 4; k++)
+    m.box(nw * 0.82, 0.008, 0.014, 0, 0.82 + k * 0.032, nose + 0.001, trim);
+  m.box(nw * 1.6, 0.14, 0.012, 0, 0.6, nose, paint);
+  m.box(nw * 1.0, 0.06, 0.012, 0, 0.47, nose, silver);
+  // The tail: slim lights across its corners, the name, the plate
+  // offset to one side, the black bumper and silver skid plate.
+  const tail = -m.D / 2 - 0.006;
+  const tw = c.halfAt(0) * 0.92;
+  const red = mat("#9e1218", 0.3, 0, { glow: "#ff2020", glowLevel: 0.1 });
   for (const s of [-1, 1])
-    for (const z of [zf, zr]) carWheel(m, s * (w / 2 - 0.16), z, r, rim);
-  // Front: headlights, grille, bumper; rear: tail lights, offset plate.
-  const lamp = mat("#f3f1e8", 0.2, 0, { glow: "#ffffff", glowLevel: 0.15 });
-  const red = mat("#a3181d", 0.3, 0, { glow: "#ff2020", glowLevel: 0.1 });
-  for (const s of [-1, 1]) {
-    m.box(0.42, 0.11, 0.04, s * w * 0.33, 0.86, f - 0.02, lamp);
-    m.box(0.08, 0.42, 0.04, s * (w / 2 - 0.08), 0.8, -f - 0.01, red);
-  }
-  m.box(w * 0.42, 0.2, 0.04, 0, 0.78, f, black);
-  m.box(w * 0.9, 0.14, 0.06, 0, 0.42, f - 0.01, black);
-  m.box(w * 0.9, 0.12, 0.06, 0, 0.42, -f + 0.01, black);
-  m.box(0.52, 0.12, 0.02, w * 0.18, 0.62, -f - 0.02, mat("#eeeeea", 0.4));
+    m.box(tw * 0.34, 0.05, 0.012, s * tw * 0.8, 1.06, tail, red);
+  m.box(tw * 0.55, 0.018, 0.012, 0, 1.0, tail, mat("#d9dcdf", 0.3, 0.6));
+  m.box(0.52, 0.11, 0.012, -tw * 0.35, 0.86, tail, mat("#eeeeea", 0.4));
+  m.box(tw * 1.9, 0.12, 0.012, 0, 0.66, tail, black);
+  m.box(tw * 1.3, 0.08, 0.012, 0, 0.58, tail, silver);
 };
 
-/** A Mercedes-Benz GLC (front at +z): a lower, rounder SUV, the
- * tailgate sloping in, a wide grille with the star, slim lights and a
- * light strip across the back. Silver unless coloured. */
+/** A Mercedes-Benz GLC (front at +z): a sleek SUV, its roof sloping down
+ * to a raked rear window under a spoiler, a long bonnet, a big grille
+ * with the star in it between slim headlights, chrome round the side
+ * windows, slim tail lights. Silver unless coloured. */
 const glc: Builder = (m, _o, tint) => {
-  const { W, D } = m;
-  const L = D;
-  const w = Math.min(W * 0.92, 1.92);
+  const { W } = m;
   const paint = mat(tint ?? "#b9bdc1", 0.22, 0.75);
-  const glass = mat("#1d2731", 0.06, 0.4);
-  const black = mat(C.black, 0.5);
-  const chrome = mat(C.chrome, 0.2, 0.9);
+  const glass = mat("#121a22", 0.06, 0.4);
+  const black = mat("#141414", 0.4);
+  const chrome = mat(C.chrome, 0.15, 0.95);
   const rim = mat("#c8ccd0", 0.25, 0.85);
-  const f = L / 2;
-  const r = 0.37;
-  profile(
+  const half = Math.min(W / 2 - 0.08, 0.945);
+  const c = carShape(
     m,
-    [
-      [-f, 0.4],
-      [-f + 0.02, 0.98],
-      [-f + 0.2, 1.04],
-      [f - 1.15, 1.04],
-      [f - 0.25, 0.95],
-      [f - 0.02, 0.82],
-      [f, 0.42],
-      [f - 0.3, 0.32],
-      [-f + 0.3, 0.32],
-    ],
-    w,
+    {
+      half,
+      length: 4.716,
+      bottom: [
+        [0, 0.47],
+        [0.04, 0.39],
+        [0.2, 0.37],
+        [0.8, 0.37],
+        [0.96, 0.35],
+        [1, 0.44],
+      ],
+      top: [
+        [0, 0.97],
+        [0.012, 1.05],
+        [0.06, 1.08],
+        [0.3, 1.05],
+        [0.72, 1.0],
+        [0.8, 0.98],
+        [0.95, 0.9],
+        [0.985, 0.86],
+        [1, 0.8],
+      ],
+      width: [
+        [0, 0.84],
+        [0.012, 0.93],
+        [0.05, 0.99],
+        [0.1, 1],
+        [0.88, 1],
+        [0.96, 0.95],
+        [0.99, 0.88],
+        [1, 0.82],
+      ],
+      glass: [0.02, 0.745],
+      roof: [
+        [0.02, 1.1],
+        [0.035, 1.3],
+        [0.07, 1.47],
+        [0.12, 1.56],
+        [0.2, 1.61],
+        [0.42, 1.645],
+        [0.52, 1.63],
+        [0.56, 1.6],
+        [0.65, 1.36],
+        [0.745, 1.02],
+      ],
+      belt: 0.91,
+      crown: 0.72,
+      panel: [0.1, 0.555],
+      wheelR: 0.365,
+      front: 0.86,
+      base: 2.888,
+    },
     paint,
-    0.06,
-  );
-  profile(
-    m,
-    [
-      [-f + 0.25, 1.04],
-      [-f + 0.8, 1.58],
-      [-f + 1.2, 1.64],
-      [f - 1.75, 1.64],
-      [f - 1.15, 1.04],
-    ],
-    w * 0.88,
     glass,
-    0.05,
+    rim,
+    { spokes: 5, twin: true },
   );
-  // The roof's paint, rounded over the glass.
-  m.soft(
-    w * 0.8,
-    0.05,
-    L - 1.2 - 1.75 + 0.1,
-    0,
-    1.6,
-    (-f + 1.2 + f - 1.75) / 2,
-    paint,
+  const { zOf, house, skin } = c;
+  skin(0.43, 0.46, 0, 1, black);
+  skin(0.215, 0.24, 0, 1, black);
+  skin(0.03, 0.13, 0, 1, paint);
+  // A small spoiler over the rear window.
+  const lip = house(0.2);
+  m.box(
+    lip.hw1 * 2 - 0.1,
     0.025,
+    zOf(0.07) - zOf(0.015),
+    0,
+    keyed(
+      [
+        [0.015, 1.3],
+        [0.07, 1.47],
+      ],
+      0.05,
+    ) + 0.02,
+    (zOf(0.07) + zOf(0.015)) / 2,
+    black,
   );
   for (const s of [-1, 1]) {
-    m.soft(0.2, 0.12, 0.1, s * (w / 2 + 0.07), 0.98, f - 1.2, paint, 0.03);
-    m.box(0.05, 0.1, L * 0.5, s * (w / 2 - 0.02), 0.32, -0.1, black);
+    // Chrome along the belt and round the side windows' top.
+    const along: THREE.Vector3[] = [];
+    for (let t = 0.13; t <= 0.56; t += 0.043) {
+      const h = house(t);
+      along.push(new THREE.Vector3(s * (h.hw1 + 0.012), h.y1 - 0.03, h.z));
+    }
+    for (let i = 0; i + 1 < along.length; i++)
+      rod(m, along[i]!, along[i + 1]!, 0.008, chrome);
+    const b0 = house(0.13);
+    const b1 = house(0.725);
+    rod(
+      m,
+      new THREE.Vector3(s * (b0.hw0 + 0.008), b0.y0 + 0.03, b0.z),
+      new THREE.Vector3(s * (b1.hw0 + 0.008), b1.y0 + 0.03, b1.z),
+      0.008,
+      chrome,
+    );
+    // Roof rails, mirrors.
+    const rail = house(0.35);
+    m.box(
+      0.025,
+      0.03,
+      zOf(0.56) - zOf(0.18),
+      s * (rail.hw1 - 0.05),
+      rail.y1 + 0.005,
+      (zOf(0.56) + zOf(0.18)) / 2,
+      chrome,
+    );
+    m.soft(0.06, 0.12, 0.2, s * (half + 0.03), 1.0, zOf(0.72), paint, 0.03);
   }
-  const zf = f - 0.88;
-  const zr = -f + 1.05;
+  // The nose: a big grille with the star in it, slim headlights at its
+  // upper corners, intakes in the bumper below.
+  const nose = m.D / 2 + 0.006;
+  const nw = half * 0.82;
+  m.box(nw * 0.95, 0.26, 0.012, 0, 0.47, nose, black);
   for (const s of [-1, 1])
-    for (const z of [zf, zr]) carWheel(m, s * (w / 2 - 0.15), z, r, rim);
-  const lamp = mat("#f3f1e8", 0.2, 0, { glow: "#ffffff", glowLevel: 0.15 });
-  const red = mat("#a3181d", 0.3, 0, { glow: "#ff2020", glowLevel: 0.1 });
+    m.box(0.018, 0.26, 0.014, s * nw * 0.475, 0.47, nose + 0.001, chrome);
+  m.box(nw * 0.95, 0.018, 0.014, 0, 0.73, nose + 0.001, chrome);
+  m.box(nw * 0.9, 0.01, 0.014, 0, 0.6, nose + 0.001, chrome);
+  m.cyl(0.075, 0.075, 0.012, 0, 0.6, nose + 0.008, chrome, 28, "z");
+  for (let k = 0; k < 3; k++) {
+    const g = new THREE.BoxGeometry(0.012, 0.07, 0.006);
+    g.translate(0, 0.035, 0);
+    g.rotateZ((k * 2 * Math.PI) / 3);
+    g.translate(0, 0.6, nose + 0.016);
+    m.add(g, black);
+  }
+  const lamp = mat("#e9eef2", 0.15, 0.3, { glow: "#ffffff", glowLevel: 0.12 });
+  for (const s of [-1, 1]) {
+    m.box(nw * 0.3, 0.055, 0.012, s * nw * 0.62, 0.72, nose, lamp);
+    m.box(nw * 0.22, 0.09, 0.012, s * nw * 0.78, 0.47, nose, black);
+  }
+  // The tail: slim lights round its corners, chrome between, the plate,
+  // the diffuser.
+  const tail = -m.D / 2 - 0.006;
+  const tw = half * 0.84;
+  const red = mat("#9e1218", 0.3, 0, { glow: "#ff2020", glowLevel: 0.1 });
   for (const s of [-1, 1])
-    m.box(0.36, 0.07, 0.04, s * w * 0.34, 0.8, f - 0.08, lamp);
-  // The grille, its star, the lower intake.
-  m.box(w * 0.46, 0.24, 0.04, 0, 0.56, f - 0.01, black);
-  m.cyl(0.07, 0.07, 0.02, 0, 0.68, f + 0.015, chrome, 20, "z");
-  m.box(w * 0.46, 0.015, 0.045, 0, 0.67, f - 0.005, chrome);
-  m.box(w * 0.7, 0.1, 0.05, 0, 0.36, f - 0.02, black);
-  // Tail lights, a strip across between them.
-  m.box(w * 0.86, 0.06, 0.04, 0, 0.92, -f + 0.01, red);
-  m.box(w * 0.86, 0.12, 0.05, 0, 0.4, -f + 0.01, black);
-  m.box(0.5, 0.11, 0.02, 0, 0.62, -f - 0.01, mat("#eeeeea", 0.4));
+    m.box(tw * 0.42, 0.06, 0.012, s * tw * 0.66, 0.88, tail, red);
+  m.box(tw * 1.0, 0.012, 0.012, 0, 0.8, tail, chrome);
+  m.box(0.52, 0.11, 0.012, 0, 0.66, tail, mat("#eeeeea", 0.4));
+  m.box(tw * 1.9, 0.11, 0.012, 0, 0.5, tail, black);
 };
 
 const tv: Builder = (m, _o, _tint, item) => {
