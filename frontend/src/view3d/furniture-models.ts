@@ -1678,6 +1678,169 @@ const sinkRack: Builder = (m, _o, tint) => {
     );
 };
 
+/** A speaker's grille: fine round perforations, 2.4 mm apart, in a
+ * repeat `GRILLE_M` across (multiplying the speaker's colour). */
+const GRILLE_M = 0.012;
+let grilleTex: THREE.Texture | null = null;
+const GRILLE_MATS = new Map<string, THREE.MeshStandardMaterial>();
+function grilleMaterial(color: string): THREE.MeshStandardMaterial {
+  let m = GRILLE_MATS.get(color);
+  if (m) return m;
+  if (!grilleTex) {
+    const cv = document.createElement("canvas");
+    cv.width = 100;
+    cv.height = 100;
+    const ctx = cv.getContext("2d");
+    if (ctx) {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, 100, 100);
+      ctx.fillStyle = "#8c8c8c";
+      // 5 x 5 holes, alternate rows offset.
+      for (let r = 0; r < 5; r++)
+        for (let c = 0; c <= 5; c++) {
+          ctx.beginPath();
+          ctx.arc(c * 20 + (r % 2 ? 10 : 0), r * 20 + 10, 4.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+    }
+    grilleTex = new THREE.CanvasTexture(cv);
+    grilleTex.colorSpace = THREE.SRGBColorSpace;
+    grilleTex.wrapS = THREE.RepeatWrapping;
+    grilleTex.wrapT = THREE.RepeatWrapping;
+    grilleTex.anisotropy = 4;
+  }
+  m = new THREE.MeshStandardMaterial({ color, map: grilleTex, roughness: 0.8 });
+  GRILLE_MATS.set(color, m);
+  return m;
+}
+
+/** Sonos speakers (front at +z), matte black unless tinted (white):
+ * a One, a rounded square column wrapped in grille under a smooth top;
+ * an Era 100, a taller rounded pill; a Beam, a long rounded bar wrapped
+ * in grille; a Ray, a low bar with its grille along the front; a Roam, a
+ * small upright rounded triangle. A status light on top at the front. */
+const sonos: Builder = (m, _o, tint, item) => {
+  const { W, D, H } = m;
+  const kind = item.model?.kind ?? "";
+  const base = tint ?? "#38383b";
+  const hsl = { h: 0, s: 0, l: 0 };
+  new THREE.Color(base).getHSL(hsl);
+  const pale = hsl.l > 0.5;
+  const body = mat(base, 0.7);
+  const grille = grilleMaterial(base);
+  const top = mat(shade(base, pale ? 0.96 : 1.35), 0.4);
+  const led = mat("#ffffff", 0.4, 0, { glow: "#ffffff", glowLevel: 0.5 });
+  const grilled = (g: THREE.BufferGeometry) => {
+    planarUv(g, GRILLE_M);
+    m.add(g, grille);
+  };
+  if (/roam/.test(kind)) {
+    // Rounded triangle (corners `rr` round), extruded up.
+    const R = Math.min(W, D) / Math.sqrt(3);
+    const rr = 0.012;
+    const shape = new THREE.Shape();
+    for (let k = 0; k < 3; k++) {
+      const a = Math.PI / 2 + (k * 2 * Math.PI) / 3;
+      const d = R - 2 * rr;
+      shape.absarc(
+        Math.cos(a) * d,
+        Math.sin(a) * d,
+        rr,
+        a - Math.PI / 3,
+        a + Math.PI / 3,
+        false,
+      );
+    }
+    const g = new THREE.ExtrudeGeometry(shape, {
+      depth: H - 0.004,
+      bevelEnabled: false,
+      curveSegments: 6,
+    });
+    g.rotateX(-Math.PI / 2);
+    grilled(g);
+    const cap = new THREE.ShapeGeometry(shape, 6);
+    cap.rotateX(-Math.PI / 2);
+    cap.translate(0, H - 0.004, 0);
+    m.add(cap, top);
+    const capBody = new THREE.ExtrudeGeometry(shape, {
+      depth: 0.004,
+      bevelEnabled: false,
+      curveSegments: 6,
+    });
+    capBody.rotateX(-Math.PI / 2);
+    capBody.translate(0, H - 0.004, 0);
+    m.add(capBody, top);
+    m.cyl(0.0015, 0.0015, 0.0008, 0, H, -R * 0.35, led, 8);
+    return;
+  }
+  if (/era/.test(kind)) {
+    m.oval(W / 2, D / 2, H - 0.012, 0, 0, 0, body, W / 2, D / 2);
+    const g = new THREE.CylinderGeometry(1, 1, H - 0.02, 32, 1, true);
+    g.scale(W / 2 + 0.0008, 1, D / 2 + 0.0008);
+    g.translate(0, (H - 0.02) / 2 + 0.006, 0);
+    grilled(g);
+    m.oval(
+      W / 2,
+      D / 2,
+      0.012,
+      0,
+      H - 0.012,
+      0,
+      top,
+      W / 2 - 0.004,
+      D / 2 - 0.004,
+    );
+    // Its slider groove across the top.
+    m.box(W * 0.5, 0.0012, 0.006, 0, H, D * 0.12, body);
+    m.cyl(0.0015, 0.0015, 0.0008, 0, H, D * 0.3, led, 8);
+    return;
+  }
+  if (/one/.test(kind)) {
+    const g = new RoundedBoxGeometry(W, H - 0.01, D, 3, 0.03);
+    g.translate(0, (H - 0.01) / 2, 0);
+    grilled(g);
+    // Its smooth top, rounded to the body's corners.
+    const rr = 0.028;
+    const plate = new THREE.Shape();
+    const hw = W / 2 - 0.0005;
+    const hd = D / 2 - 0.0005;
+    plate.absarc(hw - rr, hd - rr, rr, 0, Math.PI / 2, false);
+    plate.absarc(-hw + rr, hd - rr, rr, Math.PI / 2, Math.PI, false);
+    plate.absarc(-hw + rr, -hd + rr, rr, Math.PI, (3 * Math.PI) / 2, false);
+    plate.absarc(hw - rr, -hd + rr, rr, (3 * Math.PI) / 2, 2 * Math.PI, false);
+    const pg = new THREE.ExtrudeGeometry(plate, {
+      depth: 0.012,
+      bevelEnabled: false,
+      curveSegments: 6,
+    });
+    pg.rotateX(-Math.PI / 2);
+    pg.translate(0, H - 0.012, 0);
+    m.add(pg, top);
+    // Its touch controls: play in the middle, volume either side.
+    m.cyl(0.006, 0.006, 0.0008, 0, H, 0, body, 16);
+    for (const s of [-1, 1])
+      m.box(0.008, 0.0008, 0.0015, s * 0.028, H, 0, body);
+    m.cyl(0.0015, 0.0015, 0.0008, 0, H, D * 0.38, led, 8);
+    return;
+  }
+  // A soundbar: the Beam wrapped in grille, the Ray grilled only along
+  // its front with a smooth body.
+  const r = Math.min(H, D) * 0.3;
+  if (/ray/.test(kind)) {
+    m.soft(W, H, D, 0, 0, 0, body, r);
+    const g = new THREE.PlaneGeometry(W - 0.03, H * 0.62);
+    g.translate(0, H * 0.45, D / 2 + 0.0008);
+    g.computeVertexNormals();
+    grilled(g);
+  } else {
+    const g = new RoundedBoxGeometry(W, H, D, 3, r);
+    g.translate(0, H / 2, 0);
+    grilled(g);
+    m.box(W - 2 * r, 0.0008, D * 0.5, 0, H, -D * 0.05, top);
+  }
+  m.cyl(0.0015, 0.0015, 0.0008, 0, H, D * 0.36, led, 8);
+};
+
 /** A tile backsplash's texture: small hexagons (5 cm across the flats)
  * in shades of grey, dark grout between, one repeat `HEX_TILE` metres
  * across and up (see backsplash). */
@@ -4053,6 +4216,7 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^gate_(hog|wood)_/, gate],
   [/wheelie_bin|^garbage_bin$|^garbage_cart|^recycling_cart/, wheelieBin],
   [/^tv_|_tv$|^tv\d/, tv],
+  [/^sonos_/, sonos],
   [/^island_shaker/, kitchenIsland],
   [/^backsplash_/, backsplash],
   [/^sink_delta_everest/, everestSink],

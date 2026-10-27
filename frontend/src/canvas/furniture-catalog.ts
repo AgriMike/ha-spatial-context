@@ -1343,11 +1343,41 @@ const LAUNDRY: Row[] = [
 
 const ELECTRONICS: Row[] = [
   ["record_player", "Record player", 45, 36, "art", { art: "record_player" }],
-  ["sonos_one", "Sonos One", 12, 12, "art", { art: "sonos_one" }],
-  ["sonos_era_100", "Sonos Era 100", 12, 13, "art", { art: "sonos_era_100" }],
-  ["sonos_beam", "Sonos Beam", 65.1, 10, "art", { art: "sonos_beam" }],
-  ["sonos_ray", "Sonos Ray", 55.9, 9.5, "art", { art: "sonos_ray" }],
-  ["sonos_roam", "Sonos Roam", 6.2, 6, "art", { art: "sonos_roam" }],
+  // Sonos speakers, at their real sizes (h3d their heights; see
+  // furniture-models.ts's sonos).
+  ["sonos_one", "Sonos One", 12, 12, "art", { art: "sonos_one", h3d: 0.162 }],
+  [
+    "sonos_era_100",
+    "Sonos Era 100",
+    12,
+    13,
+    "art",
+    { art: "sonos_era_100", h3d: 0.183 },
+  ],
+  [
+    "sonos_beam",
+    "Sonos Beam",
+    65.1,
+    10,
+    "art",
+    { art: "sonos_beam", h3d: 0.069 },
+  ],
+  [
+    "sonos_ray",
+    "Sonos Ray",
+    55.9,
+    9.5,
+    "art",
+    { art: "sonos_ray", h3d: 0.071 },
+  ],
+  [
+    "sonos_roam",
+    "Sonos Roam",
+    6.2,
+    6,
+    "art",
+    { art: "sonos_roam", h3d: 0.168 },
+  ],
   ["tv_wall_43", "Wall-mounted TV 43″", 96.5, 6, "art", { art: "tv_wall_43" }],
   ["tv_wall_50", "Wall-mounted TV 50″", 112, 6, "art", { art: "tv_wall_50" }],
   ["tv_wall_55", "Wall-mounted TV 55″", 123, 6, "art", { art: "tv_wall_55" }],
