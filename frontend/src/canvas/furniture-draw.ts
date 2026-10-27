@@ -1218,6 +1218,50 @@ const T: Record<string, Template> = {
     out.push(circ(dx, dy, 2.4), circ(dx, dy, 0.7));
     return out;
   },
+  // A workstation sink from above: its opening, the ledges along its
+  // front and back, the roll mat's bars at its left end, the drain.
+  workstationSink: (w, d, o) => {
+    const rim = num(o, "undermount", 2.5);
+    const out: Prim[] = [
+      path(
+        roundedPolyPath(
+          [
+            [rim, rim],
+            [w - rim, rim],
+            [w - rim, d - rim],
+            [rim, d - rim],
+          ],
+          true,
+          1.2,
+        ),
+      ),
+      line(rim, rim + 1.6, w - rim, rim + 1.6),
+      line(rim, d - rim - 1.6, w - rim, d - rim - 1.6),
+    ];
+    for (let k = 0; k < 12; k++) {
+      const x = rim + 1.4 + k * 2.6;
+      if (x > w - rim - 1) break;
+      out.push(rect(x, rim + 0.3, 1.5, d - 2 * rim - 0.6, 0.3));
+    }
+    const dx = w / 2 + (w - 2 * rim) * 0.2;
+    const dy = d / 2 - (d - 2 * rim - 3.2) * 0.12;
+    out.push(circ(dx, dy, 5.6), circ(dx, dy, 3.6));
+    return out;
+  },
+  // A faucet from above: its round body at the back, the spout reaching
+  // forward to its head.
+  faucet: (w, d) => [
+    circ(w / 2, 3, 3),
+    line(w / 2, 3, w / 2, d - 3),
+    circ(w / 2, d - 3, 1.7),
+    line(w / 2 + 2.5, 3, w - 0.5, 2),
+  ],
+  // A wire rack: its frame and the wires across it.
+  wireRack: (w, d) => {
+    const out: Prim[] = [rect(0, 0, w, d, 0.5)];
+    for (let x = 2; x < w - 1; x += 2) out.push(line(x, 0.4, x, d - 0.4));
+    return out;
+  },
   range: (w, d, o) => {
     const burners = num(o, "burners", 4);
     const cols = burners >= 6 ? 3 : burners === 5 ? 3 : 2;

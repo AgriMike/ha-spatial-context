@@ -183,6 +183,16 @@ export interface Item3d {
       /** How wide its leaves fan round its front, radians. */
       spread?: number | null;
     };
+    /** Undermount sinks' openings cut in its stone top, in its own frame
+     * (before any flip): centre, size, turn and corner radius, metres. */
+    cuts?: {
+      x: number;
+      z: number;
+      w: number;
+      d: number;
+      a: number;
+      r: number;
+    }[];
   };
   /** A site feature (see site-models.ts): a surface laid on the ground
    * (concrete, asphalt, pavers, lawn, a planting bed…) or a fence, wall

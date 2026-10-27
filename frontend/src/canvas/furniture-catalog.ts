@@ -572,6 +572,33 @@ const KITCHEN: Row[] = [
     "bezellessSink",
     { centreDrain: true },
   ],
+  // Delta's Everest workstation sink: undermount under a counter (its
+  // opening cut in the top over the cabinet below; see scene3d), its roll
+  // mat at the left end; its drying rack and a faucet to go with it.
+  [
+    "sink_delta_everest_36",
+    'Delta Everest 36" workstation sink, undermount (black)',
+    91,
+    48,
+    "workstationSink",
+    { undermount: 2.5, h3d: 0.91 },
+  ],
+  [
+    "sink_rack_delta_workflow",
+    "Workstation sink drying rack",
+    40,
+    46,
+    "wireRack",
+    { h3d: 0.02, y3d: 0.856 },
+  ],
+  [
+    "faucet_delta_nicoli",
+    "Delta Nicoli pull-down faucet (matte black)",
+    10,
+    25,
+    "faucet",
+    { h3d: 0.43, y3d: 0.91 },
+  ],
   ["sink_bar", "Bar sink", 45, 50, "sink", { basins: 1 }],
   ["sink_prep", "Prep sink", 50, 50, "sink", { basins: 1 }],
   ["range_50", "Range 50 cm", 50, 60, "range", { burners: 4 }],

@@ -2965,6 +2965,49 @@ function buildFloor(
     });
   }
 
+  // An undermount sink's opening cut in the stone top it sits under (a
+  // shaker cabinet's, a kitchen island's), so its bowl shows through.
+  for (const sink of items) {
+    const rim = sink.model?.opts["undermount"];
+    if (typeof rim !== "number") continue;
+    const top = sink.y0 + sink.height;
+    const reach = Math.hypot(sink.width, sink.depth) / 2;
+    for (const c of items) {
+      if (
+        c === sink ||
+        !c.model ||
+        !/^shaker_(base|drawer|sink)|^island_shaker/.test(c.model.kind) ||
+        Math.abs(c.y0 + c.height - top) > 0.08
+      )
+        continue;
+      // The sink's centre and turn in the cabinet's frame.
+      const dx = sink.x - c.x;
+      const dz = sink.z - c.z;
+      const cos = Math.cos(c.angle);
+      const sin = Math.sin(c.angle);
+      let x = dx * cos - dz * sin;
+      const z = dx * sin + dz * cos;
+      let a = sink.angle - c.angle;
+      if (c.model.flip) {
+        x = -x;
+        a = -a;
+      }
+      if (
+        Math.abs(x) > c.width / 2 + reach ||
+        Math.abs(z) > c.depth / 2 + reach
+      )
+        continue;
+      (c.model.cuts ??= []).push({
+        x,
+        z,
+        w: sink.width - (2 * rim) / 100,
+        d: sink.depth - (2 * rim) / 100,
+        a,
+        r: 0.012,
+      });
+    }
+  }
+
   // An outside wall standing beside a lower floor's room whose ceiling
   // reaches above this floor (a storey over a garage a few steps down,
   // next to an office on the floor below): along that room, up to its

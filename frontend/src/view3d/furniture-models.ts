@@ -1229,8 +1229,9 @@ const shaker: Builder = (m, o, tint, item) => {
   const top = counter ? 0.03 : 0;
   const t = 0.019;
   const face = D / 2;
+  const cuts = item.model?.cuts;
   // The box, its recessed toe kick, the top.
-  m.box(W, H - kick - top, D - t, 0, kick, -t / 2, wood);
+  carcass(m, W, H - kick - top, D - t, 0, kick, -t / 2, wood, !!cuts);
   if (kick)
     m.box(
       W - 0.006,
@@ -1242,7 +1243,17 @@ const shaker: Builder = (m, o, tint, item) => {
       mat(shade(oak, 0.45), 0.8),
     );
   if (top)
-    m.box(W + 0.004, top, D + 0.025, 0, H - top, 0.0125, mat("#ecebe6", 0.35));
+    cutTop(
+      m,
+      W + 0.004,
+      top,
+      D + 0.025,
+      0,
+      H - top,
+      0.0125,
+      mat("#ecebe6", 0.35),
+      cuts,
+    );
   const gap = 0.003;
   const y0 = kick + gap;
   const faceH = H - kick - top - 2 * gap;
@@ -1308,6 +1319,245 @@ const shaker: Builder = (m, o, tint, item) => {
       ty += th;
     });
   }
+};
+
+/** A cabinet's box; hollow at the top (its sides, back and front up to
+ * its top, solid below) where a sink's bowl hangs down into it. */
+function carcass(
+  m: Model,
+  w: number,
+  h: number,
+  d: number,
+  x: number,
+  y: number,
+  z: number,
+  mt: THREE.Material,
+  hollow: boolean,
+): void {
+  if (!hollow) {
+    m.box(w, h, d, x, y, z, mt);
+    return;
+  }
+  const t = 0.019;
+  const low = Math.max(0, h - 0.32);
+  m.box(w, low, d, x, y, z, mt);
+  for (const s of [-1, 1]) {
+    m.box(t, h - low, d, x + s * (w / 2 - t / 2), y + low, z, mt);
+    m.box(w - 2 * t, h - low, t, x, y + low, z + s * (d / 2 - t / 2), mt);
+  }
+}
+
+/** A stone top (w across, t thick, d deep, centred at x, z, standing on
+ * y) with undermount sinks' openings in it (`cuts`, in the model's frame):
+ * one wholly inside it a hole with its rounded corners; one running off
+ * its edge (a sink across two cabinets) taken out square. */
+function cutTop(
+  m: Model,
+  w: number,
+  t: number,
+  d: number,
+  x: number,
+  y: number,
+  z: number,
+  mt: THREE.Material,
+  cuts: NonNullable<Item3d["model"]>["cuts"],
+): void {
+  const x0 = x - w / 2;
+  const x1 = x + w / 2;
+  const z0 = z - d / 2;
+  const z1 = z + d / 2;
+  // Each opening's outline (its corners rounded) and its bounds.
+  const holes = (cuts ?? []).map((c) => {
+    const pts: [number, number][] = [];
+    const r = Math.min(c.r, c.w / 2, c.d / 2);
+    const corners: [number, number, number][] = [
+      [c.w / 2 - r, c.d / 2 - r, 0],
+      [-c.w / 2 + r, c.d / 2 - r, Math.PI / 2],
+      [-c.w / 2 + r, -c.d / 2 + r, Math.PI],
+      [c.w / 2 - r, -c.d / 2 + r, (3 * Math.PI) / 2],
+    ];
+    const cos = Math.cos(c.a);
+    const sin = Math.sin(c.a);
+    for (const [cx, cz, a0] of corners)
+      for (let k = 0; k <= 4; k++) {
+        const a = a0 + (k / 4) * (Math.PI / 2);
+        const px = cx + r * Math.cos(a);
+        const pz = cz + r * Math.sin(a);
+        pts.push([c.x + px * cos + pz * sin, c.z - px * sin + pz * cos]);
+      }
+    const xs = pts.map((p) => p[0]);
+    const zs = pts.map((p) => p[1]);
+    return {
+      pts,
+      bx0: Math.min(...xs),
+      bx1: Math.max(...xs),
+      bz0: Math.min(...zs),
+      bz1: Math.max(...zs),
+    };
+  });
+  const mine = holes.filter(
+    (h) => h.bx0 < x1 && h.bx1 > x0 && h.bz0 < z1 && h.bz1 > z0,
+  );
+  if (!mine.length) {
+    m.box(w, t, d, x, y, z, mt);
+    return;
+  }
+  const e = 0.005;
+  const crossing = mine.find(
+    (h) => h.bx0 < x0 + e || h.bx1 > x1 - e || h.bz0 < z0 + e || h.bz1 > z1 - e,
+  );
+  if (crossing) {
+    // Round it, square: the top in up to four pieces.
+    const hx0 = Math.max(x0, crossing.bx0);
+    const hx1 = Math.min(x1, crossing.bx1);
+    const hz0 = Math.max(z0, crossing.bz0);
+    const hz1 = Math.min(z1, crossing.bz1);
+    m.box(w, t, hz0 - z0, x, y, (z0 + hz0) / 2, mt);
+    m.box(w, t, z1 - hz1, x, y, (hz1 + z1) / 2, mt);
+    m.box(hx0 - x0, t, hz1 - hz0, (x0 + hx0) / 2, y, (hz0 + hz1) / 2, mt);
+    m.box(x1 - hx1, t, hz1 - hz0, (hx1 + x1) / 2, y, (hz0 + hz1) / 2, mt);
+    return;
+  }
+  // Shape coordinates (x, -z): extruded up, then stood on y. Its outline
+  // anticlockwise, so three winds the holes against it (their walls
+  // facing in, not culled).
+  const shape = new THREE.Shape([
+    new THREE.Vector2(x0, -z1),
+    new THREE.Vector2(x1, -z1),
+    new THREE.Vector2(x1, -z0),
+    new THREE.Vector2(x0, -z0),
+  ]);
+  for (const h of mine)
+    shape.holes.push(
+      new THREE.Path(h.pts.map(([px, pz]) => new THREE.Vector2(px, -pz))),
+    );
+  const g = new THREE.ExtrudeGeometry(shape, { depth: t, bevelEnabled: false });
+  g.rotateX(-Math.PI / 2);
+  g.translate(0, y, 0);
+  m.add(g, mt);
+}
+
+/** Delta's Everest workstation sink, undermount (its rim at the stone
+ * top's underside, the top `H`): one deep granite-composite bowl (black
+ * unless tinted), its WorkFlow ledges a little way down its front and back
+ * walls, its drain to the back right, and the roll-up drying mat resting
+ * across the ledges at its left end. Its opening (the top's cut) is its
+ * size less a rim all round (see scene3d). */
+const everestSink: Builder = (m, o, tint) => {
+  const { W, D, H } = m;
+  const comp = mat(tint ?? "#2e2e31", 0.5, 0.15);
+  const rim = num(o, "undermount", 2.5) / 100;
+  const iw = W - 2 * rim;
+  const id = D - 2 * rim;
+  const wall = 0.014;
+  const ledge = 0.016;
+  const top = H - 0.03;
+  const ly = top - 0.025;
+  const bottom = top - 0.254;
+  const ld = id - 2 * ledge;
+  // The bowl below the ledges, the ledges, and the walls above them.
+  m.box(iw + 2 * wall, wall, ld + 2 * wall, 0, bottom - wall, 0, comp);
+  for (const s of [-1, 1]) {
+    m.box(
+      wall,
+      top - bottom + wall,
+      id + 2 * wall,
+      s * (iw / 2 + wall / 2),
+      bottom - wall,
+      0,
+      comp,
+    );
+    m.box(iw, ly - bottom, wall, 0, bottom, s * (ld / 2 + wall / 2), comp);
+    m.box(iw, wall, ledge, 0, ly - wall, s * (ld / 2 + ledge / 2), comp);
+    m.box(iw + 2 * wall, top - ly, wall, 0, ly, s * (id / 2 + wall / 2), comp);
+  }
+  // Its drain: a black basket strainer to the back right.
+  const dx = iw * 0.2;
+  const dz = -ld * 0.12;
+  m.cyl(0.056, 0.056, 0.003, dx, bottom, dz, mat("#1b1b1c", 0.4, 0.3), 28);
+  m.cyl(0.036, 0.036, 0.004, dx, bottom, dz, mat("#0e0e0f", 0.6), 24);
+  // The roll mat: coated bars across the ledges at the left end.
+  const bar = mat("#1f1f21", 0.65);
+  const n = 12;
+  const pitch = 0.026;
+  for (let k = 0; k < n; k++)
+    m.box(0.015, 0.008, id - 0.006, -iw / 2 + 0.014 + k * pitch, ly, 0, bar);
+};
+
+/** Delta's Nicoli pull-down kitchen faucet (matte black unless tinted;
+ * its spout reaching to the front, +z): a round body on a small base,
+ * its lever on the right, a tall arched spout over to the spray head
+ * hanging down from its end. */
+const nicoliFaucet: Builder = (m, _o, tint) => {
+  const { D, H } = m;
+  const black = mat(tint ?? "#1d1d1e", 0.45, 0.35);
+  const zb = -D / 2 + 0.03;
+  const reach = Math.max(0.12, D - 0.06);
+  const top = Math.max(0.3, H);
+  m.cyl(0.03, 0.03, 0.006, 0, 0, zb, black, 28);
+  m.cyl(0.025, 0.025, 0.2, 0, 0.006, zb, black, 28);
+  m.cyl(0.015, 0.025, 0.014, 0, 0.206, zb, black, 28);
+  // The spout: straight up, round over, its end pointing down.
+  const r = reach / 2;
+  const turn = top - r;
+  const pts: THREE.Vector3[] = [];
+  for (let k = 0; k <= 6; k++)
+    pts.push(new THREE.Vector3(0, 0.215 + ((turn - 0.215) * k) / 6, zb));
+  for (let k = 1; k <= 16; k++) {
+    const a = Math.PI - (k / 16) * Math.PI;
+    pts.push(
+      new THREE.Vector3(0, turn + r * Math.sin(a), zb + r + r * Math.cos(a)),
+    );
+  }
+  pts.push(new THREE.Vector3(0, turn - 0.01, zb + reach));
+  m.add(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 64, 0.0115, 14),
+    black,
+  );
+  // The spray head, docked at the spout's end.
+  m.cyl(0.0165, 0.0165, 0.1, 0, turn - 0.11, zb + reach, black, 20);
+  m.cyl(
+    0.0172,
+    0.0172,
+    0.004,
+    0,
+    turn - 0.045,
+    zb + reach,
+    mat("#2c2c2e", 0.35, 0.4),
+    20,
+  );
+  // The lever on the right: a hub, its handle up and a little back.
+  m.cyl(0.015, 0.015, 0.022, 0.034, 0.11, zb, black, 16, "x");
+  const lever = new THREE.CylinderGeometry(0.0055, 0.0065, 0.08, 10);
+  lever.rotateX(-0.25);
+  lever.translate(0.04, 0.11 + 0.042, zb - 0.01);
+  m.add(lever, black);
+};
+
+/** A workstation sink's wire drying rack, resting across its ledges (its
+ * underside at the item's mount): a rod frame, wires across between its
+ * front and back. */
+const sinkRack: Builder = (m, _o, tint) => {
+  const { W, D } = m;
+  const steel = mat(tint ?? "#2a2a2c", 0.5, 0.4);
+  const r = 0.004;
+  for (const s of [-1, 1]) {
+    m.cyl(r, r, D, s * (W / 2 - r), r, 0, steel, 8, "z");
+    m.cyl(r, r, W, 0, r, s * (D / 2 - r), steel, 8, "x");
+  }
+  const n = Math.max(2, Math.floor(W / 0.02));
+  for (let k = 1; k < n; k++)
+    m.cyl(
+      0.0018,
+      0.0018,
+      D - 0.01,
+      -W / 2 + (W * k) / n,
+      r * 1.6,
+      0,
+      steel,
+      6,
+      "z",
+    );
 };
 
 /** A tile backsplash's texture: small hexagons (5 cm across the flats)
@@ -1403,7 +1653,7 @@ class Turned extends Model {
  * overhangs the seating side on square posts. At its far (+x) end, a
  * cabinet with a full-width drawer over a full-width door, then a wider
  * three-drawer cabinet, then cabinets with a drawer over doors. */
-const kitchenIsland: Builder = (m, _o, tint) => {
+const kitchenIsland: Builder = (m, _o, tint, item) => {
   const { W, D, H } = m;
   const paint = mat(tint ?? "#4b5148", 0.7);
   const panel = mat(shade(tint ?? "#4b5148", 0.9), 0.75);
@@ -1413,9 +1663,10 @@ const kitchenIsland: Builder = (m, _o, tint) => {
   const cd = Math.min(0.61, D - 0.3);
   const L = W - 2 * overhang;
   const zc = -D / 2 + overhang + cd / 2;
-  m.box(W, top, D, 0, H - top, 0, mat("#eceae5", 0.3));
+  const cuts = item.model?.cuts;
+  cutTop(m, W, top, D, 0, H - top, 0, mat("#eceae5", 0.3), cuts);
   // The cabinets' box, its recessed kick on the working side.
-  m.box(L, H - top - kick, cd, 0, kick, zc, paint);
+  carcass(m, L, H - top - kick, cd, 0, kick, zc, paint, !!cuts);
   m.box(
     L - 0.01,
     kick,
@@ -3529,6 +3780,9 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^tv_|_tv$|^tv\d/, tv],
   [/^island_shaker/, kitchenIsland],
   [/^backsplash_/, backsplash],
+  [/^sink_delta_everest/, everestSink],
+  [/^faucet_delta_nicoli/, nicoliFaucet],
+  [/^sink_rack_/, sinkRack],
   [/^stool_leather_bucket/, bucketStool],
   [/^shaker_/, shaker],
   [/^fridge_beko/, bekoFridge],
