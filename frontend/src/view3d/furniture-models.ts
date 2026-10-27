@@ -1582,9 +1582,7 @@ function hexTileTexture(): THREE.Texture {
     // the same as their other halves across it, so the repeat is seamless.
     let seed = 7;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    const greys = Array.from({ length: 36 }, () =>
-      Math.round(164 + 4 * rnd()),
-    );
+    const greys = Array.from({ length: 36 }, () => Math.round(164 + 4 * rnd()));
     for (let row = -1; row <= 6; row++)
       for (let col = -1; col <= 6; col++) {
         const cx = col * dx + (row % 2 ? dx / 2 : 0) + dx / 2;
