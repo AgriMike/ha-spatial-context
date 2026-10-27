@@ -27,6 +27,7 @@ import {
   eaveCuts,
   partSection,
   ROOF_HEEL_M,
+  ROOF_OVERHANG_M,
   porchSection,
   sectionFaces,
   sectionHeightAt,
@@ -325,6 +326,9 @@ const ABOVE_SLIVER_M = 0.06;
 /** A ledge's lid over a closet: how far its top sits below the walls'
  * tops, so it reads as one surface with them without fighting them. */
 const LID_DROP_M = 0.001;
+/** How far a vaulted ceiling stays under the roof's surface: past its
+ * fascia's depth. */
+const VAULT_CLEAR_M = 0.2;
 /** The half wall material (see materials.ts) and its height. */
 const HALF_WALL_MATERIAL = "half_wall";
 const HALF_WALL_M = 1.0;
@@ -776,9 +780,13 @@ function buildFloor(
     /** Whether the roof is drawn (else the walls needn't meet it). */
     roofShown: boolean;
     /** The roof's underside a vaulted ceiling follows at a spot (metres
-     * above this floor's level): the largest roof section over it (a
-     * dormer or a bay's small gable leaves it alone), else null. */
+     * above this floor's level): the largest roof section over it, a
+     * dormer's (see dormers) left out; else null. */
     vaultAt: (x: number, z: number) => number | null;
+    /** The dormers' footprints (x0, z0, x1, z1, metres): a small roof
+     * section on a larger one (a bay's gable). Under one the ceiling is
+     * flat at the walls' height, the vault stepping down to it. */
+    dormers: [number, number, number, number][];
   },
 ): Floor3d {
   const { layout, wallHeight: H } = input;
@@ -2871,10 +2879,19 @@ function buildFloor(
       if (covered) continue;
       const level = (room.floor_offset_m ?? 0) + H;
       const pts = room.points.map(([x, y]): Vec2 => [x * m, y * m]);
-      const vy = (x: number, z: number) => {
+      // The vault's height at a spot, and whether it's under a dormer
+      // (flat there).
+      const raw = (x: number, z: number) => {
         const r = exterior.vaultAt(x, z);
-        return r === null ? level : Math.max(level, r - ROOF_HEEL_M);
+        // Clear of the roof's rafters and its fascia where an eave runs
+        // on inside.
+        return r === null ? level : Math.max(level, r - VAULT_CLEAR_M);
       };
+      const flat = (x: number, z: number) =>
+        exterior.dormers.some(
+          ([x0, z0, x1, z1]) => x > x0 && x < x1 && z > z0 && z < z1,
+        );
+      const vy = (x: number, z: number) => (flat(x, z) ? level : raw(x, z));
       // Its grid: through every corner, no wider than 30 cm.
       const axis = (vals: number[]) => {
         const u = [
@@ -2890,20 +2907,82 @@ function buildFloor(
         });
         return out;
       };
-      const gx = axis(pts.map((p) => p[0]));
-      const gz = axis(pts.map((p) => p[1]));
-      const hy = gz.map((z) => gx.map((x) => vy(x, z)));
-      const peak = Math.max(...hy.flat());
+      // Through the dormers' edges too, so the step is square to them.
+      const [bx0, bx1] = [
+        Math.min(...pts.map((p) => p[0])),
+        Math.max(...pts.map((p) => p[0])),
+      ];
+      const [bz0, bz1] = [
+        Math.min(...pts.map((p) => p[1])),
+        Math.max(...pts.map((p) => p[1])),
+      ];
+      const gx = axis([
+        ...pts.map((p) => p[0]),
+        ...exterior.dormers
+          .flatMap((d) => [d[0], d[2]])
+          .filter((x) => x > bx0 && x < bx1),
+      ]);
+      const gz = axis([
+        ...pts.map((p) => p[1]),
+        ...exterior.dormers
+          .flatMap((d) => [d[1], d[3]])
+          .filter((z) => z > bz0 && z < bz1),
+      ]);
+      const hy = gz.map((z) => gx.map((x) => raw(x, z)));
+      // Each cell: outside the room, flat (under a dormer), or vaulted.
+      const cell = (i: number, j: number): "out" | "flat" | "vault" => {
+        if (i < 0 || j < 0 || i + 1 >= gx.length || j + 1 >= gz.length)
+          return "out";
+        const cx = (gx[i]! + gx[i + 1]!) / 2;
+        const cz = (gz[j]! + gz[j + 1]!) / 2;
+        if (!pointInPolygon(cx, cz, pts)) return "out";
+        return flat(cx, cz) ? "flat" : "vault";
+      };
+      let peak = level;
+      for (let j = 0; j + 1 < gz.length; j++)
+        for (let i = 0; i + 1 < gx.length; i++)
+          if (cell(i, j) === "vault")
+            peak = Math.max(
+              peak,
+              hy[j]![i]!,
+              hy[j]![i + 1]!,
+              hy[j + 1]![i]!,
+              hy[j + 1]![i + 1]!,
+            );
       if (peak > level + 0.05) {
         const pos: number[] = [];
-        const P = (i: number, j: number) => [gx[i]!, hy[j]![i]!, gz[j]!];
+        const P = (i: number, j: number, f: boolean) => [
+          gx[i]!,
+          f ? level : hy[j]![i]!,
+          gz[j]!,
+        ];
         for (let j = 0; j + 1 < gz.length; j++)
           for (let i = 0; i + 1 < gx.length; i++) {
-            const cx = (gx[i]! + gx[i + 1]!) / 2;
-            const cz = (gz[j]! + gz[j + 1]!) / 2;
-            if (!pointInPolygon(cx, cz, pts)) continue;
-            pos.push(...P(i, j), ...P(i + 1, j), ...P(i + 1, j + 1));
-            pos.push(...P(i, j), ...P(i + 1, j + 1), ...P(i, j + 1));
+            const c = cell(i, j);
+            if (c === "out") continue;
+            const f = c === "flat";
+            pos.push(...P(i, j, f), ...P(i + 1, j, f), ...P(i + 1, j + 1, f));
+            pos.push(...P(i, j, f), ...P(i + 1, j + 1, f), ...P(i, j + 1, f));
+            if (f) continue;
+            // A step down to a flat neighbour, along their shared edge.
+            const step = (a: [number, number], b: [number, number]) => {
+              const [ai, aj] = a;
+              const [bi, bj] = b;
+              pos.push(
+                ...P(ai, aj, true),
+                ...P(bi, bj, true),
+                ...P(bi, bj, false),
+              );
+              pos.push(
+                ...P(ai, aj, true),
+                ...P(bi, bj, false),
+                ...P(ai, aj, false),
+              );
+            };
+            if (cell(i - 1, j) === "flat") step([i, j], [i, j + 1]);
+            if (cell(i + 1, j) === "flat") step([i + 1, j], [i + 1, j + 1]);
+            if (cell(i, j - 1) === "flat") step([i, j], [i + 1, j]);
+            if (cell(i, j + 1) === "flat") step([i, j + 1], [i + 1, j + 1]);
           }
         // The walls filled up to it, round its edge.
         pts.forEach((a, k) => {
@@ -3526,12 +3605,41 @@ export function buildScene(input: SceneInput): Scene3d {
   const sections = (input.roofPlan?.parts ?? []).map((p) =>
     partSection(p, planM),
   );
-  // Largest first (see vaultAt).
-  const bySize = sections
-    .map((s, i) => {
-      const p = input.roofPlan!.parts[i]!;
-      return { s, area: Math.abs((p.x1 - p.x0) * (p.y1 - p.y0)) };
-    })
+  // The sections' footprints; a dormer is one less than half the size of
+  // a section it overlaps. The rest largest first (see vaultAt).
+  const footprints = sections.map((s, i) => {
+    const p = input.roofPlan!.parts[i]!;
+    const rect: [number, number, number, number] = [
+      Math.min(p.x0, p.x1) * planM,
+      Math.min(p.y0, p.y1) * planM,
+      Math.max(p.x0, p.x1) * planM,
+      Math.max(p.y0, p.y1) * planM,
+    ];
+    return { s, rect, area: (rect[2] - rect[0]) * (rect[3] - rect[1]) };
+  });
+  const isDormer = footprints.map((f) =>
+    footprints.some(
+      (g) =>
+        g !== f &&
+        g.area > 2 * f.area &&
+        f.rect[0] < g.rect[2] &&
+        f.rect[2] > g.rect[0] &&
+        f.rect[1] < g.rect[3] &&
+        f.rect[3] > g.rect[1],
+    ),
+  );
+  // Its eaves' overhang and fascia under it too.
+  const reach = ROOF_OVERHANG_M + 0.05;
+  const dormers = footprints
+    .filter((_, i) => isDormer[i])
+    .map((f): [number, number, number, number] => [
+      f.rect[0] - reach,
+      f.rect[1] - reach,
+      f.rect[2] + reach,
+      f.rect[3] + reach,
+    ]);
+  const bySize = footprints
+    .filter((_, i) => !isDormer[i])
     .sort((a, b) => b.area - a.area)
     .map((e) => e.s);
   const roofOver = (x: number, z: number): number | null => {
@@ -3601,12 +3709,16 @@ export function buildScene(input: SceneInput): Scene3d {
           return best;
         },
         roofShown: !!input.roof,
+        dormers,
         vaultAt: (x, z) => {
+          // The lowest roof over it (a larger one's eave running on inside
+          // a room, or one's overhang): never through any of them.
+          let low: number | null = null;
           for (const s of bySize) {
             const h = sectionHeightAt(s, x, z);
-            if (h !== null) return h - f.baseY;
+            if (h !== null && (low === null || h < low)) low = h;
           }
-          return null;
+          return low === null ? null : low - f.baseY;
         },
         roofBelow: (x, z, y) => {
           let best: number | null = null;
