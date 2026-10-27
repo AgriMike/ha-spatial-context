@@ -3116,35 +3116,58 @@ function trailing(
   }
 }
 
-/** A monstera: big split leaves held out on long curving stalks. */
+/** A monstera climbing a moss pole: tiers of big split leaves up it (a
+ * tier for every 28 cm or so of its height: taller, more of them; its
+ * fullness, more leaves a tier), each on a stalk out from the pole, its
+ * blade hanging out and down and turned to face the plant's front, so
+ * turning the plant aims them all. Bigger leaves higher up. */
 function monstera(m: Model, rand: () => number, potColor: string): void {
   const { W, D, H } = m;
   const R = Math.min(W, D) / 2;
   const top = pot(m, R * 0.38, Math.min(0.32, H * 0.28), potColor);
   const h = H - top;
-  for (let i = 0, n = more(9); i < n; i++) {
-    const az = i * 2.39996 + rand() * 0.4;
-    const out = v3(Math.cos(az), 0, Math.sin(az));
-    const reach = R * (0.2 + 0.4 * rand());
-    const lift = h * (0.45 + 0.4 * rand());
-    const end = v3(0, top + lift, 0).addScaledVector(out, reach);
-    const mid = v3(0, top + lift * 0.7, 0).addScaledVector(out, reach * 0.35);
-    stalk(m, [v3(0, top, 0), mid, end], 0.008, "#3d6a2e");
-    const len = Math.min(R * (0.55 + 0.2 * rand()), h * 0.55);
-    leaf(
-      m,
-      end,
-      aim(az, (10 + rand() * 25) * DEG),
-      len,
-      len * 0.95,
-      shades("#2b5926", rand),
-      {
+  const poleTop = top + h * 0.9;
+  limb(
+    m,
+    v3(0, top - 0.05, -0.02),
+    v3(0, poleTop, -0.02),
+    0.035,
+    0.03,
+    mat("#6b5a3e", 0.95),
+    8,
+  );
+  const tiers = Math.max(1, Math.round(h / 0.28));
+  const scale = Math.min(1.3, Math.max(0.7, R / 0.4));
+  for (let t = 0; t < tiers; t++) {
+    const f = (t + 0.5) / tiers;
+    const y = top + h * 0.1 + (poleTop - top - h * 0.1) * f;
+    const n = more(t === tiers - 1 ? 2 : 3);
+    for (let k = 0; k < n; k++) {
+      // Spread across the front half, alternate tiers offset.
+      const az =
+        (0.12 + 0.76 * ((k + 0.5) / n)) * Math.PI +
+        (t % 2 ? 0.15 : -0.15) +
+        (rand() - 0.5) * 0.2;
+      const base = v3(0, y, 0.015);
+      const reach = (0.1 + 0.1 * rand() + 0.05 * f) * scale;
+      const end = base
+        .clone()
+        .addScaledVector(aim(az, (15 + rand() * 20) * DEG), reach);
+      stalk(m, [base, end], 0.007, "#3d6a2e");
+      const len = (0.2 + 0.14 * f) * scale * (0.85 + 0.3 * rand());
+      // Hanging out and down, its face to the front.
+      const dir = v3(
+        Math.cos(az) * 0.35,
+        -0.55 - 0.2 * rand(),
+        Math.sin(az) * 0.3 + 0.35,
+      ).normalize();
+      leaf(m, end, dir, len, len * 0.95, shades("#2b5926", rand), {
         shape: "split",
-        droop: 0.35,
-        fold: 0.08,
+        droop: 0.12,
+        fold: 0.06,
         tip: "#336a2c",
-      },
-    );
+      });
+    }
   }
 }
 
