@@ -1961,64 +1961,169 @@ function leather(color: string): THREE.MeshStandardMaterial {
   return m;
 }
 
-/** A counter stool (back at -z): a brown leather bucket seat, its back
- * curving round and down to the sides, on a thin black metal frame with
- * a footrest and floor runners. */
+/** A surface given by `at(u, v)` (u across 0..1, v along 0..1, its
+ * normal u × v the face side) thickened `t` behind that face into a
+ * solid shell, its edges closed. */
+function shellGeometry(
+  at: (u: number, v: number) => THREE.Vector3,
+  nu: number,
+  nv: number,
+  t: number,
+): THREE.BufferGeometry {
+  const P: THREE.Vector3[][] = [];
+  for (let j = 0; j <= nv; j++) {
+    const row: THREE.Vector3[] = [];
+    for (let i = 0; i <= nu; i++) row.push(at(i / nu, j / nv));
+    P.push(row);
+  }
+  // Each point's face normal, and the point `t` behind it.
+  const Q = P.map((row, j) =>
+    row.map((p, i) => {
+      const du = P[j]![Math.min(nu, i + 1)]!.clone().sub(
+        P[j]![Math.max(0, i - 1)]!,
+      );
+      const dv = P[Math.min(nv, j + 1)]![i]!.clone().sub(
+        P[Math.max(0, j - 1)]![i]!,
+      );
+      const n = du.cross(dv).normalize();
+      return p.clone().addScaledVector(n, -t);
+    }),
+  );
+  const pos: number[] = [];
+  const tri = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) =>
+    pos.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+  const quad = (
+    a: THREE.Vector3,
+    b: THREE.Vector3,
+    c: THREE.Vector3,
+    d: THREE.Vector3,
+  ) => {
+    tri(a, b, c);
+    tri(a, c, d);
+  };
+  for (let j = 0; j < nv; j++)
+    for (let i = 0; i < nu; i++) {
+      quad(P[j]![i]!, P[j]![i + 1]!, P[j + 1]![i + 1]!, P[j + 1]![i]!);
+      quad(Q[j]![i]!, Q[j + 1]![i]!, Q[j + 1]![i + 1]!, Q[j]![i + 1]!);
+    }
+  // Its edges: along both sides, across the front and the top.
+  for (let j = 0; j < nv; j++) {
+    quad(P[j]![0]!, P[j + 1]![0]!, Q[j + 1]![0]!, Q[j]![0]!);
+    quad(P[j]![nu]!, Q[j]![nu]!, Q[j + 1]![nu]!, P[j + 1]![nu]!);
+  }
+  for (let i = 0; i < nu; i++) {
+    quad(P[0]![i]!, Q[0]![i]!, Q[0]![i + 1]!, P[0]![i + 1]!);
+    quad(P[nv]![i]!, P[nv]![i + 1]!, Q[nv]![i + 1]!, Q[nv]![i]!);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+/** A counter stool, the leather bucket kind (back at -z): one padded
+ * shell of whiskey leather, a rolled front edge, a shallow seat whose
+ * sides sweep up into a tall, slightly raked back with rounded top
+ * corners; on two black tube sled frames (a front leg, a floor runner and
+ * a rear leg each side, splayed a little), a footrest bar across the
+ * front and a stretcher across the back. */
 const bucketStool: Builder = (m, _o, tint) => {
   const { W, D, H } = m;
-  const hide = leather(tint ?? "#8b5a3b");
+  const hide = leather(tint ?? "#b06a35");
   const black = mat("#1d1d1f", 0.45, 0.6);
   const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
-  const seatY = Math.min(0.66, H * 0.76);
-  const sx = W / 2 - 0.06;
-  const sz = D / 2 - 0.06;
-  const fx = W / 2 - 0.03;
-  const fz = D / 2 - 0.03;
-  // Legs, splayed a little, runners along the floor, the footrest.
-  const foot = 0.24;
-  for (const a of [-1, 1]) {
-    for (const b of [-1, 1])
-      rod(
-        m,
-        v(a * sx, seatY - 0.04, b * sz),
-        v(a * fx, 0.01, b * fz),
-        0.008,
-        black,
-      );
-    rod(m, v(a * fx, 0.01, -fz), v(a * fx, 0.01, fz), 0.007, black);
-  }
-  const at = (a: number, b: number) => {
-    const t = (seatY - 0.04 - foot) / (seatY - 0.05);
-    return v(a * (sx + (fx - sx) * t), foot, b * (sz + (fz - sz) * t));
-  };
-  rod(m, at(-1, 1), at(1, 1), 0.008, black);
-  for (const a of [-1, 1]) rod(m, at(a, -1), at(a, 1), 0.007, black);
-  m.box(2 * sx, 0.015, 2 * sz, 0, seatY - 0.05, 0, black);
-  // The seat cushion, and its bucket back.
-  m.soft(W - 0.04, 0.07, D - 0.06, 0, seatY - 0.04, 0.01, hide, 0.03);
-  const r = Math.min(W, D) / 2 - 0.02;
+  const seatY = Math.min(0.66, Math.max(0.4, H - 0.3));
   const backH = H - seatY;
-  const g = new THREE.CylinderGeometry(
-    r,
-    r * 0.96,
-    backH,
-    24,
-    4,
-    true,
-    Math.PI - 1.75,
-    3.5,
-  );
-  const pos = g.getAttribute("position") as THREE.BufferAttribute;
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i);
-    const z = pos.getZ(i);
-    const off = Math.abs(Math.atan2(x, -z));
-    const t = (pos.getY(i) + backH / 2) / backH;
-    pos.setY(i, -backH / 2 + t * backH * (0.45 + 0.55 * Math.cos(off * 0.6)));
+  // The frame: under the seat's corners, splayed out to the floor.
+  const sx = W / 2 - 0.07;
+  const sz = D / 2 - 0.08;
+  const fx = W / 2 - 0.035;
+  const fz = D / 2 - 0.04;
+  const r = 0.009;
+  const top = seatY - 0.02;
+  const legAt = (a: number, b: number, y: number) => {
+    const t = (top - y) / (top - 0.012);
+    return v(a * (sx + (fx - sx) * t), y, b * (sz + (fz - sz) * t));
+  };
+  for (const a of [-1, 1]) {
+    rod(m, legAt(a, 1, top), legAt(a, 1, 0.012), r, black);
+    rod(m, legAt(a, -1, top), legAt(a, -1, 0.012), r, black);
+    rod(m, legAt(a, 1, 0.012), legAt(a, -1, 0.012), r, black);
   }
-  g.computeVertexNormals();
-  g.translate(0, seatY + backH / 2 - 0.01, 0.02);
-  m.add(g, hide);
+  const foot = Math.min(0.26, seatY * 0.36);
+  rod(m, legAt(-1, 1, foot), legAt(1, 1, foot), r, black);
+  rod(m, legAt(-1, -1, foot + 0.07), legAt(1, -1, foot + 0.07), r, black);
+  m.box(2 * sx, 0.012, 2 * sz, 0, top - 0.004, 0, black);
+  // The shell, along its middle's profile (z, y up from the seat): the
+  // rolled front edge, the shallow seat, up the raked back. Its sides
+  // curl a little toward its face (a lip round the seat, the back's
+  // edges wrapping forward), its top corners rounded off.
+  const back = -D / 2 + 0.02;
+  const mid: [number, number][] = [
+    [D / 2 - 0.015, -0.01],
+    [D / 2 - 0.03, 0.04],
+    [D / 2 - 0.085, 0.03],
+    [0.03, 0.012],
+    [back + 0.13, 0.016],
+    [back + 0.045, 0.06],
+    [back + 0.012, 0.15],
+    [back - 0.004, 0.24],
+    [back - 0.02, backH],
+  ];
+  // How far the sides curl toward its face along it.
+  const curl = [0.01, 0.02, 0.03, 0.045, 0.06, 0.06, 0.045, 0.035, 0.03];
+  const along = (pts: number[][], t: number): number[] => {
+    const f = t * (pts.length - 1);
+    const k = Math.min(pts.length - 2, Math.floor(f));
+    const s = f - k;
+    // Smoothed through its neighbours (Catmull-Rom).
+    const p0 = pts[Math.max(0, k - 1)]!;
+    const p1 = pts[k]!;
+    const p2 = pts[k + 1]!;
+    const p3 = pts[Math.min(pts.length - 1, k + 2)]!;
+    return p1.map(
+      (_, c) =>
+        0.5 *
+        (2 * p1[c]! +
+          (p2[c]! - p0[c]!) * s +
+          (2 * p0[c]! - 5 * p1[c]! + 4 * p2[c]! - p3[c]!) * s * s +
+          (3 * p1[c]! - p0[c]! - 3 * p2[c]! + p3[c]!) * s * s * s),
+    );
+  };
+  const half = W / 2 - 0.02;
+  const shell = shellGeometry(
+    (u, t) => {
+      const x = u * 2 - 1;
+      const [cz, cy] = along(mid, t) as [number, number];
+      // The profile's face normal (toward the sitter), from its slope.
+      const [az0, ay0] = along(mid, Math.max(0, t - 0.01)) as [number, number];
+      const [az1, ay1] = along(mid, Math.min(1, t + 0.01)) as [number, number];
+      const dz = az1 - az0;
+      const dy = ay1 - ay0;
+      const len = Math.hypot(dz, dy) || 1;
+      const nz = dy / len;
+      const ny = -dz / len;
+      const e = Math.pow(Math.abs(x), 2.6);
+      const c =
+        along(
+          curl.map((k) => [k]),
+          t,
+        )[0]! * e;
+      // A touch wider up the back; its top corners rounded.
+      const wide = half * (1 + (0.05 * Math.max(0, t - 0.55)) / 0.45);
+      const k = Math.max(0, (t - 0.86) / 0.14);
+      const drop = 0.05 * k * k * Math.pow(Math.abs(x), 5);
+      return v(
+        x * wide * (1 - 0.06 * e),
+        seatY + cy + ny * c - drop,
+        cz + nz * c,
+      );
+    },
+    20,
+    44,
+    0.022,
+  );
+  m.add(shell, hide);
 };
 
 const drawers: Builder = (m, o, tint) => {

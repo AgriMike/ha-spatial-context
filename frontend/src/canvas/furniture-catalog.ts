@@ -731,10 +731,10 @@ const KITCHEN: Row[] = [
   [
     "stool_leather_bucket",
     "Leather bucket counter stool",
-    48,
+    46,
     50,
     "stool",
-    { h3d: 0.86 },
+    { h3d: 0.98 },
   ],
   ["toaster", "Toaster", 30, 20, "appliance", { slots: true }],
   ["toaster_oven", "Toaster oven", 45, 35, "appliance", { window: true }],
