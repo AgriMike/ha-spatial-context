@@ -773,6 +773,8 @@ function buildFloor(
     /** The highest planned roof surface at a spot that lies below `y`
      * (metres above this floor's level), else null. */
     roofBelow: (x: number, z: number, y: number) => number | null;
+    /** Whether the roof is drawn (else the walls needn't meet it). */
+    roofShown: boolean;
   },
 ): Floor3d {
   const { layout, wallHeight: H } = input;
@@ -794,13 +796,7 @@ function buildFloor(
   /** Each window's and door's face on its wall, its casing included: its
    * ends along the wall's line, its bottom and top, the wall's
    * thickness (a backsplash stops round it). */
-  const openingFaces: {
-    a: Vec2;
-    b: Vec2;
-    y0: number;
-    y1: number;
-    t: number;
-  }[] = [];
+  const openingFaces: OpeningFace[] = [];
   const porches: Porch3d[] = [];
   const wallFaces: Floor3d["wallFaces"] = [];
   const offsetRooms = layout.rooms.filter(
@@ -864,8 +860,9 @@ function buildFloor(
     if (upper !== null && upper <= top + 0.8) top = upper;
     // Under a planned roof whose lowest point along it sits a little
     // above it (a garage a step down from the house, under the house's
-    // eave line), it stands up to that point rather than leave a gap.
-    else {
+    // eave line), it stands up to that point rather than leave a gap:
+    // while the roof's drawn (cut away, every wall stops at its height).
+    else if (exterior.roofShown) {
       const L = distance(a[0], a[1], b[0], b[1]) * m;
       const ux = ((b[0] - a[0]) * m) / L;
       const uz = ((b[1] - a[1]) * m) / L;
@@ -2401,8 +2398,8 @@ function buildFloor(
             );
         }
         // White casing round a window or door in an outside wall, standing
-        // a little proud of the siding so it reads from the street; a
-        // patio door's frame splits it in two.
+        // a little proud of the siding so it reads from the street (round a
+        // patio door's outside only: nothing down its middle).
         if (outside && (!isDoor || outdoorDoor)) {
           const d = t + 0.04;
           const trim = dark ? TRIM_WHITE_DARK : TRIM_WHITE;
@@ -2428,15 +2425,6 @@ function buildFloor(
             ];
             if (!isDoor)
               pieces.push([hole.s0, hole.s1, sill - bot, sill + JOINT_INSET_M]);
-            if (patio) {
-              const mid = (hole.s0 + hole.s1) / 2;
-              pieces.push([
-                mid - WINDOW_TRIM_M / 2,
-                mid + WINDOW_TRIM_M / 2,
-                sill,
-                head,
-              ]);
-            }
             return pieces;
           };
           // White oak indoors, other widths or a bezel there: the casing in
@@ -3135,43 +3123,6 @@ function buildFloor(
     }
   }
 
-  // A backsplash stops round a window (or door) in the wall behind it, a
-  // gap set on it short of its casing.
-  for (const sp of items) {
-    if (!sp.model?.kind.startsWith("backsplash_")) continue;
-    const pad =
-      Math.max(
-        0,
-        layout.furniture.find((f) => f.id === sp.id)?.opening_gap_cm ?? 0,
-      ) / 100;
-    const cos = Math.cos(sp.angle);
-    const sin = Math.sin(sp.angle);
-    // Its own across (x) and out (z) directions, and its back's middle.
-    const ux = cos;
-    const uz = -sin;
-    const bx = sp.x - sin * (sp.depth / 2);
-    const bz = sp.z - cos * (sp.depth / 2);
-    for (const f of openingFaces) {
-      const lx = f.b[0] - f.a[0];
-      const lz = f.b[1] - f.a[1];
-      const len = Math.hypot(lx, lz);
-      if (len < 1e-6) continue;
-      // Along the same wall: parallel to it, its back on the wall's face.
-      if (Math.abs((ux * lz - uz * lx) / len) > 0.1) continue;
-      const off = Math.abs(((bx - f.a[0]) * lz - (bz - f.a[1]) * lx) / len);
-      if (off > f.t / 2 + sp.depth + 0.05) continue;
-      const along = (p: Vec2) => (p[0] - sp.x) * ux + (p[1] - sp.z) * uz;
-      let x0 = Math.min(along(f.a), along(f.b)) - pad;
-      let x1 = Math.max(along(f.a), along(f.b)) + pad;
-      if (sp.model.flip) [x0, x1] = [-x1, -x0];
-      const y0 = f.y0 - sp.y0 - pad;
-      const y1 = f.y1 - sp.y0 + pad;
-      if (x1 <= -sp.width / 2 || x0 >= sp.width / 2) continue;
-      if (y1 <= 0 || y0 >= sp.height) continue;
-      (sp.model.gaps ??= []).push({ x0, x1, y0, y1 });
-    }
-  }
-
   // An outside wall standing beside a lower floor's room whose ceiling
   // reaches above this floor (a storey over a garage a few steps down,
   // next to an office on the floor below): along that room, up to its
@@ -3224,7 +3175,7 @@ function buildFloor(
     walls.splice(k, 1, ...parts);
   }
 
-  return {
+  const floor: Floor3d = {
     floorId: input.floorId,
     name: input.name,
     baseY: input.baseY,
@@ -3241,6 +3192,66 @@ function buildFloor(
     wallFaces,
     metersPerUnit: m,
   };
+  OPENING_FACES.set(floor, openingFaces);
+  return floor;
+}
+
+/** Each built floor's windows' and doors' faces (see buildFloor), for
+ * backsplashes on any floor to stop round. */
+const OPENING_FACES = new WeakMap<Floor3d, OpeningFace[]>();
+
+/** A window's or door's face on its wall, its casing included: its ends
+ * along the wall's line, its bottom and top (above its floor's level), the
+ * wall's thickness. */
+interface OpeningFace {
+  a: Vec2;
+  b: Vec2;
+  y0: number;
+  y1: number;
+  t: number;
+}
+
+/** A backsplash stops round a window (or door) in the wall behind it, a
+ * gap set on it short of its casing: the openings of every floor (one
+ * hung down from the floor above still meets the kitchen's window), their
+ * heights above this floor's level. */
+function stopRoundOpenings(
+  items: Item3d[],
+  furniture: FurnitureItem[],
+  openingFaces: OpeningFace[],
+): void {
+  for (const sp of items) {
+    if (!sp.model?.kind.startsWith("backsplash_")) continue;
+    const pad =
+      Math.max(0, furniture.find((f) => f.id === sp.id)?.opening_gap_cm ?? 0) /
+      100;
+    const cos = Math.cos(sp.angle);
+    const sin = Math.sin(sp.angle);
+    // Its own across (x) and out (z) directions, and its back's middle.
+    const ux = cos;
+    const uz = -sin;
+    const bx = sp.x - sin * (sp.depth / 2);
+    const bz = sp.z - cos * (sp.depth / 2);
+    for (const f of openingFaces) {
+      const lx = f.b[0] - f.a[0];
+      const lz = f.b[1] - f.a[1];
+      const len = Math.hypot(lx, lz);
+      if (len < 1e-6) continue;
+      // Along the same wall: parallel to it, its back on the wall's face.
+      if (Math.abs((ux * lz - uz * lx) / len) > 0.1) continue;
+      const off = Math.abs(((bx - f.a[0]) * lz - (bz - f.a[1]) * lx) / len);
+      if (off > f.t / 2 + sp.depth + 0.15) continue;
+      const along = (p: Vec2) => (p[0] - sp.x) * ux + (p[1] - sp.z) * uz;
+      let x0 = Math.min(along(f.a), along(f.b)) - pad;
+      let x1 = Math.max(along(f.a), along(f.b)) + pad;
+      if (sp.model.flip) [x0, x1] = [-x1, -x0];
+      const y0 = f.y0 - sp.y0 - pad;
+      const y1 = f.y1 - sp.y0 + pad;
+      if (x1 <= -sp.width / 2 || x0 >= sp.width / 2) continue;
+      if (y1 <= 0 || y0 >= sp.height) continue;
+      (sp.model.gaps ??= []).push({ x0, x1, y0, y1 });
+    }
+  }
 }
 
 /** A surface (a bed, a lawn, a drive) that can be built up as a block:
@@ -3435,6 +3446,7 @@ export function buildScene(input: SceneInput): Scene3d {
           }
           return best;
         },
+        roofShown: !!input.roof,
         roofBelow: (x, z, y) => {
           let best: number | null = null;
           for (const s of sections) {
@@ -3448,6 +3460,17 @@ export function buildScene(input: SceneInput): Scene3d {
       },
     ),
   );
+  // Backsplashes round the windows and doors of every floor built.
+  floors.forEach((f, i) => {
+    const faces = floors.flatMap((g) =>
+      (OPENING_FACES.get(g) ?? []).map((o) => ({
+        ...o,
+        y0: o.y0 + g.baseY - f.baseY,
+        y1: o.y1 + g.baseY - f.baseY,
+      })),
+    );
+    stopRoundOpenings(f.items, input.floors[i]!.layout.furniture, faces);
+  });
   let sun: Scene3d["sun"] = null;
   if (pos.elevation > 0) {
     const [px, py] = planVector(pos.azimuth, northDeg);

@@ -178,6 +178,10 @@ interface WallFace {
 /** Snapping a wall light along its face: how near (m) it catches a centre
  * or a mirrored spot, and a level. */
 const FACE_SNAP_M = 0.15;
+/** How near (m) and how nearly square (degrees) a dragged item's side
+ * must come to a wall's face to be snapped flat against it. */
+const ITEM_WALL_SNAP_M = 0.2;
+const ITEM_WALL_SNAP_DEG = 12;
 const LEVEL_SNAP_M = 0.08;
 /** The guides' colours: the face, centred, level. */
 const FACE_COLOR = "#29b6f6";
@@ -201,7 +205,14 @@ function isSurfaceKind(kind: string): boolean {
 
 /** A drag under way in the 3D editor (plan units). */
 type EditDrag =
-  | { kind: "item"; id: string; offset: Pt; at: Pt }
+  | {
+      kind: "item";
+      id: string;
+      offset: Pt;
+      at: Pt;
+      /** Its turn, squared to a wall it's snapped against (degrees). */
+      rot: number;
+    }
   | {
       kind: "wallItem";
       id: string;
@@ -1963,6 +1974,112 @@ export class Floorplan3dView extends LitElement {
     });
   }
 
+  /** An item dragged to `at` (plan units, turned `rot` degrees) snapped
+   * flat against a wall face of this floor that one of its sides comes
+   * within reach of, nearly square to it (turned square), and then into
+   * the corner against a second face across the first: where it goes,
+   * its turn, and the faces it's against outlined. Null: no wall near. */
+  private _itemWallSnap(
+    item: FurnitureItem,
+    at: Pt,
+    rot: number,
+  ): {
+    at: Pt;
+    rot: number;
+    paths: { points: [number, number, number][]; color: string }[];
+  } | null {
+    const layout = this.layout;
+    if (!layout) return null;
+    const m = metersPerUnit(layout.scale);
+    const H = this.floorId ? this._wallHeight(this.floorId) : 2.4;
+    const w = item.width_cm / 100;
+    const d = item.depth_cm / 100;
+    let cx = at[0] * m;
+    let cz = at[1] * m;
+    let deg = rot;
+    const faces: WallFace[] = [];
+    const best = (
+      across: WallFace | null,
+    ): { face: WallFace; gap: number; turn: number } | null => {
+      let found: { face: WallFace; gap: number; turn: number } | null = null;
+      for (const wall of layout.walls) {
+        const off = wallThicknessCm(wall) / 200;
+        for (let i = 0; i + 1 < wall.points.length; i++) {
+          const ax = wall.points[i]![0] * m;
+          const az = wall.points[i]![1] * m;
+          const bx = wall.points[i + 1]![0] * m;
+          const bz = wall.points[i + 1]![1] * m;
+          const len = Math.hypot(bx - ax, bz - az);
+          if (len < 0.2) continue;
+          const ux = (bx - ax) / len;
+          const uz = (bz - az) / len;
+          // A second face: across the first only.
+          if (across && Math.abs(ux * across.ux + uz * across.uz) > 0.2)
+            continue;
+          // Its normal toward the item.
+          let nx = -uz;
+          let nz = ux;
+          let side = (cx - ax) * nx + (cz - az) * nz;
+          if (side < 0) {
+            nx = -nx;
+            nz = -nz;
+            side = -side;
+          }
+          // How far its turn is off square to the wall (degrees, -45..45).
+          const wallDeg = (Math.atan2(uz, ux) * 180) / Math.PI;
+          const own = deg; // the item's +x direction, plan degrees
+          const turn = ((((own - wallDeg) % 90) + 135) % 90) - 45;
+          if (Math.abs(turn) > ITEM_WALL_SNAP_DEG) continue;
+          // Its half-extent toward the wall, squared to it.
+          const a = ((Math.round((own - turn - wallDeg) / 90) % 2) + 2) % 2;
+          const half = a === 0 ? d / 2 : w / 2;
+          const gap = side - off - half;
+          if (Math.abs(gap) > ITEM_WALL_SNAP_M) continue;
+          // Alongside the face (not off past its ends).
+          const t = (cx - ax) * ux + (cz - az) * uz;
+          const along = a === 0 ? w / 2 : d / 2;
+          if (t + along < 0.02 || t - along > len - 0.02) continue;
+          if (!found || Math.abs(gap) < Math.abs(found.gap))
+            found = {
+              face: { wallId: wall.id, ax, az, ux, uz, nx, nz, len, off },
+              gap,
+              turn,
+            };
+        }
+      }
+      return found;
+    };
+    const first = best(null);
+    if (!first) return null;
+    deg = deg - first.turn;
+    cx -= first.face.nx * first.gap;
+    cz -= first.face.nz * first.gap;
+    faces.push(first.face);
+    const second = best(first.face);
+    if (second) {
+      cx -= second.face.nx * second.gap;
+      cz -= second.face.nz * second.gap;
+      faces.push(second.face);
+    }
+    const paths = faces.map((f) => {
+      const o = f.off + 0.01;
+      const P = (tt: number, yy: number): [number, number, number] => [
+        f.ax + f.ux * tt + f.nx * o,
+        yy,
+        f.az + f.uz * tt + f.nz * o,
+      ];
+      return {
+        points: [P(0, 0), P(f.len, 0), P(f.len, H), P(0, H), P(0, 0)],
+        color: FACE_COLOR,
+      };
+    });
+    return {
+      at: [cx / m, cz / m],
+      rot: Math.round((((deg % 360) + 360) % 360) * 100) / 100,
+      paths,
+    };
+  }
+
   /** A wall light at `t` along its face and `y` high (its middle, metres):
    * snapped to the face's centre, a gap's centre (between the wall's ends
    * and its doors and windows), an opening's centre, the spot mirroring
@@ -3043,6 +3160,7 @@ export class Floorplan3dView extends LitElement {
           id: item.id,
           offset: [item.x - from[0], item.y - from[1]],
           at: [item.x, item.y],
+          rot: item.rotation_deg,
         };
         return true;
       }
@@ -3151,12 +3269,21 @@ export class Floorplan3dView extends LitElement {
                 Math.round(raw[1] / grid) * grid,
               ]
             : raw;
+        // Flat against a wall it comes near (into a corner against two),
+        // the walls outlined (Shift: free).
+        const flat = e.shift
+          ? null
+          : this._itemWallSnap(item, drag.at, item.rotation_deg);
+        drag.rot = flat?.rot ?? item.rotation_deg;
+        if (flat) drag.at = flat.at;
+        this._facePaths = flat?.paths ?? [];
         this._handle?.previewItem(
           item.id,
           drag.at[0] * m,
           drag.at[1] * m,
-          (-item.rotation_deg * Math.PI) / 180,
+          (-drag.rot * Math.PI) / 180,
         );
+        this._pushOverlay();
       } else if (drag.kind === "seg") {
         const wall = this._wallOf(drag.wallId);
         const a = wall?.points[drag.seg] as Pt | undefined;
@@ -3250,9 +3377,19 @@ export class Floorplan3dView extends LitElement {
         this._facePaths = [];
       } else if (drag.kind === "item") {
         const item = layout.furniture.find((f) => f.id === drag.id);
-        if (item && (item.x !== drag.at[0] || item.y !== drag.at[1]))
+        this._facePaths = [];
+        if (
+          item &&
+          (item.x !== drag.at[0] ||
+            item.y !== drag.at[1] ||
+            item.rotation_deg !== drag.rot)
+        )
           this._edit(
-            patchItem(layout, drag.id, { x: drag.at[0], y: drag.at[1] }),
+            patchItem(layout, drag.id, {
+              x: drag.at[0],
+              y: drag.at[1],
+              rotation_deg: drag.rot,
+            }),
           );
       } else if (drag.kind === "seg" && Math.abs(drag.d) > 1e-9) {
         const wall = this._wallOf(drag.wallId);
@@ -3669,6 +3806,76 @@ export class Floorplan3dView extends LitElement {
         <ha-icon icon="mdi:backup-restore"></ha-icon>
       </button>
     </div>`;
+  }
+
+  @state() private _floorMoveError: string | null = null;
+
+  /** The floor an item's on: moving it to another floor's plan, where it
+   * stays put in the house (the same spot and height, its height above
+   * that floor worked out from the two floors' levels). */
+  private _renderItemFloor(item: FurnitureItem) {
+    // This building's floors (and any shown with it).
+    const own = this.floors.find((f) => f.floor_id === this.floorId);
+    const floors = this.floors.filter(
+      (f) =>
+        f.floor_id === this.floorId ||
+        (!!own?.building_id && f.building_id === own.building_id) ||
+        this._contextFloorIds.includes(f.floor_id),
+    );
+    if (floors.length < 2) return nothing;
+    return html`${this._select<string>(
+      localize("edit3d.floor"),
+      this.floorId,
+      floors.map((f): [string, string] => [f.floor_id, f.name]),
+      (v) => {
+        if (v && v !== this.floorId) void this._moveItemToFloor(item, v);
+      },
+    )}
+    ${
+      this._floorMoveError
+        ? html`<span class="hint">${this._floorMoveError}</span>`
+        : nothing
+    }`;
+  }
+
+  private async _moveItemToFloor(
+    item: FurnitureItem,
+    floorId: string,
+  ): Promise<void> {
+    const client = this._client;
+    const layout = this.layout;
+    if (!client || !layout || !this.floorId) return;
+    this._floorMoveError = null;
+    // Its height above the other floor: the same height in the house.
+    const entry = catalogItem(item.kind);
+    const auto = Number(entry?.opts["y3d"] ?? 0) || 0;
+    const from = this._floorBases.get(this.floorId);
+    const to = this._floorBases.get(floorId);
+    let elevation = item.elevation_cm ?? null;
+    if (from !== undefined && to !== undefined && Math.abs(from - to) > 1e-3) {
+      const y = (elevation ?? auto * 100) / 100 + from - to;
+      elevation = Math.abs(y - auto) < 0.01 ? null : Math.round(y * 100);
+    }
+    const moved: FurnitureItem = { ...item };
+    if (elevation === null) delete moved.elevation_cm;
+    else moved.elevation_cm = elevation;
+    try {
+      const target = await client.getLayout(floorId);
+      const next = {
+        ...target,
+        furniture: [...target.furniture.filter((f) => f.id !== item.id), moved],
+      };
+      await client.saveLayout(floorId, next);
+      this._otherLayouts = new Map(this._otherLayouts).set(floorId, next);
+    } catch (err) {
+      this._floorMoveError = err instanceof Error ? err.message : String(err);
+      return;
+    }
+    // Off this floor's plan once it's safely on the other's.
+    const now = this.layout ?? layout;
+    this._edit({ furniture: now.furniture.filter((f) => f.id !== item.id) });
+    this._sel = null;
+    this._pushOverlay();
   }
 
   @state() private _modelBusy = false;
@@ -4704,6 +4911,7 @@ export class Floorplan3dView extends LitElement {
         ${this._num(localize("edit3d.depth"), item.depth_cm, (v) => v && v > 0 && set({ depth_cm: v }), { unit: "cm", min: 1 })}
         ${this._num(localize("edit3d.height"), item.height_cm ?? null, (v) => set({ height_cm: v && v > 0 ? v : null }), { unit: "cm", placeholder: localize("edit3d.auto") })}
         ${this._num(localize("edit3d.elevation"), item.elevation_cm ?? null, (v) => set({ elevation_cm: v }), { unit: "cm", placeholder: localize("edit3d.auto") })}
+        ${this._renderItemFloor(item)}
         ${entry?.opts["shaker"] && entry.opts["shaker"] !== "hood" ? this._renderCabinetFronts(item, set) : nothing}
         ${entry && (["houseplant", "plant", "cactus"].includes(entry.draw) || entry.id === "bonsai") ? this._renderPlantPot(item, set) : nothing}
         ${entry?.id.startsWith("backsplash_") ? this._num(localize("edit3d.openingGap"), item.opening_gap_cm ?? null, (v) => set({ opening_gap_cm: v == null ? null : Math.max(0, Math.min(50, v)) }), { unit: "cm", min: 0, max: 50, placeholder: "0" }) : nothing}

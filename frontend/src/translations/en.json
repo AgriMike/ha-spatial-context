@@ -686,6 +686,7 @@
     "depth": "Depth",
     "height": "Height",
     "elevation": "Above floor",
+    "floor": "Floor",
     "rotation": "Rotation",
     "color": "Colour",
     "mirrored": "Mirrored",
