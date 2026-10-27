@@ -180,7 +180,15 @@ const GROUNDED_CATEGORIES = new Set([
   "outdoor_lighting",
   "landscape",
   "outdoor",
+  // Cars and trailers out on the drive.
+  "garage",
 ]);
+
+/** Vehicles: out in the yard they stand on a drive's paving (a few
+ * centimetres up), not in it. */
+const VEHICLE =
+  /^car_|^trailer_|motorcycle|scooter|riding_mower|golf_cart|atv|boat|truck|van_/;
+const PAVING_M = 0.045;
 
 /** Catalog drawings of houseplants, each with its own model. */
 const HOUSEPLANT_DRAWS = new Set(["houseplant", "plant", "cactus"]);
@@ -2737,7 +2745,13 @@ function buildFloor(
         (r) => r.points.length >= 3 && pointInPolygon(item.x, item.y, r.points),
       );
     const height = placed.height;
-    let y0 = placed.y0 + (grounded ? 0 : offsetAt(item.x, item.y));
+    let y0 =
+      placed.y0 +
+      (grounded
+        ? item.elevation_cm == null && VEHICLE.test(item.kind)
+          ? PAVING_M
+          : 0
+        : offsetAt(item.x, item.y));
     // Hung from the ceiling under a floor that starts below its walls'
     // top (a basement's lights under the main floor): from that floor's
     // underside instead, not up through it.

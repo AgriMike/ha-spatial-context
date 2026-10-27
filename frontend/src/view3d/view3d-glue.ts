@@ -2281,10 +2281,11 @@ function createView3d(options: View3dOptions): View3dHandle {
           const holder = new THREE.Group();
           holder.add(fit);
           liftAndTires(holder, mods.lift, mods.tire);
-          fit.removeFromParent();
-          // Its parts moved within it: where it stands now.
+          // Its parts moved within it: how big it stands now.
           const after = new THREE.Box3().setFromObject(holder);
-          size = after.getSize(new THREE.Vector3()).divideScalar(s);
+          if (!after.isEmpty())
+            size = after.getSize(new THREE.Vector3()).divideScalar(s);
+          fit.removeFromParent();
         }
         fit.traverse((o) => {
           const mesh = o as THREE.Mesh;
