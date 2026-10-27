@@ -278,6 +278,23 @@ function keepIndoors(obj: THREE.Object3D): void {
   });
 }
 
+/** A ceiling's material: indoors (see indoorOnly), and its ambient light
+ * taken as a wall's (half sky, half ground) rather than a downward face's
+ * (all the ground's brown bounce). */
+function ceilingLit<M extends THREE.Material>(mat: M): M {
+  mat.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <lights_fragment_begin>",
+      INDOOR_LIGHTS("1.0").replace(
+        "getHemisphereLightIrradiance( hemisphereLights[ i ], geometryNormal )",
+        "mix( hemisphereLights[ i ].groundColor, hemisphereLights[ i ].skyColor, 0.6 )",
+      ),
+    );
+  };
+  mat.customProgramCacheKey = () => "ceiling";
+  return mat;
+}
+
 /** A material that outdoor spotlights don't light (an indoor floor). */
 function indoorOnly<M extends THREE.Material>(mat: M): M {
   mat.onBeforeCompile = (shader) => {
@@ -2600,9 +2617,34 @@ function createView3d(options: View3dOptions): View3dHandle {
         slab.y + (slab.outdoor ? -SLAB_M - 0.02 : -SLAB_M) - 0.01,
         0,
       );
-      const underside = new THREE.Mesh(under, edge);
+      const underside = new THREE.Mesh(
+        under,
+        // A ceiling's underside lit as one (see ceilingLit).
+        slab.lid ? ceilingLit(edge.clone()) : edge,
+      );
       underside.name = `${mesh.name} underside`;
       group.add(underside);
+    }
+    // Vaulted ceilings, seen from below (and their walls' infill from
+    // either side).
+    for (const vault of spec.vaults ?? []) {
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(vault.positions, 3),
+      );
+      geom.computeVertexNormals();
+      const mat = ceilingLit(
+        new THREE.MeshStandardMaterial({
+          color: spec.wallColor,
+          roughness: 0.92,
+          side: THREE.DoubleSide,
+        }),
+      );
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.name = "Ceiling";
+      mesh.receiveShadow = true;
+      group.add(mesh);
     }
     const furniture = new THREE.Group();
     furniture.name = "Furniture";

@@ -255,6 +255,9 @@ export interface Floor3d {
   porches: Porch3d[];
   panes: Pane3d[];
   slabs: Slab3d[];
+  /** Vaulted ceilings under the roof: each a triangle list (x, y, z,
+   * metres in this floor's frame), painted like the walls. */
+  vaults?: { id: string; positions: number[] }[];
   items: Item3d[];
   /** The plan has staircases of its own (a scan's are then left out). */
   hasStairs: boolean;

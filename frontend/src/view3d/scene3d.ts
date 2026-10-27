@@ -775,6 +775,10 @@ function buildFloor(
     roofBelow: (x: number, z: number, y: number) => number | null;
     /** Whether the roof is drawn (else the walls needn't meet it). */
     roofShown: boolean;
+    /** The roof's underside a vaulted ceiling follows at a spot (metres
+     * above this floor's level): the largest roof section over it (a
+     * dormer or a bay's small gable leaves it alone), else null. */
+    vaultAt: (x: number, z: number) => number | null;
   },
 ): Floor3d {
   const { layout, wallHeight: H } = input;
@@ -2325,6 +2329,27 @@ function buildFloor(
             color: "#86a6bd",
             opacity: 0.38,
           });
+          // A sliding door's two panels: white frames round their glass
+          // and the stiles where they meet in the middle (the door's own,
+          // whatever the trim).
+          if (patio) {
+            const white = dark ? TRIM_WHITE_DARK : TRIM_WHITE;
+            const a = hole.s0 + JOINT_INSET_M;
+            const b = hole.s1 - JOINT_INSET_M;
+            const y0 = sill + JOINT_INSET_M;
+            const y1 = head - JOINT_INSET_M;
+            const mid = (a + b) / 2;
+            const fr = 0.05;
+            const parts: [number, number, number, number][] = [
+              [a, a + fr, y0, y1],
+              [b - fr, b, y0, y1],
+              [a, b, y1 - fr, y1],
+              [a, b, y0, y0 + 0.07],
+              [mid - 0.045, mid + 0.045, y0, y1],
+            ];
+            for (const [p0, p1, q0, q1] of parts)
+              walls.push({ ...box(p0, p1, q0, q1, 0.07), color: white });
+          }
         } else if (outdoorDoor && !opening.garage) {
           doorLeaf(
             hole.s0,
@@ -2819,9 +2844,12 @@ function buildFloor(
     }
   }
 
-  // Under the drawn roof, a room with no floor over it has a ceiling at
-  // its walls' height (cut away, it's left open to look into). One that a
-  // room above covers only in part is left open.
+  // Under the drawn roof, a room with no floor over it has a ceiling:
+  // vaulted, following the roof's underside up from its walls' height (the
+  // walls filled up to it), else flat at that height (cut away, it's left
+  // open to look into). One that a room above covers only in part is left
+  // open.
+  const vaults: { id: string; positions: number[] }[] = [];
   if (exterior.roofShown)
     for (const room of layout.rooms) {
       if (room.outdoor || room.points.length < 3) continue;
@@ -2841,6 +2869,78 @@ function buildFloor(
             covered = true;
         }
       if (covered) continue;
+      const level = (room.floor_offset_m ?? 0) + H;
+      const pts = room.points.map(([x, y]): Vec2 => [x * m, y * m]);
+      const vy = (x: number, z: number) => {
+        const r = exterior.vaultAt(x, z);
+        return r === null ? level : Math.max(level, r - ROOF_HEEL_M);
+      };
+      // Its grid: through every corner, no wider than 30 cm.
+      const axis = (vals: number[]) => {
+        const u = [
+          ...new Set(vals.map((v) => Math.round(v * 1000) / 1000)),
+        ].sort((a, b) => a - b);
+        const out: number[] = [];
+        u.forEach((v, i) => {
+          out.push(v);
+          const next = u[i + 1];
+          if (next === undefined) return;
+          const n = Math.ceil((next - v) / 0.3);
+          for (let k = 1; k < n; k++) out.push(v + ((next - v) * k) / n);
+        });
+        return out;
+      };
+      const gx = axis(pts.map((p) => p[0]));
+      const gz = axis(pts.map((p) => p[1]));
+      const hy = gz.map((z) => gx.map((x) => vy(x, z)));
+      const peak = Math.max(...hy.flat());
+      if (peak > level + 0.05) {
+        const pos: number[] = [];
+        const P = (i: number, j: number) => [gx[i]!, hy[j]![i]!, gz[j]!];
+        for (let j = 0; j + 1 < gz.length; j++)
+          for (let i = 0; i + 1 < gx.length; i++) {
+            const cx = (gx[i]! + gx[i + 1]!) / 2;
+            const cz = (gz[j]! + gz[j + 1]!) / 2;
+            if (!pointInPolygon(cx, cz, pts)) continue;
+            pos.push(...P(i, j), ...P(i + 1, j), ...P(i + 1, j + 1));
+            pos.push(...P(i, j), ...P(i + 1, j + 1), ...P(i, j + 1));
+          }
+        // The walls filled up to it, round its edge.
+        pts.forEach((a, k) => {
+          const b = pts[(k + 1) % pts.length]!;
+          const n = Math.max(
+            1,
+            Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 0.25),
+          );
+          for (let s = 0; s < n; s++) {
+            const p0: Vec2 = [
+              a[0] + ((b[0] - a[0]) * s) / n,
+              a[1] + ((b[1] - a[1]) * s) / n,
+            ];
+            const p1: Vec2 = [
+              a[0] + ((b[0] - a[0]) * (s + 1)) / n,
+              a[1] + ((b[1] - a[1]) * (s + 1)) / n,
+            ];
+            const y0 = vy(p0[0], p0[1]);
+            const y1 = vy(p1[0], p1[1]);
+            if (Math.max(y0, y1) < level + 0.005) continue;
+            pos.push(
+              p0[0],
+              level,
+              p0[1],
+              p1[0],
+              level,
+              p1[1],
+              p1[0],
+              y1,
+              p1[1],
+            );
+            pos.push(p0[0], level, p0[1], p1[0], y1, p1[1], p0[0], y0, p0[1]);
+          }
+        });
+        vaults.push({ id: `${room.id}:vault`, positions: pos });
+        continue;
+      }
       slabs.push({
         id: `${room.id}:ceiling`,
         name: `${room.name} ceiling`,
@@ -3233,6 +3333,7 @@ function buildFloor(
     porches,
     panes,
     slabs,
+    ...(vaults.length ? { vaults } : {}),
     items,
     wallFaces,
     metersPerUnit: m,
@@ -3425,6 +3526,14 @@ export function buildScene(input: SceneInput): Scene3d {
   const sections = (input.roofPlan?.parts ?? []).map((p) =>
     partSection(p, planM),
   );
+  // Largest first (see vaultAt).
+  const bySize = sections
+    .map((s, i) => {
+      const p = input.roofPlan!.parts[i]!;
+      return { s, area: Math.abs((p.x1 - p.x0) * (p.y1 - p.y0)) };
+    })
+    .sort((a, b) => b.area - a.area)
+    .map((e) => e.s);
   const roofOver = (x: number, z: number): number | null => {
     let best: number | null = null;
     for (const s of sections) {
@@ -3492,6 +3601,13 @@ export function buildScene(input: SceneInput): Scene3d {
           return best;
         },
         roofShown: !!input.roof,
+        vaultAt: (x, z) => {
+          for (const s of bySize) {
+            const h = sectionHeightAt(s, x, z);
+            if (h !== null) return h - f.baseY;
+          }
+          return null;
+        },
         roofBelow: (x, z, y) => {
           let best: number | null = null;
           for (const s of sections) {
