@@ -4392,8 +4392,8 @@ function plannedRoof(
           [e],
         ),
       );
-    return [...sectionFaceList, ...strips.flatMap((c) => c.caps)].flatMap(
-      (face) =>
+    return [...sectionFaceList, ...strips.flatMap((c) => c.caps)]
+      .flatMap((face) =>
         [
           ...rooms,
           // The overhang strips (not a gable's siding: that's its wall).
@@ -4404,7 +4404,18 @@ function plannedRoof(
           (acc, room) => acc.flatMap((f) => cutFace(f, room.poly, room.y)),
           [face],
         ),
-    );
+      )
+      .filter((face) => {
+        // No trim left inside a room under its ceiling (an eave's end cap
+        // where a gable starts partway over a room).
+        if (face.kind !== "trim") return true;
+        return !face.points.some(([x, y, z]) =>
+          stacked.some(
+            (r) =>
+              y > r.y0 + 0.01 && y < r.top - 0.01 && insidePoly(r.poly, x, z),
+          ),
+        );
+      });
   });
   let porchIndex = 0;
   for (const f of built)
@@ -4521,10 +4532,11 @@ function indoorStrips(
   const o = s.overhang;
   if (o <= 0.01) return [];
   // The rooms an overhang from `low` (its outer edge) up to `high` runs
-  // into: below the top of their part of the house, not in the roof
-  // space over it (where it closes a valley between two roofs).
+  // into: its fascia (hanging below it) under the top of their part of the
+  // house, not in the roof space over it (where it closes a valley between
+  // two roofs).
   const roomsAt = (low: number, high: number) =>
-    rooms.filter((r) => r.y0 < high && low < r.top - 0.05);
+    rooms.filter((r) => r.y0 < high && low - VAULT_CLEAR_M < r.top - 0.05);
   const drop = ROOF_HEEL_M - s.pitch * o;
   const ridge = Math.max(s.eave0, s.eave1) + (s.pitch * (s.c1 - s.c0)) / 2;
   const world = (a: number, c: number): Vec2 => [
