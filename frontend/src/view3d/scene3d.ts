@@ -2219,6 +2219,85 @@ function buildFloor(
         for (let k = firstPane; k < panes.length; k++)
           panes[k] = { ...panes[k]!, box: swing(panes[k]!.box) };
       };
+      /** A barn door over a doorway between rooms [s0, s1] x [y0, y1]: a
+       * leaf of three frosted glass panes one over another, each in its
+       * own matte black frame, hung off the `side` face of the wall from a
+       * black track over the opening, slid `open` (0 shut, 1 clear of the
+       * opening) toward the wall's end (its start, `towardStart`). */
+      const barnDoor = (
+        s0: number,
+        s1: number,
+        y0: number,
+        y1: number,
+        side: 1 | -1,
+        open: number,
+        towardStart: boolean,
+      ) => {
+        const n: Vec2 = [-dz, dx];
+        const put = (b: Box3d, o: number): Box3d => ({
+          ...b,
+          x: b.x + n[0] * o,
+          z: b.z + n[1] * o,
+        });
+        const lap = 0.05;
+        const w = s1 - s0 + 2 * lap;
+        const D = 0.04;
+        // Off the wall's face, clear of the casing.
+        const o = side * (t / 2 + 0.03 + D / 2);
+        const dir = towardStart ? -1 : 1;
+        const a = s0 - lap + dir * open * (w - lap);
+        const b = a + w;
+        const lo = y0 + 0.012;
+        const hi = y1 + lap;
+        const fr = 0.045;
+        const ph = (hi - lo - 4 * fr) / 3;
+        const frame = (p0: number, p1: number, q0: number, q1: number) =>
+          walls.push({ ...put(box(p0, p1, q0, q1, D), o), color: LEVER_BLACK });
+        frame(a, a + fr, lo, hi);
+        frame(b - fr, b, lo, hi);
+        for (let k = 0; k < 4; k++) {
+          const y = lo + k * (ph + fr);
+          frame(a + fr, b - fr, y, y + fr);
+        }
+        for (let k = 0; k < 3; k++) {
+          const y = lo + fr + k * (ph + fr);
+          panes.push({
+            box: put(box(a + fr, b - fr, y, y + ph, 0.012), o),
+            kind: "glass",
+            color: "#eef2f1",
+            opacity: 0.82,
+          });
+        }
+        // A bar pull each side by its leading edge.
+        const lead = towardStart ? b - 0.09 : a + 0.09;
+        for (const f of [-1, 1])
+          walls.push({
+            ...put(
+              box(lead - 0.012, lead + 0.012, y0 + 0.85, y0 + 1.2, 0.02),
+              o + f * (D / 2 + 0.03),
+            ),
+            color: LEVER_BLACK,
+          });
+        // The track over the opening (as long as the door's run, inside
+        // the wall's ends) and the two straps it hangs from.
+        const t0 = Math.max(0, Math.min(s0 - lap, s0 - lap + dir * (w - lap)));
+        const t1 = Math.min(L, Math.max(s1 + lap, s1 + lap + dir * (w - lap)));
+        walls.push({
+          ...put(
+            box(t0, t1, hi + 0.04, hi + 0.075, 0.02),
+            side * (t / 2 + 0.02),
+          ),
+          color: LEVER_BLACK,
+        });
+        for (const x of [a + 0.12, b - 0.12])
+          walls.push({
+            ...put(
+              box(x - 0.02, x + 0.02, hi - 0.06, hi + 0.075, 0.012),
+              o - side * (D / 2 - 0.006),
+            ),
+            color: LEVER_BLACK,
+          });
+      };
       /** A garage door's sections, panels, glass and hardware: the door
        * stands over [s0, s1] from `bottom` up to `head` (higher sections
        * rolled up out of sight), `D` thick. */
@@ -2575,7 +2654,17 @@ function buildFloor(
         } else if (isDoor && !opening.garage) {
           const style =
             doorStyle ?? (hole.s1 - hole.s0 > 1.3 ? "none" : "mission");
-          if (style !== "none" && style !== "sliding")
+          if (style === "barn")
+            barnDoor(
+              hole.s0,
+              hole.s1,
+              sill,
+              head,
+              opening.door_swing_flip ? -1 : 1,
+              Math.min(1, Math.max(0, (opening.door_open_deg ?? 90) / 90)),
+              !!opening.door_hinge_flip,
+            );
+          else if (style !== "none" && style !== "sliding")
             insideDoor(
               hole.s0 + JOINT_INSET_M,
               hole.s1 - JOINT_INSET_M,

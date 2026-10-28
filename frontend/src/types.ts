@@ -186,6 +186,7 @@ export type DoorStyle =
   | "french"
   | "sliding"
   | "mission"
+  | "barn"
   | "none";
 export type WindowType = "picture" | "single_hung" | "casement" | "slider";
 export type WindowGrid = "none" | "colonial" | "prairie" | "craftsman";

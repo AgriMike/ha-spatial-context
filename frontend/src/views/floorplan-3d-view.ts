@@ -4373,6 +4373,7 @@ export class Floorplan3dView extends LitElement {
           [
             ["", L("auto")],
             ["mission", L("doorMission")],
+            ["barn", L("doorBarn")],
             ["slab", L("doorSlab")],
             ["six_panel", L("doorSixPanel")],
             ["craftsman", L("doorCraftsman")],

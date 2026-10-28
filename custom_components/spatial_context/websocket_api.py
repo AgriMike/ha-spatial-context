@@ -174,6 +174,7 @@ _OPENING_SCHEMA = {
                 "french",
                 "sliding",
                 "mission",
+                "barn",
                 "none",
             ]
         ),
