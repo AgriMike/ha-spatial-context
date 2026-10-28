@@ -139,6 +139,8 @@ const DOOR_DARK = "#8f8b84";
 /** A door between rooms: stained wood. */
 const DOOR_INSIDE = "#6f4527";
 const DOOR_INSIDE_DARK = "#4a2e1a";
+/** A door between rooms' lever handles: matte black. */
+const LEVER_BLACK = "#1b1b1b";
 /** A door's hardware (knob, handles, strap hinges): dark bronze. */
 const HARDWARE = "#3b3530";
 /** Glass in a garage door: the dark garage behind it. */
@@ -824,6 +826,9 @@ function buildFloor(
     /** Whether a spot is inside a lower floor's house (its walls' closed
      * outline): open down to it where this floor has no room. */
     lowerHouse: (x: number, z: number) => boolean;
+    /** Whether a spot is inside a higher floor's house: a stairwell there
+     * is that floor's to vault (it carries on up through it). */
+    upperHouse: (x: number, z: number) => boolean;
     /** The corners (x and z, metres) of the rooms of the floors above, so
      * a stairwell's vault runs square to them. */
     upperLines: { xs: number[]; zs: number[] };
@@ -2123,20 +2128,16 @@ function buildFloor(
           z: b.z + n[1] * o,
         });
         if (style === "mission") {
-          // Three flat panels, one over another, let into the leaf.
-          const rows: [number, number][] = [
-            [0.08, 0.36],
-            [0.4, 0.64],
-            [0.68, 0.93],
+          // Three flat panels let into the leaf: a square one across the
+          // top, two tall ones side by side under it.
+          const top1 = Y(0.93);
+          const top0 = Math.max(Y(0.62), top1 - (lw - 2 * st));
+          const low1 = top0 - st * 0.9;
+          const holes: [number, number, number, number][] = [
+            [X(0), X(1), top0, top1],
+            [X(0), X(0.46), Y(0.07), low1],
+            [X(0.54), X(1), Y(0.07), low1],
           ];
-          const holes = rows.map(
-            ([r0, r1]): [number, number, number, number] => [
-              X(0),
-              X(1),
-              Y(r0),
-              Y(r1),
-            ],
-          );
           leafAround(s0, s1, y0, y1, holes, D, color);
           const panel = shadeHex(color, 0.92);
           for (const [p0, p1, q0, q1] of holes)
@@ -2146,16 +2147,41 @@ function buildFloor(
           // both ways (its glass and panels on the leaf's faces).
           doorLeaf(s0, s1, y0, y1, style, color);
         }
-        // A knob each side by its free edge.
+        // A matte black lever each side by its free edge: its rose on
+        // the face, the lever off it pointing back toward the hinges.
         const latch = hingeAtEnd ? s0 + st / 2 : s1 - st / 2;
-        for (const o of [-1, 1])
+        const back = hingeAtEnd ? 1 : -1;
+        const lever = 0.12;
+        for (const o of [-1, 1]) {
           walls.push({
             ...off(
-              box(latch - 0.025, latch + 0.025, y0 + 0.93, y0 + 0.99, 0.03),
-              o * (D / 2 + 0.015),
+              box(latch - 0.027, latch + 0.027, y0 + 0.93, y0 + 0.984, 0.012),
+              o * (D / 2 + 0.006),
             ),
-            color: HARDWARE,
+            color: LEVER_BLACK,
           });
+          walls.push({
+            ...off(
+              box(latch - 0.009, latch + 0.009, y0 + 0.948, y0 + 0.966, 0.05),
+              o * (D / 2 + 0.025),
+            ),
+            color: LEVER_BLACK,
+          });
+          const tip = latch + back * lever;
+          walls.push({
+            ...off(
+              box(
+                Math.min(latch, tip),
+                Math.max(latch, tip),
+                y0 + 0.948,
+                y0 + 0.966,
+                0.018,
+              ),
+              o * (D / 2 + 0.055),
+            ),
+            color: LEVER_BLACK,
+          });
+        }
         // To the wall's face on its side, then swung open about its hinge
         // there.
         const shift = side * (t / 2 - D / 2 - 0.004);
@@ -2470,17 +2496,19 @@ function buildFloor(
             if (sill < clear) sill = Math.min(clear, head - 0.3);
           }
         }
-        // Its casing's widths indoors (on an outside wall), its sides', top's
-        // and bottom's: set on it, else as outside; and a bezel round its
-        // outer edge.
+        // Its casing's widths indoors (on an outside wall, or both sides of
+        // a door between rooms), its sides', top's and bottom's: set on it,
+        // else as outside; and a bezel round its outer edge.
         const cmOr = (v: number | null | undefined, or: number) =>
           v != null ? Math.max(0, v) / 100 : or;
-        const trimSide = outside
-          ? cmOr(opening.trim_width_cm, WINDOW_TRIM_M)
-          : 0;
-        const trimTop = outside ? cmOr(opening.trim_top_cm, trimSide) : 0;
-        const trimBottom = outside ? cmOr(opening.trim_bottom_cm, trimSide) : 0;
+        const cased = !!outside || (isDoor && !opening.garage);
+        const trimSide = cased ? cmOr(opening.trim_width_cm, WINDOW_TRIM_M) : 0;
+        const trimTop = cased ? cmOr(opening.trim_top_cm, trimSide) : 0;
+        const trimBottom = cased ? cmOr(opening.trim_bottom_cm, trimSide) : 0;
         const bezel = outside ? cmOr(opening.trim_bezel_cm, 0) : 0;
+        // A stained casing: the door's own wood (or its paint).
+        const stain =
+          opening.paint_color ?? (dark ? DOOR_INSIDE_DARK : DOOR_INSIDE);
         openingFaces.push({
           a: at(hole.s0 - trimSide - bezel),
           b: at(hole.s1 + trimSide + bezel),
@@ -2660,7 +2688,9 @@ function buildFloor(
               ? dark
                 ? TRIM_OAK_DARK
                 : TRIM_OAK
-              : null;
+              : opening.trim_finish === "stained"
+                ? stain
+                : null;
           const split =
             !!oak ||
             bezel > 0.001 ||
@@ -2744,6 +2774,32 @@ function buildFloor(
                 color: oak,
               });
             }
+          }
+        }
+        // A door between rooms: its casing on both faces of the wall, a
+        // little proud of each, stained like the door (unless set white or
+        // white oak).
+        if (!outside && isDoor && !opening.garage) {
+          const color =
+            opening.trim_finish === "white_oak"
+              ? dark
+                ? TRIM_OAK_DARK
+                : TRIM_OAK
+              : opening.trim_finish === "white"
+                ? dark
+                  ? TRIM_WHITE_DARK
+                  : TRIM_WHITE
+                : stain;
+          const pieces: [number, number, number, number][] = [
+            [hole.s0 - trimSide, hole.s0 + JOINT_INSET_M, sill, head + trimTop],
+            [hole.s1 - JOINT_INSET_M, hole.s1 + trimSide, sill, head + trimTop],
+            [hole.s0, hole.s1, head - JOINT_INSET_M, head + trimTop],
+          ];
+          for (const [s0, s1, y0, y1] of pieces) {
+            const p0 = Math.max(s0, 0);
+            const p1 = Math.min(s1, L);
+            if (p1 - p0 <= 0.005 || y1 - y0 <= 0.005) continue;
+            walls.push({ ...box(p0, p1, y0, y1, t + 0.03), color });
           }
         }
         // Covers: blinds over a window, an overhead garage door. Each
@@ -2975,6 +3031,8 @@ function buildFloor(
   const floorBase = dark ? "#3b3936" : "#ece7df";
   const deckBase = dark ? "#5d4a3a" : "#b8916b";
   const slabs: Slab3d[] = [];
+  // Closets topped by a ledge (see below), their outlines in plan units.
+  const ledges: [number, number][][] = [];
   for (const room of layout.rooms) {
     if (room.visible === false || room.points.length < 3) continue;
     const light = showLights ? lights.get(room.id) : undefined;
@@ -3027,6 +3085,7 @@ function buildFloor(
       const pts = room.points.map(([x, y]): Vec2 => [x * m, y * m]);
       const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
       const cz = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+      if (floorAbove(cx, cz) === null) ledges.push(room.points);
       if (floorAbove(cx, cz) === null)
         slabs.push({
           id: `${room.id}:ledge`,
@@ -3050,6 +3109,23 @@ function buildFloor(
   // open to look into). One that a room above covers only in part is left
   // open.
   const vaults: { id: string; positions: number[] }[] = [];
+  // A ledge closet's own walls (all along its outline) stop at the ledge:
+  // over them it's open to the vault on either side (no wall filled up to
+  // it). A wall running on past it (a room's beside it) still does.
+  const ledgeWalls = new Set(
+    layout.walls.filter((w) =>
+      ledges.some((poly) =>
+        w.points.every(([x, y]) =>
+          poly.some((a, k) => {
+            const b = poly[(k + 1) % poly.length]!;
+            return (
+              pointToSegmentDistance(x, y, a[0], a[1], b[0], b[1]) * m < 0.1
+            );
+          }),
+        ),
+      ),
+    ),
+  );
   // Open space inside the house that's no room on any floor (a
   // stairwell): vaulted as one with the rooms open to it (see below).
   const houseLoops = houseLoopsOf(layout);
@@ -3077,7 +3153,8 @@ function buildFloor(
     !layout.rooms.some(
       (o) => o.points.length >= 3 && pointInPolygon(x / m, z / m, o.points),
     ) &&
-    !exterior.upperRoom(x, z);
+    !exterior.upperRoom(x, z) &&
+    !exterior.upperHouse(x, z);
   if (exterior.roofShown)
     for (const room of layout.rooms) {
       if (room.outdoor || room.points.length < 3) continue;
@@ -3274,23 +3351,26 @@ function buildFloor(
           const mx = (p[0] + q[0]) / 2 / m;
           const mz = (p[1] + q[1]) / 2 / m;
           const dl = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
-          return layout.walls.some((w) =>
-            w.points.some((wa, k) => {
-              const wb = w.points[k + 1];
-              if (!wb) return false;
-              const wl = distance(wa[0], wa[1], wb[0], wb[1]);
-              if (wl === 0) return false;
-              const along = Math.abs(
-                ((q[0] - p[0]) * (wb[0] - wa[0]) +
-                  (q[1] - p[1]) * (wb[1] - wa[1])) /
-                  (dl * wl),
-              );
-              return (
-                along > 0.9 &&
-                pointToSegmentDistance(mx, mz, wa[0], wa[1], wb[0], wb[1]) * m <
-                  (w.thickness_cm ?? 15) / 200 + 0.05
-              );
-            }),
+          return layout.walls.some(
+            (w) =>
+              !ledgeWalls.has(w) &&
+              w.points.some((wa, k) => {
+                const wb = w.points[k + 1];
+                if (!wb) return false;
+                const wl = distance(wa[0], wa[1], wb[0], wb[1]);
+                if (wl === 0) return false;
+                const along = Math.abs(
+                  ((q[0] - p[0]) * (wb[0] - wa[0]) +
+                    (q[1] - p[1]) * (wb[1] - wa[1])) /
+                    (dl * wl),
+                );
+                return (
+                  along > 0.9 &&
+                  pointToSegmentDistance(mx, mz, wa[0], wa[1], wb[0], wb[1]) *
+                    m <
+                    (w.thickness_cm ?? 15) / 200 + 0.05
+                );
+              }),
           );
         };
         /** Where along a → b (0 to 1) a wall on its line ends. */
@@ -3813,13 +3893,15 @@ function buildFloor(
               ...(item.shelves_cm != null ||
               item.columns != null ||
               item.books != null ||
-              item.strip_edges != null
+              item.strip_edges != null ||
+              item.book_align != null
                 ? {
                     cubbies: {
                       rows: item.shelves_cm?.map((c) => c / 100) ?? null,
                       cols: item.columns ?? null,
                       books: item.books ?? null,
                       edges: item.strip_edges ?? null,
+                      align: item.book_align ?? null,
                     },
                   }
                 : {}),
@@ -4287,6 +4369,14 @@ export function buildScene(input: SceneInput): Scene3d {
         lowerHouse: (x, z) =>
           (input.context ?? input.floors).some((g) => {
             if (g.baseY >= f.baseY - 0.3) return false;
+            const gm = metersPerUnit(g.layout.scale);
+            return houseLoopsOf(g.layout).some((loop) =>
+              pointInPolygon(x / gm, z / gm, loop),
+            );
+          }),
+        upperHouse: (x, z) =>
+          (input.context ?? input.floors).some((g) => {
+            if (g.baseY <= f.baseY + 0.5) return false;
             const gm = metersPerUnit(g.layout.scale);
             return houseLoopsOf(g.layout).some((loop) =>
               pointInPolygon(x / gm, z / gm, loop),
@@ -5015,6 +5105,18 @@ function plannedRoof(
       // edge, not over a stairwell.)
       const inward = (x: number, z: number) =>
         noRoom(x, z) &&
+        // (A floor above with house there vaults it.)
+        !floorsAll.some(
+          (g) =>
+            g.baseY > f.baseY + 0.5 &&
+            houseLoopsOf(g.layout).some((l) =>
+              pointInPolygon(
+                x / metersPerUnit(g.layout.scale),
+                z / metersPerUnit(g.layout.scale),
+                l,
+              ),
+            ),
+        ) &&
         poly.every((p, k) => {
           const q = poly[(k + 1) % poly.length]!;
           return pointToSegmentDistance(x, z, p[0], p[1], q[0], q[1]) > 0.3;
@@ -5283,9 +5385,14 @@ function plannedRoof(
       .flatMap((face) => (isDormer[si] ? aboveHost(face, si) : [face]))
       .filter((face) => {
         // No trim left inside a room under its ceiling (an eave's end cap
-        // where a gable starts partway over a room).
+        // where a gable starts partway over a room): by its middle, so a
+        // long fascia with an end tucked in past a corner stays.
         if (face.kind !== "trim") return true;
-        return !face.points.some(([x, y, z]) =>
+        const n = face.points.length;
+        const mid = face.points
+          .reduce((a, p) => [a[0] + p[0], a[1] + p[1], a[2] + p[2]], [0, 0, 0])
+          .map((v) => v / n) as [number, number, number];
+        return ![mid].some(([x, y, z]) =>
           stacked.some(
             (r) =>
               y > r.y0 + 0.01 &&

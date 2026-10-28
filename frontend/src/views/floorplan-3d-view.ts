@@ -4247,6 +4247,21 @@ export class Floorplan3dView extends LitElement {
           }),
         { unit: "%", min: 0, max: 100, step: 5 },
       )}
+      ${this._select<"l" | "c" | "r">(
+        L("cubbyAlign"),
+        (item.book_align?.[shown] ?? "l") as "l" | "c" | "r",
+        [
+          ["l", L("alignLeft")],
+          ["c", L("alignCenter")],
+          ["r", L("alignRight")],
+        ],
+        (v) =>
+          set({
+            book_align: Array.from({ length: n }, (_, k) =>
+              which(k) ? (v ?? "l") : (item.book_align?.[k] ?? "l"),
+            ),
+          }),
+      )}
       <div class="row">
         <span>${L("cubbyStrips")}</span>
         <span class="checks">${["t", "b", "l", "r"].map(edge)}</span>
@@ -4280,15 +4295,18 @@ export class Floorplan3dView extends LitElement {
     set: (patch: Partial<Opening>) => void,
   ) {
     const L = (k: string) => localize(`edit3d.${k}`);
-    // Its casing indoors (on an outside wall).
-    const trim = html`${this._select<"white" | "white_oak">(
+    // Its casing indoors (on an outside wall; a door between rooms, both
+    // sides).
+    const trim = html`${this._select<"white" | "white_oak" | "stained">(
       L("trim"),
-      o.trim_finish ?? "white",
+      o.trim_finish ?? null,
       [
+        ["", L("trimAuto")],
         ["white", L("trimWhite")],
         ["white_oak", L("trimWhiteOak")],
+        ["stained", L("trimStained")],
       ],
-      (v) => set({ trim_finish: v === "white_oak" ? v : null }),
+      (v) => set({ trim_finish: v }),
     )}
     ${this._num(
       L("trimWidth"),

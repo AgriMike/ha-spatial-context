@@ -196,6 +196,8 @@ export interface Item3d {
       cols: number | null;
       books: number[] | null;
       edges: string[] | null;
+      /** Where its books stand: "l", "c" or "r" (null: the left). */
+      align: string[] | null;
     };
     /** A houseplant's pot set by hand (diameter, metres; its shape) and
      * how full it grows (1 as drawn); null: the species' own. */

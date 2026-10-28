@@ -237,7 +237,7 @@ export interface Opening {
   /** A window's own height, metres, set by hand (absent: its style's). */
   height_m?: number | null;
   /** The casing round it indoors (absent: white). */
-  trim_finish?: "white" | "white_oak" | null;
+  trim_finish?: "white" | "white_oak" | "stained" | null;
   /** ...and how wide it is, centimetres (absent: as outside): up its
    * sides, over it and under it (absent: as its sides). */
   trim_width_cm?: number | null;
@@ -348,6 +348,9 @@ export interface FurnitureItem {
   columns?: number | null;
   books?: number[] | null;
   strip_edges?: string[] | null;
+  /** ...and where in each cubby its books stand: from the left, the right
+   * or in the middle ("l", "r", "c"; unset: the left). */
+  book_align?: ("l" | "c" | "r")[] | null;
   /** A houseplant's pot: its diameter (centimetres) and shape ("none":
    * no pot, the plant set into another's), and how full the plant grows
    * (1 as drawn: 2 twice the leaves and branches); unset = the species'

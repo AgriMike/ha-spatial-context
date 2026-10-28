@@ -490,6 +490,7 @@ const ITEM_FINISH_KEYS = [
   "columns",
   "books",
   "strip_edges",
+  "book_align",
   "pot_cm",
   "pot_shape",
   "fullness",

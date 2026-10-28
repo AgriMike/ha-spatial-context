@@ -4480,10 +4480,17 @@ const openBookshelf: Builder = (m, o, tint, item) => {
           sz,
           strip,
         );
-      // Books from the left, as full as it's set (three quarters, else).
+      // Books as full as it's set (three quarters, else), standing from
+      // the left, the right or in the middle.
       const full = Math.max(0, Math.min(1, set?.books?.[k] ?? 0.75));
-      const x0 = -cw / 2 + lip + 0.005;
-      const end = x0 + (cw - 2 * lip - 0.01) * full;
+      const span = cw - 2 * lip - 0.01;
+      const align = set?.align?.[k] ?? "l";
+      const x0 =
+        -cw / 2 +
+        lip +
+        0.005 +
+        span * (1 - full) * (align === "r" ? 1 : align === "c" ? 0.5 : 0);
+      const end = x0 + span * full;
       const bd = Math.min(boxD - back - 0.03, 0.24);
       const clear = rh - lip - 0.01;
       let bx = x0;

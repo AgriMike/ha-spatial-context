@@ -199,7 +199,9 @@ _OPENING_SCHEMA = {
         None, vol.All(vol.Coerce(float), vol.Range(min=0.1, max=10))
     ),
     # The casing round it indoors: white (unset) or white oak.
-    vol.Optional("trim_finish"): vol.Any(None, vol.In(["white", "white_oak"])),
+    vol.Optional("trim_finish"): vol.Any(
+        None, vol.In(["white", "white_oak", "stained"])
+    ),
     # ...and how wide it is, cm (unset: as outside): up its sides, over
     # and under it (unset: as its sides), and a bezel round its outer edge
     # (its width, cm, and colour).
@@ -335,6 +337,11 @@ _FURNITURE_SCHEMA = {
     vol.Optional("strip_edges"): vol.Any(
         None,
         vol.All([vol.Match(r"^[tblr]{0,4}$")], vol.Length(max=96)),
+    ),
+    # ...and which way its books lean up: from the left, the right or
+    # the middle ("l", "r", "c").
+    vol.Optional("book_align"): vol.Any(
+        None, vol.All([vol.In(["l", "c", "r"])], vol.Length(max=96))
     ),
     # A houseplant's pot (diameter in cm, shape) and how full it grows.
     vol.Optional("pot_cm"): vol.Any(
