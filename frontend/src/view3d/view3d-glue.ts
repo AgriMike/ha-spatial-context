@@ -229,6 +229,69 @@ function wallCoverAtlas(): THREE.Texture {
   return tex;
 }
 
+/** How many of a scene's room lights keep to their own storey (see
+ * SC_POINT_BANDS). */
+const MAX_BANDED_LIGHTS = 32;
+/** Per point light, in three's order (see bandPointLights), the heights
+ * it lights from and to, metres from the light itself (from > to: all):
+ * a room's light stops at the floor above it and under its own, where no
+ * shadow stops it (a basement's ceiling lights would light the walls of
+ * the living room over them). Shared by every lit material. */
+const SC_POINT_BANDS = new Float32Array(MAX_BANDED_LIGHTS * 2);
+THREE.ShaderChunk.lights_pars_begin += `
+uniform vec2 scPointBand[ ${MAX_BANDED_LIGHTS} ];`;
+THREE.ShaderChunk.lights_fragment_begin =
+  THREE.ShaderChunk.lights_fragment_begin.replace(
+    "getPointLightInfo( pointLight, geometryPosition, directLight );",
+    `getPointLightInfo( pointLight, geometryPosition, directLight );
+		#if UNROLLED_LOOP_INDEX < ${MAX_BANDED_LIGHTS}
+		if ( scPointBand[ i ].x < scPointBand[ i ].y ) {
+			float scUp = dot( geometryPosition - pointLight.position, ( viewMatrix * vec4( 0.0, 1.0, 0.0, 0.0 ) ).xyz );
+			if ( scUp < scPointBand[ i ].x || scUp > scPointBand[ i ].y ) directLight.color = vec3( 0.0 );
+		}
+		#endif`,
+  );
+for (const id of [
+  "standard",
+  "physical",
+  "lambert",
+  "phong",
+  "toon",
+] as const) {
+  const lib = (THREE.ShaderLib as Record<string, { uniforms: object }>)[id];
+  if (lib)
+    (lib.uniforms as Record<string, THREE.IUniform>)["scPointBand"] = {
+      value: SC_POINT_BANDS,
+    };
+}
+
+/** Fills SC_POINT_BANDS for a render of `scene` from `camera`: its point
+ * lights in the order three's renderer takes them (the scene in order,
+ * shadow casters first), each one's band (`userData.band`, heights in
+ * its floor's group) from the light. */
+function bandPointLights(scene: THREE.Scene, camera: THREE.Camera): void {
+  const list: THREE.PointLight[] = [];
+  const walk = (o: THREE.Object3D) => {
+    if (!o.visible) return;
+    if ((o as THREE.PointLight).isPointLight && o.layers.test(camera.layers))
+      list.push(o as THREE.PointLight);
+    for (const c of o.children) walk(c);
+  };
+  walk(scene);
+  list.sort((a, b) => (b.castShadow ? 1 : 0) - (a.castShadow ? 1 : 0));
+  SC_POINT_BANDS.fill(0);
+  const p = new THREE.Vector3();
+  list.slice(0, MAX_BANDED_LIGHTS).forEach((light, k) => {
+    const band = light.userData["band"] as [number, number] | undefined;
+    const floor = light.parent?.parent;
+    if (!band || !floor) return;
+    light.getWorldPosition(p);
+    const base = floor.matrixWorld.elements[13]!;
+    SC_POINT_BANDS[k * 2] = base + band[0] - p.y;
+    SC_POINT_BANDS[k * 2 + 1] = base + band[1] - p.y;
+  });
+}
+
 /** Three's lighting with the spotlights (the outdoor fixtures' beams:
  * nothing indoors is a spotlight) dimmed by `indoor` (a GLSL expression,
  * 0 outside … 1 inside): their light never reaches a room through its
@@ -2116,6 +2179,8 @@ function createView3d(options: View3dOptions): View3dHandle {
   }
 
   /** Everything that's exported: floors, furniture, lights, scans. */
+  scene.onBeforeRender = (_r, sc, cam) =>
+    bandPointLights(sc as THREE.Scene, cam);
   const root = new THREE.Group();
   root.name = "Building";
   scene.add(root);
@@ -2637,7 +2702,11 @@ function createView3d(options: View3dOptions): View3dHandle {
     }
   }
 
-  function buildFloor(spec: Floor3d, pointLights: Set<string>): FloorEntry {
+  function buildFloor(
+    spec: Floor3d,
+    pointLights: Set<string>,
+    above: number | null,
+  ): FloorEntry {
     const group = new THREE.Group();
     group.name = spec.name;
     group.userData["floorId"] = spec.floorId;
@@ -2828,6 +2897,16 @@ function createView3d(options: View3dOptions): View3dHandle {
         );
         light.name = `${item.name} light`;
         light.position.set(item.x, item.light.y, item.z);
+        // A room's light keeps to its storey: from under its lowest floor
+        // up to the next floor's (see SC_POINT_BANDS).
+        if (!item.grounded) {
+          const floors = spec.slabs.filter((sl) => !sl.outdoor);
+          const low = floors.length ? Math.min(...floors.map((sl) => sl.y)) : 0;
+          light.userData["band"] = [
+            low - 0.1,
+            above === null ? 1e4 : above - spec.baseY - 0.01,
+          ];
+        }
         lights.add(light);
       }
     }
@@ -2924,7 +3003,15 @@ function createView3d(options: View3dOptions): View3dHandle {
     const pointLights = new Set(lit.map((i) => i.id));
     const ordered = [...spec.floors].sort((a, b) => a.baseY - b.baseY);
     ordered.forEach((f, i) => {
-      const entry = buildFloor(f, pointLights);
+      // The next storey up (a split level's half flight up isn't one).
+      const up = ordered
+        .filter((g) => g.baseY > f.baseY + 0.75 * f.wallHeight)
+        .map((g) => g.baseY);
+      const entry = buildFloor(
+        f,
+        pointLights,
+        up.length ? Math.min(...up) : null,
+      );
       entry.order = i;
       floors.set(f.floorId, entry);
       root.add(entry.group);
