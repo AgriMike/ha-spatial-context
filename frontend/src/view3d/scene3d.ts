@@ -780,13 +780,17 @@ function buildFloor(
     /** Whether the roof is drawn (else the walls needn't meet it). */
     roofShown: boolean;
     /** The roof's underside a vaulted ceiling follows at a spot (metres
-     * above this floor's level): the largest roof section over it, a
-     * dormer's (see dormers) left out; else null. */
+     * above this floor's level): the lowest roof section over it, a
+     * dormer's (see dormers) only where nothing else is; else null. */
     vaultAt: (x: number, z: number) => number | null;
     /** The dormers' footprints (x0, z0, x1, z1, metres): a small roof
-     * section on a larger one (a bay's gable). Under one the ceiling is
-     * flat at the walls' height, the vault stepping down to it. */
+     * section on a larger one (a bay's gable). Under one the vault
+     * carries on up the larger one's slope. */
     dormers: [number, number, number, number][];
+    /** Where the roof's sections and their overhangs start and end (x
+     * and z, metres): a vaulted ceiling's grid runs through them, so a
+     * step from one section's underside to another's falls square. */
+    roofLines: { xs: number[]; zs: number[] };
   },
 ): Floor3d {
   const { layout, wallHeight: H } = input;
@@ -865,6 +869,7 @@ function buildFloor(
     // Doors and windows: at the room's level when it's the only one, else
     // at the higher (steps go down into the lower room).
     const level = offsets.length ? Math.max(...offsets) : 0;
+    const bare = top;
     // Where a floor above has a wall on the same line, that wall carries
     // on from its level: stop there rather than stand beside it, or reach
     // up to it rather than leave a gap below it.
@@ -890,21 +895,31 @@ function buildFloor(
         ),
       );
       // Up to its eave: the roof crosses a wall's centre line a rafter's
-      // depth above it.
-      if (roof.every((r) => r !== null)) {
-        const c = roof.map((r) => r![0]);
+      // depth above it. Under the roof along most of its length (a roof
+      // stopping a little short of its end): raised there, the rest left
+      // at its height (see wallRuns).
+      if (roof.slice(1, 4).every((r) => r !== null)) {
+        const c = roof.map((r) => (r === null ? null : r[0]));
+        const [c0, c1, , c3, c4] = c;
         // Carried on out to its ends (under a gable the roof rises along
         // it from each corner).
         const run = 0.25 - inset;
         const end0 =
-          run > 0.01 ? c[0]! - ((c[1]! - c[0]!) * inset) / run : c[0]!;
+          c0 != null && c1 != null && run > 0.01
+            ? c0 - ((c1 - c0) * inset) / run
+            : null;
         const end1 =
-          run > 0.01 ? c[4]! - ((c[3]! - c[4]!) * inset) / run : c[4]!;
-        const low = Math.min(...c, end0, end1) - ROOF_HEEL_M;
+          c4 != null && c3 != null && run > 0.01
+            ? c4 - ((c3 - c4) * inset) / run
+            : null;
+        const low =
+          Math.min(
+            ...[...c, end0, end1].filter((v): v is number => v !== null),
+          ) - ROOF_HEEL_M;
         if (low > top + 0.005 && low < top + 0.6) top = low;
       }
     }
-    return { base, top, level, outside };
+    return { base, top, level, outside, bare };
   };
   /** The planned roof's surface over a wall at a spot: at its centre
    * line and at the lower of its two faces (a roof falls across a wall's
@@ -962,6 +977,7 @@ function buildFloor(
     t: number,
     base: number,
     top: number,
+    bare = top,
   ): {
     s0: number;
     s1: number;
@@ -1033,6 +1049,8 @@ function buildFloor(
       // (then it meets that wall's foot, the roof dying into it).
       const roof = roofAcross(x, z, ux, uz, t);
       if (roof !== null && v > roof[1] && !carriesAt(v)) v = roof[1];
+      // Past the drawn roof's end, no higher than it stands without one.
+      if (roof === null && exterior.roofShown) v = Math.min(v, bare);
       v = Math.max(v, base + 0.3);
       // Standing over a lower roof (a bedroom over the garage, nothing
       // under it but that roof): it reaches down into the roof, so no gap
@@ -1461,8 +1479,9 @@ function buildFloor(
         top: fullTop,
         level: off,
         outside,
+        bare,
       } = wallSpan([ax, ay], [bx, by], t);
-      const runs = wallRuns([ax, ay], [bx, by], t, base, fullTop);
+      const runs = wallRuns([ax, ay], [bx, by], t, base, fullTop, bare);
       // The rooms either side (left: the box's +Z face), for their wall
       // coverings.
       const sideCover = (dir: 1 | -1): WallCover | null => {
@@ -2879,19 +2898,14 @@ function buildFloor(
       if (covered) continue;
       const level = (room.floor_offset_m ?? 0) + H;
       const pts = room.points.map(([x, y]): Vec2 => [x * m, y * m]);
-      // The vault's height at a spot, and whether it's under a dormer
-      // (flat there).
+      // The vault's height at a spot.
       const raw = (x: number, z: number) => {
         const r = exterior.vaultAt(x, z);
         // Clear of the roof's rafters and its fascia where an eave runs
         // on inside.
         return r === null ? level : Math.max(level, r - VAULT_CLEAR_M);
       };
-      const flat = (x: number, z: number) =>
-        exterior.dormers.some(
-          ([x0, z0, x1, z1]) => x > x0 && x < x1 && z > z0 && z < z1,
-        );
-      const vy = (x: number, z: number) => (flat(x, z) ? level : raw(x, z));
+      const vy = raw;
       // Its grid: through every corner, no wider than 30 cm.
       const axis = (vals: number[]) => {
         const u = [
@@ -2907,7 +2921,8 @@ function buildFloor(
         });
         return out;
       };
-      // Through the dormers' edges too, so the step is square to them.
+      // Through the dormers' and the roof's sections' edges too, so a step
+      // falls square on them.
       const [bx0, bx1] = [
         Math.min(...pts.map((p) => p[0])),
         Math.max(...pts.map((p) => p[0])),
@@ -2916,105 +2931,210 @@ function buildFloor(
         Math.min(...pts.map((p) => p[1])),
         Math.max(...pts.map((p) => p[1])),
       ];
-      const gx = axis([
-        ...pts.map((p) => p[0]),
-        ...exterior.dormers
-          .flatMap((d) => [d[0], d[2]])
-          .filter((x) => x > bx0 && x < bx1),
-      ]);
-      const gz = axis([
-        ...pts.map((p) => p[1]),
-        ...exterior.dormers
-          .flatMap((d) => [d[1], d[3]])
-          .filter((z) => z > bz0 && z < bz1),
-      ]);
-      const hy = gz.map((z) => gx.map((x) => raw(x, z)));
-      // Each cell: outside the room, flat (under a dormer), or vaulted.
-      const cell = (i: number, j: number): "out" | "flat" | "vault" => {
-        if (i < 0 || j < 0 || i + 1 >= gx.length || j + 1 >= gz.length)
-          return "out";
-        const cx = (gx[i]! + gx[i + 1]!) / 2;
-        const cz = (gz[j]! + gz[j + 1]!) / 2;
-        if (!pointInPolygon(cx, cz, pts)) return "out";
-        return flat(cx, cz) ? "flat" : "vault";
+      const gx = axis(
+        [
+          ...pts.map((p) => p[0]),
+          ...exterior.dormers.flatMap((d) => [d[0], d[2]]),
+          ...exterior.roofLines.xs,
+        ].filter((x) => x >= bx0 && x <= bx1),
+      );
+      const gz = axis(
+        [
+          ...pts.map((p) => p[1]),
+          ...exterior.dormers.flatMap((d) => [d[1], d[3]]),
+          ...exterior.roofLines.zs,
+        ].filter((z) => z >= bz0 && z <= bz1),
+      );
+      const inside = (i: number, j: number) =>
+        i >= 0 &&
+        j >= 0 &&
+        i + 1 < gx.length &&
+        j + 1 < gz.length &&
+        pointInPolygon(
+          (gx[i]! + gx[i + 1]!) / 2,
+          (gz[j]! + gz[j + 1]!) / 2,
+          pts,
+        );
+      // A cell's own corner (ci, cj: 0 or 1), sampled a hair inside it so
+      // a step (to a dormer's flat, or between two sections' undersides)
+      // falls on its edge.
+      const EDGE_IN = 0.002;
+      const corner = (i: number, j: number, ci: 0 | 1, cj: 0 | 1) => {
+        const x = gx[i + ci]!;
+        const z = gz[j + cj]!;
+        const own = vy(
+          x + (ci ? -EDGE_IN : EDGE_IN),
+          z + (cj ? -EDGE_IN : EDGE_IN),
+        );
+        // The grid point's own where it's no step (shared with the cells
+        // round it, so no seam shows between them).
+        const at = vy(x, z);
+        return [x, Math.abs(own - at) < 0.01 ? at : own, z];
       };
       let peak = level;
       for (let j = 0; j + 1 < gz.length; j++)
         for (let i = 0; i + 1 < gx.length; i++)
-          if (cell(i, j) === "vault")
-            peak = Math.max(
-              peak,
-              hy[j]![i]!,
-              hy[j]![i + 1]!,
-              hy[j + 1]![i]!,
-              hy[j + 1]![i + 1]!,
-            );
+          if (inside(i, j))
+            for (const [ci, cj] of [
+              [0, 0],
+              [1, 0],
+              [0, 1],
+              [1, 1],
+            ] as const)
+              peak = Math.max(peak, corner(i, j, ci, cj)[1]!);
       if (peak > level + 0.05) {
         const pos: number[] = [];
-        const P = (i: number, j: number, f: boolean) => [
-          gx[i]!,
-          f ? level : hy[j]![i]!,
-          gz[j]!,
-        ];
+        /** A quad between two edges (each from its start to its end),
+         * where their heights differ: each half only where its end does
+         * (no sliver, whose facing would be anyone's guess). */
+        const step = (p: number[], q: number[], r: number[], u: number[]) => {
+          if (Math.abs(q[1]! - u[1]!) > 0.002) pos.push(...p, ...q, ...u);
+          if (Math.abs(p[1]! - r[1]!) > 0.002) pos.push(...p, ...u, ...r);
+        };
         for (let j = 0; j + 1 < gz.length; j++)
           for (let i = 0; i + 1 < gx.length; i++) {
-            const c = cell(i, j);
-            if (c === "out") continue;
-            const f = c === "flat";
-            pos.push(...P(i, j, f), ...P(i + 1, j, f), ...P(i + 1, j + 1, f));
-            pos.push(...P(i, j, f), ...P(i + 1, j + 1, f), ...P(i, j + 1, f));
-            if (f) continue;
-            // A step down to a flat neighbour, along their shared edge.
-            const step = (a: [number, number], b: [number, number]) => {
-              const [ai, aj] = a;
-              const [bi, bj] = b;
-              pos.push(
-                ...P(ai, aj, true),
-                ...P(bi, bj, true),
-                ...P(bi, bj, false),
-              );
-              pos.push(
-                ...P(ai, aj, true),
-                ...P(bi, bj, false),
-                ...P(ai, aj, false),
-              );
-            };
-            if (cell(i - 1, j) === "flat") step([i, j], [i, j + 1]);
-            if (cell(i + 1, j) === "flat") step([i + 1, j], [i + 1, j + 1]);
-            if (cell(i, j - 1) === "flat") step([i, j], [i + 1, j]);
-            if (cell(i, j + 1) === "flat") step([i, j + 1], [i + 1, j + 1]);
+            if (!inside(i, j)) continue;
+            const c00 = corner(i, j, 0, 0);
+            const c10 = corner(i, j, 1, 0);
+            const c01 = corner(i, j, 0, 1);
+            const c11 = corner(i, j, 1, 1);
+            pos.push(...c00, ...c10, ...c11, ...c00, ...c11, ...c01);
+            // Up or down to the next cell along, where they part.
+            if (inside(i + 1, j))
+              step(c10, c11, corner(i + 1, j, 0, 0), corner(i + 1, j, 0, 1));
+            if (inside(i, j + 1))
+              step(c01, c11, corner(i, j + 1, 0, 0), corner(i, j + 1, 1, 0));
           }
-        // The walls filled up to it, round its edge.
+        // The walls filled up to it, round its edge (see openTo).
+        const walled = (p: Vec2, q: Vec2) => {
+          const mx = (p[0] + q[0]) / 2 / m;
+          const mz = (p[1] + q[1]) / 2 / m;
+          const dl = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
+          return layout.walls.some((w) =>
+            w.points.some((wa, k) => {
+              const wb = w.points[k + 1];
+              if (!wb) return false;
+              const wl = distance(wa[0], wa[1], wb[0], wb[1]);
+              if (wl === 0) return false;
+              const along = Math.abs(
+                ((q[0] - p[0]) * (wb[0] - wa[0]) +
+                  (q[1] - p[1]) * (wb[1] - wa[1])) /
+                  (dl * wl),
+              );
+              return (
+                along > 0.9 &&
+                pointToSegmentDistance(mx, mz, wa[0], wa[1], wb[0], wb[1]) * m <
+                  (w.thickness_cm ?? 15) / 200 + 0.05
+              );
+            }),
+          );
+        };
+        /** Where along a → b (0 to 1) a wall on its line ends. */
+        const wallEnds = (a: Vec2, b: Vec2) => {
+          const l2 = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2;
+          if (l2 === 0) return [];
+          return layout.walls.flatMap((w) =>
+            w.points
+              .map(([x, y]): Vec2 => [x * m, y * m])
+              .filter(
+                ([x, z]) =>
+                  pointToSegmentDistance(x, z, a[0], a[1], b[0], b[1]) <
+                  (w.thickness_cm ?? 15) / 200 + 0.05,
+              )
+              .map(
+                ([x, z]) =>
+                  ((x - a[0]) * (b[0] - a[0]) + (z - a[1]) * (b[1] - a[1])) /
+                  l2,
+              ),
+          );
+        };
         pts.forEach((a, k) => {
           const b = pts[(k + 1) % pts.length]!;
-          const n = Math.max(
-            1,
-            Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 0.25),
-          );
-          for (let s = 0; s < n; s++) {
-            const p0: Vec2 = [
-              a[0] + ((b[0] - a[0]) * s) / n,
-              a[1] + ((b[1] - a[1]) * s) / n,
-            ];
-            const p1: Vec2 = [
-              a[0] + ((b[0] - a[0]) * (s + 1)) / n,
-              a[1] + ((b[1] - a[1]) * (s + 1)) / n,
-            ];
-            const y0 = vy(p0[0], p0[1]);
-            const y1 = vy(p1[0], p1[1]);
-            if (Math.max(y0, y1) < level + 0.005) continue;
-            pos.push(
-              p0[0],
-              level,
-              p0[1],
-              p1[0],
-              level,
-              p1[1],
-              p1[0],
-              y1,
-              p1[1],
+          const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+          const n = Math.max(1, Math.ceil(len / 0.25));
+          // Its heights a centimetre in from the edge (on a gable end's
+          // line the roof's outline may just miss it).
+          let [nx, nz] = [
+            (a[1] - b[1]) / (len || 1),
+            (b[0] - a[0]) / (len || 1),
+          ];
+          const mid: Vec2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+          if (!pointInPolygon(mid[0] + nx * 0.01, mid[1] + nz * 0.01, pts))
+            [nx, nz] = [-nx, -nz];
+          // A little past it (hidden behind it from the room), so no
+          // chink shows where the two meet.
+          const yIn = (p: Vec2) => {
+            const y = vy(p[0] + nx * 0.01, p[1] + nz * 0.01);
+            return y > level + 0.005 ? y + 0.04 : y;
+          };
+          // Open (no wall) to another room at its level beyond it: one
+          // space, its vault carrying on over (not to a stairwell, or a
+          // room a step down, which it closes off over).
+          const openTo = ([x, z]: Vec2) =>
+            layout.rooms.some(
+              (o) =>
+                o !== room &&
+                !o.outdoor &&
+                o.points.length >= 3 &&
+                Math.abs((o.floor_offset_m ?? 0) - (room.floor_offset_m ?? 0)) <
+                  0.05 &&
+                pointInPolygon(
+                  (x - nx * 0.15) / m,
+                  (z - nz * 0.15) / m,
+                  o.points,
+                ),
             );
-            pos.push(p0[0], level, p0[1], p1[0], y1, p1[1], p0[0], y0, p0[1]);
+          // In pieces no longer than 25 cm, split where it crosses the
+          // grid (a step in a vault beside it falls on a joint).
+          const cross = (vals: number[], k: 0 | 1) =>
+            Math.abs(b[k] - a[k]) < 1e-6
+              ? []
+              : vals.map((v) => (v - a[k]) / (b[k] - a[k]));
+          const ts = [
+            ...new Set(
+              [
+                ...Array.from({ length: n + 1 }, (_, s) => s / n),
+                ...cross(gx, 0),
+                ...cross(gz, 1),
+                ...wallEnds(a, b),
+              ]
+                .filter((t) => t >= 0 && t <= 1)
+                .map((t) => Math.round(t * 1e6) / 1e6),
+            ),
+          ].sort((p, q) => p - q);
+          const along = (t: number): Vec2 => [
+            a[0] + (b[0] - a[0]) * t,
+            a[1] + (b[1] - a[1]) * t,
+          ];
+          for (let s = 0; s + 1 < ts.length; s++) {
+            if (ts[s + 1]! - ts[s]! < 1e-5) continue;
+            const p0 = along(ts[s]!);
+            const p1 = along(ts[s + 1]!);
+            // Its heights sampled a hair inside the piece.
+            const hair = Math.min(
+              0.002 / (len || 1),
+              (ts[s + 1]! - ts[s]!) / 4,
+            );
+            const q0 = along(ts[s]! + hair);
+            const q1 = along(ts[s + 1]! - hair);
+            // Open to the next room: only the step up to it from that
+            // room's vault, where its own is higher (that room's to fill
+            // where it's lower).
+            const open =
+              !walled(p0, p1) &&
+              openTo([(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2]);
+            const yOut = (p: Vec2) =>
+              open ? vy(p[0] - nx * 0.01, p[1] - nz * 0.01) : level;
+            const [b0, b1] = [yOut(q0), yOut(q1)];
+            const [y0, y1] = [yIn(q0), yIn(q1)];
+            if (open) {
+              const in0 = vy(q0[0] + nx * 0.01, q0[1] + nz * 0.01);
+              const in1 = vy(q1[0] + nx * 0.01, q1[1] + nz * 0.01);
+              if (in0 < b0 + 0.005 && in1 < b1 + 0.005) continue;
+            } else if (Math.max(y0, y1) < level + 0.005) continue;
+            const [f0, f1] = [Math.min(b0, y0), Math.min(b1, y1)];
+            pos.push(p0[0], f0, p0[1], p1[0], f1, p1[1], p1[0], y1, p1[1]);
+            pos.push(p0[0], f0, p0[1], p1[0], y1, p1[1], p0[0], y0, p0[1]);
           }
         });
         vaults.push({ id: `${room.id}:vault`, positions: pos });
@@ -3638,6 +3758,15 @@ export function buildScene(input: SceneInput): Scene3d {
       f.rect[2] + reach,
       f.rect[3] + reach,
     ]);
+  const roofLines = { xs: [] as number[], zs: [] as number[] };
+  for (const f of footprints)
+    for (const d of [0, -ROOF_OVERHANG_M, ROOF_OVERHANG_M]) {
+      roofLines.xs.push(f.rect[0] + d, f.rect[2] + d);
+      roofLines.zs.push(f.rect[1] + d, f.rect[3] + d);
+    }
+  const dormerSections = footprints
+    .filter((_, i) => isDormer[i])
+    .map((e) => e.s);
   const bySize = footprints
     .filter((_, i) => !isDormer[i])
     .sort((a, b) => b.area - a.area)
@@ -3710,14 +3839,20 @@ export function buildScene(input: SceneInput): Scene3d {
         },
         roofShown: !!input.roof,
         dormers,
+        roofLines,
         vaultAt: (x, z) => {
           // The lowest roof over it (a larger one's eave running on inside
           // a room, or one's overhang): never through any of them.
-          let low: number | null = null;
-          for (const s of bySize) {
-            const h = sectionHeightAt(s, x, z);
-            if (h !== null && (low === null || h < low)) low = h;
-          }
+          // A dormer's only past the roof it stands on (a bay's alcove).
+          const lowest = (list: RoofSection[]) => {
+            let low: number | null = null;
+            for (const s of list) {
+              const h = sectionHeightAt(s, x, z);
+              if (h !== null && (low === null || h < low)) low = h;
+            }
+            return low;
+          };
+          const low = lowest(bySize) ?? lowest(dormerSections);
           return low === null ? null : low - f.baseY;
         },
         roofBelow: (x, z, y) => {
@@ -4331,7 +4466,16 @@ function plannedRoof(
   });
   // How high each room's part of the house goes: up to the floor of a
   // room stacked over it (the floor between is the house too), else its
-  // ceiling (above that, the roof).
+  // ceiling (above that, the roof), vaulted up under the roof where it is
+  // (see buildFloor's vaults).
+  const lowestRoof = (x: number, z: number): number | null => {
+    let low: number | null = null;
+    for (const s of sections) {
+      const h = sectionHeightAt(s, x, z);
+      if (h !== null && (low === null || h < low)) low = h;
+    }
+    return low;
+  };
   const stacked = indoor.map((r) => {
     const [cx, cz] = r.poly
       .reduce(([sx, sz], [x, z]) => [sx + x, sz + z], [0, 0])
@@ -4339,9 +4483,19 @@ function plannedRoof(
     const over = indoor.filter(
       (o) => o.y0 > r.y0 + 1 && insidePoly(o.poly, cx, cz),
     );
+    if (over.length)
+      return {
+        ...r,
+        top: Math.min(...over.map((o) => o.y0)),
+        topAt: undefined as ((x: number, z: number) => number) | undefined,
+      };
     return {
       ...r,
-      top: over.length ? Math.min(...over.map((o) => o.y0)) : r.ceiling,
+      top: r.ceiling,
+      topAt: (x: number, z: number) => {
+        const h = lowestRoof(x, z);
+        return h === null ? r.ceiling : Math.max(r.ceiling, h - VAULT_CLEAR_M);
+      },
     };
   });
   // The rooms whose floors are above an eave: a roof there is cut away
@@ -4361,6 +4515,188 @@ function plannedRoof(
           poly: r.points.map(([x, y]): Vec2 => [x * fm, y * fm]),
         }));
     });
+  // Each part's footprint (no overhang), x0, z0, x1, z1 in metres.
+  const rects = plan.parts.map((p): [number, number, number, number] => [
+    Math.min(p.x0, p.x1) * m,
+    Math.min(p.y0, p.y1) * m,
+    Math.max(p.x0, p.x1) * m,
+    Math.max(p.y0, p.y1) * m,
+  ]);
+  /** A gable's siding where another part's roof runs on over it (a
+   * wing's roof against a taller part's gable): only what stands above
+   * that roof, in strips (under it, it'd stand inside the house). */
+  // A dormer: a part less than half the size of one it overlaps (as
+  // buildScene's).
+  const area = (r: [number, number, number, number]) =>
+    (r[2] - r[0]) * (r[3] - r[1]);
+  const overlaps = (
+    r: [number, number, number, number],
+    q: [number, number, number, number],
+  ) => r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1];
+  const isDormer = rects.map((r, i) =>
+    rects.some((q, j) => j !== i && area(q) > 2 * area(r) && overlaps(r, q)),
+  );
+  /** A dormer's face less what lies under the roof it stands on, below
+   * where a vault under that roof would be (it'd hang into the room):
+   * cut by that roof's plane there. */
+  const aboveHost = (face: RoofFace3d, si: number): RoofFace3d[] => {
+    let pts = face.points;
+    const xs = pts.map((p) => p[0]);
+    const zs = pts.map((p) => p[2]);
+    const box: [number, number, number, number] = [
+      Math.min(...xs),
+      Math.min(...zs),
+      Math.max(...xs),
+      Math.max(...zs),
+    ];
+    sections.forEach((o, oi) => {
+      if (oi === si || isDormer[oi] || pts.length < 3) return;
+      const r = rects[oi]!;
+      if (!overlaps(box, [r[0] - 0.01, r[1] - 0.01, r[2] + 0.01, r[3] + 0.01]))
+        return;
+      // Its plane under the face's middle (kept inside its footprint).
+      const cx = Math.min(
+        r[2] - 0.2,
+        Math.max(r[0] + 0.2, xs.reduce((a, b) => a + b, 0) / xs.length),
+      );
+      const cz = Math.min(
+        r[3] - 0.2,
+        Math.max(r[1] + 0.2, zs.reduce((a, b) => a + b, 0) / zs.length),
+      );
+      const h0 = sectionHeightAt(o, cx, cz);
+      const hx = sectionHeightAt(o, cx + 0.1, cz);
+      const hz = sectionHeightAt(o, cx, cz + 0.1);
+      if (h0 === null || hx === null || hz === null) return;
+      const gx = (hx - h0) / 0.1;
+      const gz = (hz - h0) / 0.1;
+      const plane = (x: number, z: number) =>
+        h0 + gx * (x - cx) + gz * (z - cz);
+      // Only where that one plane is its roof under the whole face (not
+      // across a ridge or a hip).
+      const fits = pts.every((p) => {
+        if (p[0] <= r[0] || p[0] >= r[2] || p[2] <= r[1] || p[2] >= r[3])
+          return true;
+        const h = sectionHeightAt(o, p[0], p[2]);
+        return h === null || Math.abs(h - plane(p[0], p[2])) < 0.02;
+      });
+      if (!fits) return;
+      // (What's between its plane and a vault under it stays, hidden,
+      // clear of the vault so no edge of it shows on it.)
+      const over = (p: [number, number, number]) =>
+        p[1] - plane(p[0], p[2]) + VAULT_CLEAR_M - 0.04;
+      // Kept above it (Sutherland-Hodgman, its corners in order).
+      const out: [number, number, number][] = [];
+      pts.forEach((p, k) => {
+        const q = pts[(k + 1) % pts.length]!;
+        const dp = over(p);
+        const dq = over(q);
+        if (dp >= 0) out.push(p);
+        if (dp >= 0 !== dq >= 0) {
+          const t = dp / (dp - dq);
+          out.push([
+            p[0] + (q[0] - p[0]) * t,
+            p[1] + (q[1] - p[1]) * t,
+            p[2] + (q[2] - p[2]) * t,
+          ]);
+        }
+      });
+      pts = out;
+    });
+    return pts.length >= 3 ? [{ ...face, points: pts }] : [];
+  };
+  const unburied = (face: RoofFace3d, si: number): RoofFace3d[] => {
+    const pts = face.points;
+    const [fx, , fz] = pts[0]!;
+    // Across it: to its corner farthest along the ground from the first.
+    const [lx, , lz] = pts.reduce((far, p) =>
+      Math.hypot(p[0] - fx, p[2] - fz) > Math.hypot(far[0] - fx, far[2] - fz)
+        ? p
+        : far,
+    );
+    const run = Math.hypot(lx - fx, lz - fz);
+    if (run < 0.01) return [face];
+    // Which way a polygon faces, across the ground (its normal's x, z):
+    // the strips face as the face does.
+    const facingOf = (poly: [number, number, number][]): Vec2 => {
+      let nx = 0;
+      let nz = 0;
+      poly.forEach((p, k) => {
+        const q = poly[(k + 1) % poly.length]!;
+        nx += (p[1] - q[1]) * (p[2] + q[2]);
+        nz += (p[0] - q[0]) * (p[1] + q[1]);
+      });
+      return [nx, nz];
+    };
+    const facing = facingOf(pts);
+    const [dx, dz] = [(lx - fx) / run, (lz - fz) / run];
+    const uv = pts.map(([x, y, z]): Vec2 => [(x - fx) * dx + (z - fz) * dz, y]);
+    // The face's span (bottom, top) up its vertical line at u.
+    const span = (u: number): [number, number] | null => {
+      const ys: number[] = [];
+      uv.forEach((a, k) => {
+        const b = uv[(k + 1) % uv.length]!;
+        if (Math.abs(b[0] - a[0]) < 1e-9) {
+          if (Math.abs(u - a[0]) < 1e-6) ys.push(a[1], b[1]);
+        } else if ((u - a[0]) * (u - b[0]) <= 0)
+          ys.push(a[1] + ((b[1] - a[1]) * (u - a[0])) / (b[0] - a[0]));
+      });
+      return ys.length ? [Math.min(...ys), Math.max(...ys)] : null;
+    };
+    // The roof over it there (another part's, inside its footprint).
+    const over = (u: number): number => {
+      const x = fx + dx * u;
+      const z = fz + dz * u;
+      let h = -Infinity;
+      sections.forEach((o, oi) => {
+        const r = rects[oi]!;
+        if (oi === si || x <= r[0] + 0.01 || x >= r[2] - 0.01) return;
+        if (z <= r[1] + 0.01 || z >= r[3] - 0.01) return;
+        const y = sectionHeightAt(o, x, z);
+        if (y !== null) h = Math.max(h, y);
+      });
+      return h;
+    };
+    const us = [...new Set(uv.map(([u]) => u))].sort((a, b) => a - b);
+    const u0 = us[0]!;
+    const u1 = us[us.length - 1]!;
+    const n = Math.max(1, Math.ceil((u1 - u0) / 0.05));
+    const cuts = [
+      ...new Set([
+        ...us,
+        ...Array.from({ length: n }, (_, k) => u0 + ((u1 - u0) * k) / n),
+      ]),
+    ].sort((a, b) => a - b);
+    const lows = cuts.map(over);
+    if (
+      cuts.every((u, k) => {
+        const sp = span(u);
+        return !sp || lows[k]! <= sp[0] + 0.005;
+      })
+    )
+      return [face];
+    const at = (u: number, y: number): [number, number, number] => [
+      fx + dx * u,
+      y,
+      fz + dz * u,
+    ];
+    const out: RoofFace3d[] = [];
+    for (let k = 0; k + 1 < cuts.length; k++) {
+      const [ua, ub] = [cuts[k]!, cuts[k + 1]!];
+      const sa = span(ua + 1e-7);
+      const sb = span(ub - 1e-7);
+      if (!sa || !sb) continue;
+      const ya = Math.min(sa[1], Math.max(sa[0], lows[k]!));
+      const yb = Math.min(sb[1], Math.max(sb[0], lows[k + 1]!));
+      if (sa[1] - ya < 0.002 && sb[1] - yb < 0.002) continue;
+      const quad = [at(ua, ya), at(ua, sa[1]), at(ub, sb[1]), at(ub, yb)];
+      const [qx, qz] = facingOf(quad);
+      out.push({
+        points: qx * facing[0] + qz * facing[1] < 0 ? quad.reverse() : quad,
+        kind: face.kind,
+      });
+    }
+    return out;
+  };
   const faces = sections.flatMap((s) => {
     const rooms = roomsOver(Math.min(s.eave0, s.eave1));
     const si = sections.indexOf(s);
@@ -4405,6 +4741,12 @@ function plannedRoof(
           [face],
         ),
       )
+      .flatMap((face) =>
+        face.kind === "siding" || face.kind === "shake"
+          ? unburied(face, si)
+          : [face],
+      )
+      .flatMap((face) => (isDormer[si] ? aboveHost(face, si) : [face]))
       .filter((face) => {
         // No trim left inside a room under its ceiling (an eave's end cap
         // where a gable starts partway over a room).
@@ -4412,7 +4754,9 @@ function plannedRoof(
         return !face.points.some(([x, y, z]) =>
           stacked.some(
             (r) =>
-              y > r.y0 + 0.01 && y < r.top - 0.01 && insidePoly(r.poly, x, z),
+              y > r.y0 + 0.01 &&
+              y < (r.topAt ? r.topAt(x, z) : r.top) - 0.01 &&
+              insidePoly(r.poly, x, z),
           ),
         );
       });
@@ -4527,7 +4871,12 @@ function insidePoly(poly: Vec2[], x: number, z: number): boolean {
  * beyond its walls, as convex quads (x, z) to cut its faces by. */
 function indoorStrips(
   s: RoofSection,
-  rooms: { y0: number; top: number; poly: Vec2[] }[],
+  rooms: {
+    y0: number;
+    top: number;
+    poly: Vec2[];
+    topAt?: ((x: number, z: number) => number) | undefined;
+  }[],
 ): Vec2[][] {
   const o = s.overhang;
   if (o <= 0.01) return [];
@@ -4535,16 +4884,33 @@ function indoorStrips(
   // into: its fascia (hanging below it) under the top of their part of the
   // house, not in the roof space over it (where it closes a valley between
   // two roofs).
-  const roomsAt = (low: number, high: number) =>
-    rooms.filter((r) => r.y0 < high && low - VAULT_CLEAR_M < r.top - 0.05);
+  // (Under a vault, its height there.)
+  const roomsAt = (
+    low: number,
+    high: number,
+    lowAt: (x: number, z: number) => number = () => low,
+  ) =>
+    rooms
+      .filter(
+        (r) => r.y0 < high && (r.topAt || low - VAULT_CLEAR_M < r.top - 0.05),
+      )
+      .map((r) => ({
+        poly: r.poly,
+        under: (x: number, z: number) =>
+          !r.topAt || lowAt(x, z) - VAULT_CLEAR_M < r.topAt(x, z) - 0.05,
+      }));
   const drop = ROOF_HEEL_M - s.pitch * o;
   const ridge = Math.max(s.eave0, s.eave1) + (s.pitch * (s.c1 - s.c0)) / 2;
   const world = (a: number, c: number): Vec2 => [
     s.origin[0] + s.along[0] * a + s.across[0] * c,
     s.origin[1] + s.along[1] * a + s.across[1] * c,
   ];
-  const inside = ([x, z]: Vec2, near: { poly: Vec2[] }[]) =>
-    near.some(({ poly }) => {
+  const inside = (
+    [x, z]: Vec2,
+    near: { poly: Vec2[]; under: (x: number, z: number) => boolean }[],
+  ) =>
+    near.some(({ poly, under }) => {
+      if (!under(x, z)) return false;
       let hit = false;
       for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
         const [xi, zi] = poly[i]!;
@@ -4562,7 +4928,7 @@ function indoorStrips(
   /** Runs along [t0, t1] (step 5 cm) where the strip's middle is in a
    * room, as quads through `quad(t0, t1)`. */
   const runs = (
-    near: { poly: Vec2[] }[],
+    near: { poly: Vec2[]; under: (x: number, z: number) => boolean }[],
     t0: number,
     t1: number,
     mid: (t: number) => Vec2,
@@ -4610,7 +4976,19 @@ function indoorStrips(
       ),
     );
   }
-  // Gable or hip ends: across c, out from a0 and a1.
+  // Gable or hip ends: across c, out from a0 and a1. Its overhang there
+  // rises with the roof (at its wall's line), so judged where it is.
+  const endLow = (x: number, z: number) => {
+    const rx = x - s.origin[0];
+    const rz = z - s.origin[1];
+    const a = Math.min(s.a1, Math.max(s.a0, rx * s.along[0] + rz * s.along[1]));
+    const c = Math.min(
+      s.c1,
+      Math.max(s.c0, rx * s.across[0] + rz * s.across[1]),
+    );
+    const h = sectionHeightAt(s, ...world(a, c));
+    return (h ?? Math.min(s.eave0, s.eave1)) + drop;
+  };
   ([0, 1] as const).forEach((end) => {
     if (s.ends[end] === "open") return;
     const wall = end === 0 ? s.a0 : s.a1;
@@ -4618,7 +4996,7 @@ function indoorStrips(
     const out = edge + (end === 0 ? -0.05 : 0.05);
     strips.push(
       ...runs(
-        roomsAt(Math.min(s.eave0, s.eave1) + drop, ridge),
+        roomsAt(Math.min(s.eave0, s.eave1) + drop, ridge, endLow),
         s.shed ? s.c0 : C0,
         C1,
         (c) => world((wall + edge) / 2, c),

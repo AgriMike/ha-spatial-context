@@ -2663,11 +2663,35 @@ function createView3d(options: View3dOptions): View3dHandle {
         new THREE.Float32BufferAttribute(vault.positions, 3),
       );
       geom.computeVertexNormals();
+      // Each face a shade by which way it faces, as if lit from one side
+      // of the room (its lights are even), so its slopes and their ridge
+      // read as a ceiling, not one flat wall.
+      const nrm = geom.getAttribute("normal");
+      const shade = new Float32Array(nrm.count * 3);
+      for (let k = 0; k < nrm.count; k++) {
+        let nx = nrm.getX(k);
+        let nz = nrm.getZ(k);
+        // Facing down into the room (either side's drawn).
+        if (nrm.getY(k) > 0) {
+          nx = -nx;
+          nz = -nz;
+        }
+        // Lighter facing the light's way, darker away; a steep slope (or
+        // an upright face) more so than a shallow one.
+        const h = Math.hypot(nx, nz);
+        const d =
+          h > 1e-3 ? ((nx * 0.6 + nz * 0.8) / h) * Math.min(1, h * 2) : 0;
+        // (Linear: 0.56 to 1 shows as about 0.77 to 1.)
+        const v = 0.78 + 0.22 * d;
+        shade.fill(v, k * 3, k * 3 + 3);
+      }
+      geom.setAttribute("color", new THREE.BufferAttribute(shade, 3));
       const mat = ceilingLit(
         new THREE.MeshStandardMaterial({
           color: spec.wallColor,
           roughness: 0.92,
           side: THREE.DoubleSide,
+          vertexColors: true,
         }),
       );
       const mesh = new THREE.Mesh(geom, mat);
