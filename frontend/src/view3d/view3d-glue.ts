@@ -2713,11 +2713,54 @@ function createView3d(options: View3dOptions): View3dHandle {
     // Vaulted ceilings, seen from below (and their walls' infill from
     // either side).
     for (const vault of spec.vaults ?? []) {
+      // Its upright faces (the walls' infill up to it, a step down to a
+      // flat ceiling) painted and lit as the walls are, so a wall carries
+      // on up to it as one.
+      const slope: number[] = [];
+      const upright: number[] = [];
+      const p = vault.positions;
+      for (let k = 0; k + 8 < p.length; k += 9) {
+        const ux = p[k + 3]! - p[k]!;
+        const uy = p[k + 4]! - p[k + 1]!;
+        const uz = p[k + 5]! - p[k + 2]!;
+        const vx = p[k + 6]! - p[k]!;
+        const vy = p[k + 7]! - p[k + 1]!;
+        const vz = p[k + 8]! - p[k + 2]!;
+        const nx = uy * vz - uz * vy;
+        const ny = uz * vx - ux * vz;
+        const nz = ux * vy - uy * vx;
+        const n = Math.hypot(nx, ny, nz);
+        (n > 1e-12 && Math.abs(ny) / n < 0.2 ? upright : slope).push(
+          ...p.slice(k, k + 9),
+        );
+      }
+      if (upright.length) {
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(upright, 3),
+        );
+        geom.computeVertexNormals();
+        const mat = new THREE.MeshStandardMaterial({
+          color: spec.wallColor,
+          roughness: 0.92,
+          side: THREE.DoubleSide,
+        });
+        mat.onBeforeCompile = (shader) => {
+          shader.fragmentShader = shader.fragmentShader.replace(
+            "#include <lights_fragment_begin>",
+            INDOOR_LIGHTS("1.0"),
+          );
+        };
+        mat.customProgramCacheKey = () => "wall-infill";
+        const mesh = new THREE.Mesh(geom, mat);
+        mesh.name = "Ceiling infill";
+        mesh.receiveShadow = true;
+        group.add(mesh);
+      }
+      if (!slope.length) continue;
       const geom = new THREE.BufferGeometry();
-      geom.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(vault.positions, 3),
-      );
+      geom.setAttribute("position", new THREE.Float32BufferAttribute(slope, 3));
       geom.computeVertexNormals();
       // Each face a shade by which way it faces, as if lit from one side
       // of the room (its lights are even), so its slopes and their ridge

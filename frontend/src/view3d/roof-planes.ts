@@ -121,6 +121,65 @@ export function sectionHeightAt(
   return surface(planes(s), a, c);
 }
 
+/** A polygon (world points) less what lies inside a section's roof: under
+ * its surface, within its walls, deeper than `margin` (where two sections
+ * meet in a valley, the lower one's slope running on under the other; the
+ * margin overlaps the two there, so no light shows between). As the
+ * pieces left. */
+export function outsideSection(
+  points: Vec3[],
+  s: RoofSection,
+  margin = 0.05,
+): Vec3[][] {
+  const at = (p: Vec3): Vec2 => {
+    const rx = p[0] - s.origin[0];
+    const rz = p[2] - s.origin[1];
+    return [
+      rx * s.along[0] + rz * s.along[1],
+      rx * s.across[0] + rz * s.across[1],
+    ];
+  };
+  // Its inside: where each of these is at or below 0.
+  const bounds: ((p: Vec3) => number)[] = [
+    (p) => s.a0 + margin - at(p)[0],
+    (p) => at(p)[0] - (s.a1 - margin),
+    (p) => s.c0 + margin - at(p)[1],
+    (p) => at(p)[1] - (s.c1 - margin),
+    ...planes(s).map((pl) => (p: Vec3) => {
+      const [a, c] = at(p);
+      return p[1] - (heightOf(pl, a, c) - margin);
+    }),
+  ];
+  const cut = (poly: Vec3[], f: (p: Vec3) => number): Vec3[] => {
+    const out: Vec3[] = [];
+    poly.forEach((p, i) => {
+      const q = poly[(i + 1) % poly.length]!;
+      const fp = f(p);
+      const fq = f(q);
+      if (fp <= 0) out.push(p);
+      if ((fp < 0 && fq > 0) || (fp > 0 && fq < 0)) {
+        const t = fp / (fp - fq);
+        out.push([
+          p[0] + (q[0] - p[0]) * t,
+          p[1] + (q[1] - p[1]) * t,
+          p[2] + (q[2] - p[2]) * t,
+        ]);
+      }
+    });
+    return out;
+  };
+  const pieces: Vec3[][] = [];
+  let rest = points;
+  for (const f of bounds) {
+    const outside = cut(rest, (p) => -f(p));
+    rest = cut(rest, f);
+    // Clear of it altogether: as it was.
+    if (rest.length < 3) return [points];
+    if (outside.length >= 3) pieces.push(outside);
+  }
+  return pieces;
+}
+
 /** Where an eave or a gable end of one section runs along another's
  * gable or hipped end (the same wall): there it has no overhang, so it
  * doesn't stand out past that wall (or into the rooms beyond). Each as the strip to cut away (world x, z, a convex

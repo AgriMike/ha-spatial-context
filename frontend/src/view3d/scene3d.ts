@@ -25,6 +25,7 @@ import type {
 } from "../types";
 import {
   eaveCuts,
+  outsideSection,
   partSection,
   ROOF_HEEL_M,
   ROOF_OVERHANG_M,
@@ -339,6 +340,39 @@ const STAIRWELL_REACH: [number, number][] = [
 /** How far a vaulted ceiling stays under the roof's surface: past its
  * fascia's depth. */
 const VAULT_CLEAR_M = 0.2;
+/** A vaulted ceiling's pitch, as a share of its roof's: a scissor truss's,
+ * rising from the walls' tops under a wedge of attic. */
+const VAULT_PITCH = 0.5;
+
+/** The roof a vaulted ceiling follows over a spot (world Y): the highest
+ * section over it (where two meet in a valley, the one on top), else a
+ * dormer's (a bay's alcove past the roof it stands on). */
+function vaultRoofAt(
+  sections: RoofSection[],
+  isDormer: boolean[],
+  x: number,
+  z: number,
+): number | null {
+  let high: number | null = null;
+  let dormer: number | null = null;
+  sections.forEach((s, i) => {
+    const h = sectionHeightAt(s, x, z);
+    if (h === null) return;
+    if (!isDormer[i]) high = high === null ? h : Math.max(high, h);
+    else dormer = dormer === null ? h : Math.min(dormer, h);
+  });
+  return high ?? dormer;
+}
+
+/** A vaulted ceiling's height over walls stopping at `level`, under a roof
+ * whose surface there is `roof` (null: none, flat): from the walls' tops
+ * where the roof sits on them (a rafter's depth up), rising at its share
+ * of the roof's pitch, clear of the rafters. */
+function vaultUnder(level: number, roof: number | null): number {
+  if (roof === null) return level;
+  const rise = VAULT_PITCH * (roof - ROOF_HEEL_M - level);
+  return Math.max(level, Math.min(level + rise, roof - VAULT_CLEAR_M));
+}
 /** The half wall material (see materials.ts) and its height. */
 const HALF_WALL_MATERIAL = "half_wall";
 const HALF_WALL_M = 1.0;
@@ -2915,12 +2949,9 @@ function buildFloor(
     return out;
   };
   /** The vault's height at a spot over a room whose walls stop at `level`
-   * (clear of the roof's rafters, and its fascia where an eave runs on
-   * inside). */
-  const vaultY = (level: number, x: number, z: number) => {
-    const r = exterior.vaultAt(x, z);
-    return r === null ? level : Math.max(level, r - VAULT_CLEAR_M);
-  };
+   * (see vaultUnder). */
+  const vaultY = (level: number, x: number, z: number) =>
+    vaultUnder(level, exterior.vaultAt(x, z));
   const stairwell = (x: number, z: number) =>
     houseLoops.some((loop) => pointInPolygon(x / m, z / m, loop)) &&
     !layout.rooms.some(
@@ -3020,6 +3051,59 @@ function buildFloor(
           if (Math.abs(q[1]! - u[1]!) > 0.002) pos.push(...p, ...q, ...u);
           if (Math.abs(p[1]! - r[1]!) > 0.002) pos.push(...p, ...u, ...r);
         };
+        /** How far a triangle's middle is off the vault there. */
+        const offBy = (p: number[], q: number[], r: number[]) =>
+          Math.abs(
+            vy((p[0]! + q[0]! + r[0]!) / 3, (p[2]! + q[2]! + r[2]!) / 3) -
+              (p[1]! + q[1]! + r[1]!) / 3,
+          );
+        /** A quad's two ways to split: along c00-c11, along c10-c01, each
+         * as how far its triangles are off the vault. */
+        const splits = (
+          c00: number[],
+          c10: number[],
+          c01: number[],
+          c11: number[],
+        ) => [
+          Math.max(offBy(c00, c10, c11), offBy(c00, c11, c01)),
+          Math.max(offBy(c00, c10, c01), offBy(c10, c11, c01)),
+        ];
+        /** A quad's two triangles, split the way nearer the vault, so a
+         * valley or a hip crossing it runs along the fold. */
+        const quad = (
+          c00: number[],
+          c10: number[],
+          c01: number[],
+          c11: number[],
+        ) => {
+          const [a, b] = splits(c00, c10, c01, c11);
+          if (b! < a! - 0.0005)
+            pos.push(...c00, ...c10, ...c01, ...c10, ...c11, ...c01);
+          else pos.push(...c00, ...c10, ...c11, ...c00, ...c11, ...c01);
+        };
+        // A cell a fold crosses askew (neither diagonal follows it): drawn
+        // finer, so the fold doesn't zigzag.
+        const FINE = 6;
+        const askew = new Map<string, boolean>();
+        const isAskew = (i: number, j: number) => {
+          const key = `${i},${j}`;
+          let hit = askew.get(key);
+          if (hit === undefined) {
+            hit = false;
+            if (inside(i, j))
+              hit =
+                Math.min(
+                  ...splits(
+                    corner(i, j, 0, 0),
+                    corner(i, j, 1, 0),
+                    corner(i, j, 0, 1),
+                    corner(i, j, 1, 1),
+                  ),
+                ) > 0.004;
+            askew.set(key, hit);
+          }
+          return hit;
+        };
         for (let j = 0; j + 1 < gz.length; j++)
           for (let i = 0; i + 1 < gx.length; i++) {
             if (!inside(i, j)) continue;
@@ -3027,7 +3111,38 @@ function buildFloor(
             const c10 = corner(i, j, 1, 0);
             const c01 = corner(i, j, 0, 1);
             const c11 = corner(i, j, 1, 1);
-            pos.push(...c00, ...c10, ...c11, ...c00, ...c11, ...c01);
+            if (!isAskew(i, j)) quad(c00, c10, c01, c11);
+            else {
+              const [x0, x1, z0, z1] = [gx[i]!, gx[i + 1]!, gz[j]!, gz[j + 1]!];
+              const lerp = (p: number[], q: number[], t: number) =>
+                p.map((v, k) => v + (q[k]! - v) * t);
+              // On its edge, the neighbour's straight edge where that's
+              // drawn plain (no crack between them).
+              const plain = (ni: number, nj: number) =>
+                inside(ni, nj) && !isAskew(ni, nj);
+              const pt = (u: number, v: number): number[] => {
+                const [tu, tv] = [u / FINE, v / FINE];
+                if ((u === 0 || u === FINE) && (v === 0 || v === FINE))
+                  return corner(i, j, u ? 1 : 0, v ? 1 : 0);
+                if (u === 0 && plain(i - 1, j)) return lerp(c00, c01, tv);
+                if (u === FINE && plain(i + 1, j)) return lerp(c10, c11, tv);
+                if (v === 0 && plain(i, j - 1)) return lerp(c00, c10, tu);
+                if (v === FINE && plain(i, j + 1)) return lerp(c01, c11, tu);
+                const x = x0 + (x1 - x0) * tu;
+                const z = z0 + (z1 - z0) * tv;
+                return [
+                  x,
+                  vy(
+                    Math.min(x1 - EDGE_IN, Math.max(x0 + EDGE_IN, x)),
+                    Math.min(z1 - EDGE_IN, Math.max(z0 + EDGE_IN, z)),
+                  ),
+                  z,
+                ];
+              };
+              for (let v = 0; v < FINE; v++)
+                for (let u = 0; u < FINE; u++)
+                  quad(pt(u, v), pt(u + 1, v), pt(u, v + 1), pt(u + 1, v + 1));
+            }
             // Up or down to the next cell along, where they part.
             if (inside(i + 1, j))
               step(c10, c11, corner(i + 1, j, 0, 0), corner(i + 1, j, 0, 1));
@@ -3334,8 +3449,19 @@ function buildFloor(
           vy(gx[ii]!, gz[jj]!),
           gz[jj]!,
         ];
-        pos.push(...P(i, j), ...P(i + 1, j), ...P(i + 1, j + 1));
-        pos.push(...P(i, j), ...P(i + 1, j + 1), ...P(i, j + 1));
+        // (Split along the diagonal nearer its middle's height, as a
+        // room's vault is.)
+        const mid = vy((gx[i]! + gx[i + 1]!) / 2, (gz[j]! + gz[j + 1]!) / 2);
+        if (
+          Math.abs((P(i + 1, j)[1]! + P(i, j + 1)[1]!) / 2 - mid) <
+          Math.abs((P(i, j)[1]! + P(i + 1, j + 1)[1]!) / 2 - mid) - 0.001
+        ) {
+          pos.push(...P(i, j), ...P(i + 1, j), ...P(i, j + 1));
+          pos.push(...P(i + 1, j), ...P(i + 1, j + 1), ...P(i, j + 1));
+        } else {
+          pos.push(...P(i, j), ...P(i + 1, j), ...P(i + 1, j + 1));
+          pos.push(...P(i, j), ...P(i + 1, j + 1), ...P(i, j + 1));
+        }
         // Down to the walls' height where it meets the house's own wall
         // (beyond it, outside: no room, nothing above).
         const edge = (a: [number, number], b: [number, number], o: Vec2) => {
@@ -3934,7 +4060,7 @@ export function buildScene(input: SceneInput): Scene3d {
     partSection(p, planM),
   );
   // The sections' footprints; a dormer is one less than half the size of
-  // a section it overlaps. The rest largest first (see vaultAt).
+  // a section it overlaps.
   const footprints = sections.map((s, i) => {
     const p = input.roofPlan!.parts[i]!;
     const rect: [number, number, number, number] = [
@@ -3972,13 +4098,6 @@ export function buildScene(input: SceneInput): Scene3d {
       roofLines.xs.push(f.rect[0] + d, f.rect[2] + d);
       roofLines.zs.push(f.rect[1] + d, f.rect[3] + d);
     }
-  const dormerSections = footprints
-    .filter((_, i) => isDormer[i])
-    .map((e) => e.s);
-  const bySize = footprints
-    .filter((_, i) => !isDormer[i])
-    .sort((a, b) => b.area - a.area)
-    .map((e) => e.s);
   const roofOver = (x: number, z: number): number | null => {
     let best: number | null = null;
     for (const s of sections) {
@@ -4081,19 +4200,8 @@ export function buildScene(input: SceneInput): Scene3d {
         dormers,
         roofLines,
         vaultAt: (x, z) => {
-          // The lowest roof over it (a larger one's eave running on inside
-          // a room, or one's overhang): never through any of them.
-          // A dormer's only past the roof it stands on (a bay's alcove).
-          const lowest = (list: RoofSection[]) => {
-            let low: number | null = null;
-            for (const s of list) {
-              const h = sectionHeightAt(s, x, z);
-              if (h !== null && (low === null || h < low)) low = h;
-            }
-            return low;
-          };
-          const low = lowest(bySize) ?? lowest(dormerSections);
-          return low === null ? null : low - f.baseY;
+          const h = vaultRoofAt(sections, isDormer, x, z);
+          return h === null ? null : h - f.baseY;
         },
         roofBelow: (x, z, y) => {
           let best: number | null = null;
@@ -4705,18 +4813,30 @@ function plannedRoof(
         };
       });
   });
+  // Each part's footprint (no overhang), x0, z0, x1, z1 in metres.
+  const rects = plan.parts.map((p): [number, number, number, number] => [
+    Math.min(p.x0, p.x1) * m,
+    Math.min(p.y0, p.y1) * m,
+    Math.max(p.x0, p.x1) * m,
+    Math.max(p.y0, p.y1) * m,
+  ]);
+  // A dormer: a part less than half the size of one it overlaps (as
+  // buildScene's).
+  const area = (r: [number, number, number, number]) =>
+    (r[2] - r[0]) * (r[3] - r[1]);
+  const overlaps = (
+    r: [number, number, number, number],
+    q: [number, number, number, number],
+  ) => r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1];
+  const isDormer = rects.map((r, i) =>
+    rects.some((q, j) => j !== i && area(q) > 2 * area(r) && overlaps(r, q)),
+  );
   // How high each room's part of the house goes: up to the floor of a
   // room stacked over it (the floor between is the house too), else its
   // ceiling (above that, the roof), vaulted up under the roof where it is
   // (see buildFloor's vaults).
-  const lowestRoof = (x: number, z: number): number | null => {
-    let low: number | null = null;
-    for (const s of sections) {
-      const h = sectionHeightAt(s, x, z);
-      if (h !== null && (low === null || h < low)) low = h;
-    }
-    return low;
-  };
+  const vaultTop = (level: number, x: number, z: number) =>
+    vaultUnder(level, vaultRoofAt(sections, isDormer, x, z));
   const stacked = indoor.map((r) => {
     const [cx, cz] = r.poly
       .reduce(([sx, sz], [x, z]) => [sx + x, sz + z], [0, 0])
@@ -4734,10 +4854,7 @@ function plannedRoof(
     return {
       ...r,
       top: r.ceiling,
-      topAt: (x: number, z: number) => {
-        const h = lowestRoof(x, z);
-        return h === null ? r.ceiling : Math.max(r.ceiling, h - VAULT_CLEAR_M);
-      },
+      topAt: (x: number, z: number) => vaultTop(r.ceiling, x, z),
       only: undefined as ((x: number, z: number) => boolean) | undefined,
     };
   });
@@ -4772,10 +4889,7 @@ function plannedRoof(
         flat: false,
         poly,
         top: ceiling,
-        topAt: (x: number, z: number) => {
-          const h = lowestRoof(x, z);
-          return h === null ? ceiling : Math.max(ceiling, h - VAULT_CLEAR_M);
-        },
+        topAt: (x: number, z: number) => vaultTop(ceiling, x, z),
         only: inward,
       });
     }
@@ -4797,27 +4911,9 @@ function plannedRoof(
           poly: r.points.map(([x, y]): Vec2 => [x * fm, y * fm]),
         }));
     });
-  // Each part's footprint (no overhang), x0, z0, x1, z1 in metres.
-  const rects = plan.parts.map((p): [number, number, number, number] => [
-    Math.min(p.x0, p.x1) * m,
-    Math.min(p.y0, p.y1) * m,
-    Math.max(p.x0, p.x1) * m,
-    Math.max(p.y0, p.y1) * m,
-  ]);
   /** A gable's siding where another part's roof runs on over it (a
    * wing's roof against a taller part's gable): only what stands above
    * that roof, in strips (under it, it'd stand inside the house). */
-  // A dormer: a part less than half the size of one it overlaps (as
-  // buildScene's).
-  const area = (r: [number, number, number, number]) =>
-    (r[2] - r[0]) * (r[3] - r[1]);
-  const overlaps = (
-    r: [number, number, number, number],
-    q: [number, number, number, number],
-  ) => r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1];
-  const isDormer = rects.map((r, i) =>
-    rects.some((q, j) => j !== i && area(q) > 2 * area(r) && overlaps(r, q)),
-  );
   /** A dormer's face less what lies under the roof it stands on, below
    * where a vault under that roof would be (it'd hang into the room):
    * cut by that roof's plane there. */
@@ -4979,6 +5075,25 @@ function plannedRoof(
     }
     return out;
   };
+  /** A face less what's inside another part's roof (not a dormer's): its
+   * slope running on under the other's past a valley, inside the house
+   * (under a vault). */
+  const inOthers = (face: RoofFace3d, si: number): RoofFace3d[] => {
+    const xs = face.points.map((p) => p[0]);
+    const zs = face.points.map((p) => p[2]);
+    const box: [number, number, number, number] = [
+      Math.min(...xs),
+      Math.min(...zs),
+      Math.max(...xs),
+      Math.max(...zs),
+    ];
+    let pieces = [face.points as [number, number, number][]];
+    sections.forEach((o, oi) => {
+      if (oi === si || isDormer[oi] || !overlaps(box, rects[oi]!)) return;
+      pieces = pieces.flatMap((p) => outsideSection(p, o));
+    });
+    return pieces.map((points) => ({ ...face, points }));
+  };
   const faces = sections.flatMap((s) => {
     const rooms = roomsOver(Math.min(s.eave0, s.eave1));
     const si = sections.indexOf(s);
@@ -5026,7 +5141,7 @@ function plannedRoof(
       .flatMap((face) =>
         face.kind === "siding" || face.kind === "shake"
           ? unburied(face, si)
-          : [face],
+          : inOthers(face, si),
       )
       .flatMap((face) => (isDormer[si] ? aboveHost(face, si) : [face]))
       .filter((face) => {
