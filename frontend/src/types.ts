@@ -338,8 +338,17 @@ export interface FurnitureItem {
    * own. */
   door_tiers?: number | null;
   countertop?: boolean | null;
-  /** A wood finish worn instead of a plain colour (a floating shelf). */
-  finish?: "white_oak" | null;
+  /** A wood finish worn instead of a plain colour (a floating shelf; a
+   * bookshelf's or slat wall's wood). */
+  finish?: "white_oak" | "walnut" | null;
+  /** A slat wall's slats: each one's width and the gap between them,
+   * centimetres; unset = its own. */
+  slat_cm?: number | null;
+  slat_gap_cm?: number | null;
+  /** A houseplant leaning toward its front (degrees, back if negative)
+   * and its foliage spread wider from its middle (1 as grown). */
+  lean_deg?: number | null;
+  foliage_spread?: number | null;
   /** An open bookshelf's cubbies: their heights from the top down
    * (centimetres, the last row filling what's left) and how many across;
    * then per cubby, row by row from the top left, how full of books it

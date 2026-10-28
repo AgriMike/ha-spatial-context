@@ -4312,15 +4312,59 @@ const weightBench: Builder = (m, _o, tint) => {
     );
 };
 
+/** A wood finish's grained material (a colour picked tints it). */
+const grainOf = (finish: string | undefined, tint: string | null) =>
+  oakMaterial(tint ?? (finish === "walnut" ? WALNUT : WHITE_OAK));
+
 /** A floating shelf: a slab (as thick as its height where that's set
- * slim, else 4 cm), plain or grained white oak at its real size. */
+ * slim, else 4 cm), plain or grained white oak or walnut at its real
+ * size. */
 const floatingShelf: Builder = (m, _o, tint, item) => {
   const { W, D, H } = m;
   const y = item.y0 > 0.3 ? 0 : 1.4;
   const t = H <= 0.12 ? H : 0.04;
-  if (item.model?.finish === "white_oak")
-    grainBox(m, W, t, D, 0, y, 0, oakMaterial(tint));
+  const finish = item.model?.finish;
+  if (finish) grainBox(m, W, t, D, 0, y, 0, grainOf(finish, tint));
   else m.box(W, t, D, 0, y, 0, mat(tint ?? C.wood, 0.65));
+};
+
+/** A slat wall (its back at -z, against the wall): grained slats, white
+ * oak or walnut, standing on a matte black backing, each `slat` wide with
+ * `gap` between them (set on the item, else 2.7 and 1.3 cm), laid from
+ * its left edge; stopping round any window or door in the wall behind it
+ * (see scene3d). A colour picked tints the wood. */
+const slatWall: Builder = (m, _o, tint, item) => {
+  const { W, D, H } = m;
+  const set = item.model?.slats;
+  const slat = Math.max(0.005, set?.width ?? 0.027);
+  const gap = Math.max(0, set?.gap ?? 0.013);
+  const back = Math.min(0.012, D / 3);
+  const deep = Math.max(0.005, Math.min(D - back, 0.012));
+  const felt = mat("#141414", 0.95);
+  const wood = grainOf(item.model?.finish, tint);
+  for (const [x0, x1, y0, y1] of panelPieces(W, H, item.model?.gaps)) {
+    m.box(x1 - x0, y1 - y0, back, (x0 + x1) / 2, y0, -D / 2 + back / 2, felt);
+    // The slats in this piece, on the panel's own spacing.
+    const pitch = slat + gap;
+    for (let k = Math.floor((x0 + W / 2) / pitch) - 1; ; k++) {
+      const a = -W / 2 + gap / 2 + k * pitch;
+      if (a >= x1) break;
+      const p0 = Math.max(a, x0);
+      const p1 = Math.min(a + slat, x1);
+      if (p1 - p0 < 0.002) continue;
+      grainBox(
+        m,
+        p1 - p0,
+        y1 - y0,
+        deep,
+        (p0 + p1) / 2,
+        y0,
+        -D / 2 + back + deep / 2,
+        wood,
+        true,
+      );
+    }
+  }
 };
 
 /** Book spines' colours (cloth and paper, muted). */
@@ -4349,7 +4393,7 @@ const BOOK_COLORS = [
 const openBookshelf: Builder = (m, o, tint, item) => {
   const { W, D, H } = m;
   const set = item.model?.cubbies;
-  const wood = tint ? mat(tint, 0.6) : oakMaterial();
+  const wood = tint ? mat(tint, 0.6) : grainOf(item.model?.finish, null);
   const piece = (
     w: number,
     h: number,
@@ -4383,7 +4427,13 @@ const openBookshelf: Builder = (m, o, tint, item) => {
       0,
       0,
       bz - 0.0375,
-      mat(shade(tint ?? WHITE_OAK, 0.45), 0.8),
+      mat(
+        shade(
+          tint ?? (item.model?.finish === "walnut" ? WALNUT : WHITE_OAK),
+          0.45,
+        ),
+        0.8,
+      ),
     );
   // Its cubbies: rows from the top down, columns across.
   const inner = H - kick - 2 * t;
@@ -4577,6 +4627,7 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^island_shaker/, kitchenIsland],
   [/^backsplash_/, backsplash],
   [/^bookshelf_open/, openBookshelf],
+  [/^slat_wall/, slatWall],
   [/^sink_delta_everest/, everestSink],
   [/^faucet_delta_nicoli/, nicoliFaucet],
   [/^sink_rack_/, sinkRack],

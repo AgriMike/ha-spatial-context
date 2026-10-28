@@ -2578,7 +2578,11 @@ function boulders(m: Model, rand: () => number, several: boolean): void {
 }
 
 function plantModel(m: Model, item: Item3d, o: Opts): boolean {
-  if (houseplant(m, item, o)) return true;
+  const spec = item.model?.plant;
+  PLANT.soil = null;
+  PLANT.lean = Math.max(-1.05, Math.min(1.05, spec?.lean ?? 0));
+  PLANT.wide = Math.max(0.5, Math.min(3, spec?.wide ?? 1));
+  if (houseplant(new Shaped(m), item, o)) return true;
   const rand = seeded(item.id);
   const form = str(o, "form", "");
   const tint = item.model?.tint ?? null;
@@ -2712,7 +2716,21 @@ const PLANT: {
   full: number;
   spread: number | null;
   r: number;
-} = { pot: null, shape: null, full: 1, spread: null, r: 0 };
+  /** Its soil's height once its pot is in (null before), its lean toward
+   * its front (radians) and its foliage's spread from the middle. */
+  soil: number | null;
+  lean: number;
+  wide: number;
+} = {
+  pot: null,
+  shape: null,
+  full: 1,
+  spread: null,
+  r: 0,
+  soil: null,
+  lean: 0,
+  wide: 1,
+};
 
 /** A count of leaves, fronds or branches, scaled by the plant's fullness. */
 const more = (n: number) => Math.max(1, Math.round(n * PLANT.full));
@@ -2737,7 +2755,10 @@ function pot(
   if (shape === "bowl") h = Math.min(h, r * 0.8);
   PLANT.r = r;
   // No pot: it grows from where it stands (set into another's soil).
-  if (shape === "none") return y;
+  if (shape === "none") {
+    PLANT.soil = y;
+    return y;
+  }
   const body = mat(color, opts.basket ? 0.95 : 0.55);
   if (shape === "square") {
     m.box(r * 1.8, h * 0.92, r * 1.8, x, y, z, body);
@@ -2762,6 +2783,7 @@ function pot(
       );
     }
   const soil = y + h * 0.93;
+  PLANT.soil = soil;
   if (shape === "square")
     m.box(r * 1.7, 0.012, r * 1.7, x, soil - 0.012, z, mat("#3a2a1f", 0.95));
   else
@@ -2776,6 +2798,36 @@ function pot(
       24,
     );
   return soil;
+}
+
+/** A model drawing into another, what grows over the pot's soil leaned
+ * toward its front (about the soil's middle) and spread wider from the
+ * middle as it rises (see PLANT). */
+class Shaped extends Model {
+  constructor(private readonly into: Model) {
+    super(into.W, into.D, into.H, false);
+  }
+  override add(g: THREE.BufferGeometry, material: THREE.Material): void {
+    const soil = PLANT.soil;
+    if (soil !== null && (PLANT.lean !== 0 || PLANT.wide !== 1)) {
+      const pos = g.getAttribute("position") as THREE.BufferAttribute;
+      const c = Math.cos(PLANT.lean);
+      const s = Math.sin(PLANT.lean);
+      // Spread in full a third of the way up its growth.
+      const ramp = Math.max(0.05, (this.H - soil) * 0.33);
+      for (let i = 0; i < pos.count; i++) {
+        const h = pos.getY(i) - soil;
+        if (h <= 0) continue;
+        const k = 1 + (PLANT.wide - 1) * Math.min(1, h / ramp);
+        const x = pos.getX(i) * k;
+        const z = pos.getZ(i) * k;
+        pos.setXYZ(i, x, soil + h * c - z * s, z * c + h * s);
+      }
+      pos.needsUpdate = true;
+      g.computeVertexNormals();
+    }
+    this.into.add(g, material);
+  }
 }
 
 /** A model drawing into another, raised by `dy` (a plant grown on its

@@ -4010,6 +4010,30 @@ export class Floorplan3dView extends LitElement {
         }),
       { unit: "%", min: 25, max: 300, step: 25, placeholder: "100" },
     )}
+    ${this._num(
+      L("plantLean"),
+      item.lean_deg ?? null,
+      (v) =>
+        set({
+          lean_deg:
+            v == null || v === 0 ? null : Math.max(-60, Math.min(60, v)),
+        }),
+      { unit: "°", min: -60, max: 60, step: 5, placeholder: "0" },
+    )}
+    ${this._num(
+      L("foliageSpread"),
+      item.foliage_spread == null
+        ? null
+        : Math.round(item.foliage_spread * 100),
+      (v) =>
+        set({
+          foliage_spread:
+            v == null || v === 100
+              ? null
+              : Math.max(50, Math.min(300, v)) / 100,
+        }),
+      { unit: "%", min: 50, max: 300, step: 10, placeholder: "100" },
+    )}
     ${
       catalogItem(item.kind)?.opts["kind"] === "monstera"
         ? this._num(
@@ -5158,15 +5182,68 @@ export class Floorplan3dView extends LitElement {
         ${entry?.id.startsWith("bookshelf_open") ? this._renderBookshelf(item, set) : nothing}
         ${
           entry?.draw === "floatingShelf"
-            ? this._select<"white_oak">(
+            ? this._select<"white_oak" | "walnut">(
                 localize("edit3d.finish"),
                 item.finish ?? null,
                 [
                   ["", localize("edit3d.finishColour")],
                   ["white_oak", localize("edit3d.finishWhiteOak")],
+                  ["walnut", localize("edit3d.finishWalnut")],
                 ],
                 (v) => set({ finish: v }),
               )
+            : nothing
+        }
+        ${
+          entry && /^(bookshelf_open|slat_wall)/.test(entry.id)
+            ? this._select<"white_oak" | "walnut">(
+                localize("edit3d.finish"),
+                item.finish ?? "white_oak",
+                [
+                  ["white_oak", localize("edit3d.finishWhiteOak")],
+                  ["walnut", localize("edit3d.finishWalnut")],
+                ],
+                (v) => set({ finish: v === "white_oak" ? null : v }),
+              )
+            : nothing
+        }
+        ${
+          entry?.id.startsWith("slat_wall")
+            ? html`${this._num(
+                localize("edit3d.slatWidth"),
+                item.slat_cm ?? null,
+                (v) =>
+                  set({
+                    slat_cm: v == null ? null : Math.max(0.5, Math.min(50, v)),
+                  }),
+                {
+                  unit: "cm",
+                  min: 0.5,
+                  max: 50,
+                  step: 0.1,
+                  placeholder: "2.7",
+                },
+              )}
+              ${this._num(
+                localize("edit3d.slatGap"),
+                item.slat_gap_cm ?? null,
+                (v) =>
+                  set({
+                    slat_gap_cm:
+                      v == null ? null : Math.max(0, Math.min(50, v)),
+                  }),
+                { unit: "cm", min: 0, max: 50, step: 0.1, placeholder: "1.3" },
+              )}
+              ${this._num(
+                localize("edit3d.openingGap"),
+                item.opening_gap_cm ?? null,
+                (v) =>
+                  set({
+                    opening_gap_cm:
+                      v == null ? null : Math.max(0, Math.min(50, v)),
+                  }),
+                { unit: "cm", min: 0, max: 50, placeholder: "0" },
+              )}`
             : nothing
         }
         ${entry?.id.startsWith("backsplash_") ? this._num(localize("edit3d.openingGap"), item.opening_gap_cm ?? null, (v) => set({ opening_gap_cm: v == null ? null : Math.max(0, Math.min(50, v)) }), { unit: "cm", min: 0, max: 50, placeholder: "0" }) : nothing}

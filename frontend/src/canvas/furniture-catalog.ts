@@ -463,6 +463,16 @@ const KITCHEN: Row[] = [
     "box",
     { h3d: 0.46, y3d: 0.92, tile: "#a6a8aa" },
   ],
+  // Wood slats on a black backing, hung like a backsplash: the slats'
+  // width, gap and wood set in the 3D editor.
+  [
+    "slat_wall",
+    "Slat wall (white oak or walnut slats on black)",
+    120,
+    2.4,
+    "box",
+    { h3d: 2.4, y3d: 0 },
+  ],
   [
     "backsplash_hex_tile_white",
     "Backsplash, small hex tile (white, dark grout)",

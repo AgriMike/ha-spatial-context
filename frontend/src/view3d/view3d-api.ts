@@ -185,7 +185,9 @@ export interface Item3d {
     doorTiers?: number;
     noTop?: boolean;
     /** A wood finish worn instead of a plain colour. */
-    finish?: "white_oak";
+    finish?: "white_oak" | "walnut";
+    /** A slat wall's slats set by hand: width and gap, metres. */
+    slats?: { width: number | null; gap: number | null };
     /** An open bookshelf's cubbies set by hand: their heights from the
      * top down (metres, the last row filling the rest), how many across,
      * and per cubby (row by row from the top left) how full of books it
@@ -207,6 +209,10 @@ export interface Item3d {
       full: number | null;
       /** How wide its leaves fan round its front, radians. */
       spread?: number | null;
+      /** Leaning toward its front, radians (back if negative), and its
+       * foliage spread wider from its middle (1 as grown). */
+      lean?: number | null;
+      wide?: number | null;
     };
     /** Undermount sinks' openings cut in its stone top, in its own frame
      * (before any flip): centre, size, turn and corner radius, metres. */

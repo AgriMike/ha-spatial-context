@@ -3954,7 +3954,9 @@ function buildFloor(
               ...(item.pot_cm != null ||
               item.pot_shape != null ||
               item.fullness != null ||
-              item.leaf_spread_deg != null
+              item.leaf_spread_deg != null ||
+              item.lean_deg != null ||
+              item.foliage_spread != null
                 ? {
                     plant: {
                       pot: item.pot_cm != null ? item.pot_cm / 100 : null,
@@ -3964,6 +3966,11 @@ function buildFloor(
                         item.leaf_spread_deg != null
                           ? (item.leaf_spread_deg * Math.PI) / 180
                           : null,
+                      lean:
+                        item.lean_deg != null
+                          ? (item.lean_deg * Math.PI) / 180
+                          : null,
+                      wide: item.foliage_spread ?? null,
                     },
                   }
                 : {}),
@@ -3979,6 +3986,17 @@ function buildFloor(
               ...(item.door_tiers ? { doorTiers: item.door_tiers } : {}),
               ...(item.countertop === false ? { noTop: true } : {}),
               ...(item.finish ? { finish: item.finish } : {}),
+              ...(item.slat_cm != null || item.slat_gap_cm != null
+                ? {
+                    slats: {
+                      width: item.slat_cm != null ? item.slat_cm / 100 : null,
+                      gap:
+                        item.slat_gap_cm != null
+                          ? item.slat_gap_cm / 100
+                          : null,
+                    },
+                  }
+                : {}),
               ...(item.shelves_cm != null ||
               item.columns != null ||
               item.books != null ||
@@ -4198,7 +4216,8 @@ interface OpeningFace {
   t: number;
 }
 
-/** A backsplash stops round a window (or door) in the wall behind it, a
+/** A backsplash (or a slat wall) stops round a window (or door) in the
+ * wall behind it, a
  * gap set on it short of its casing: the openings of every floor (one
  * hung down from the floor above still meets the kitchen's window), their
  * heights above this floor's level. */
@@ -4208,7 +4227,7 @@ function stopRoundOpenings(
   openingFaces: OpeningFace[],
 ): void {
   for (const sp of items) {
-    if (!sp.model?.kind.startsWith("backsplash_")) continue;
+    if (!sp.model || !/^(backsplash_|slat_wall)/.test(sp.model.kind)) continue;
     const pad =
       Math.max(0, furniture.find((f) => f.id === sp.id)?.opening_gap_cm ?? 0) /
       100;

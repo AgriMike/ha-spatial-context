@@ -313,7 +313,22 @@ _FURNITURE_SCHEMA = {
     ),
     vol.Optional("countertop"): vol.Any(None, bool),
     # A wood finish worn instead of a plain colour (a floating shelf).
-    vol.Optional("finish"): vol.Any(None, vol.In(["white_oak"])),
+    vol.Optional("finish"): vol.Any(None, vol.In(["white_oak", "walnut"])),
+    # A slat wall's slats: how wide each is and the gap between, cm.
+    vol.Optional("slat_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=0.5, max=50))
+    ),
+    vol.Optional("slat_gap_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=0, max=50))
+    ),
+    # A houseplant leaning (degrees toward its front, back if negative)
+    # and its foliage spread wider from its middle (1 as grown).
+    vol.Optional("lean_deg"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=-60, max=60))
+    ),
+    vol.Optional("foliage_spread"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=0.5, max=3))
+    ),
     # An open bookshelf's cubbies: their heights from the top down (cm,
     # the last filling what's left), how many across, and per cubby (row
     # by row from the top left) how full of books it is (0-1) and which
