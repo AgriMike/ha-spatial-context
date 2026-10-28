@@ -472,6 +472,7 @@ const ROOM_FINISH_KEYS = [
   "floor_color",
   "wall_finish",
   "wall_color",
+  "ceiling",
 ] as const;
 const ITEM_FINISH_KEYS = [
   "height_cm",

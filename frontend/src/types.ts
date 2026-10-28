@@ -36,6 +36,9 @@ export interface Room {
   floor_color?: string | null;
   wall_finish?: WallFinishKind | null;
   wall_color?: string | null;
+  /** Its ceiling under the drawn roof: vaulted up the roof's underside
+   * (unset: vaulted), or flat at its walls' height. */
+  ceiling?: "vaulted" | "flat" | null;
   /** What this room's live light shading follows, besides its own
    * `area_id`: other HA areas (an open-plan space spanning two), other
    * rooms on this floor (whose lights it shows too), and specific light

@@ -5098,6 +5098,15 @@ export class Floorplan3dView extends LitElement {
         (v) => set({ wall_finish: v }),
       )}
       ${this._color(localize("edit3d.wallColor"), room.wall_color, (v) => set({ wall_color: v }))}
+      ${this._select<"vaulted" | "flat">(
+        localize("edit3d.ceiling"),
+        room.ceiling ?? null,
+        [
+          ["", localize("edit3d.ceilingVaulted")],
+          ["flat", localize("edit3d.ceilingFlat")],
+        ],
+        (v) => set({ ceiling: v }),
+      )}
       <div class="divider"></div>
       ${this._num(localize("edit3d.floorLevel"), (room.floor_offset_m ?? 0) * 100, (v) => set({ floor_offset_m: v ? v / 100 : null }), { unit: "cm", step: 1 })}
       <span class="hint">${localize("edit3d.roomHint")}</span>`;

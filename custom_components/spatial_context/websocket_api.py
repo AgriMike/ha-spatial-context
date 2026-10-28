@@ -111,6 +111,8 @@ _ROOM_SCHEMA = {
         vol.In(["paint", "tile", "brick", "wood", "wallpaper", "stone", "shiplap"]),
     ),
     vol.Optional("wall_color"): vol.Any(vol.Match(r"^#[0-9a-fA-F]{6}$"), None),
+    # Its ceiling under the roof: vaulted (unset) or flat.
+    vol.Optional("ceiling"): vol.Any(None, vol.In(["vaulted", "flat"])),
 }
 
 _PIN_SCHEMA = {

@@ -307,6 +307,58 @@ function indoorOnly<M extends THREE.Material>(mat: M): M {
   return mat;
 }
 
+/** A planar face's triangles, its winding kept: fanned from its first
+ * corner when it's convex, else cut properly (a face a roof's cut left
+ * L-shaped, say, would fan across its notch). */
+function faceTriangles(
+  pts: [number, number, number][],
+): [number, number, number][][] {
+  if (pts.length < 3) return [];
+  // Its normal (Newell), and the plane it's drawn in for the cut.
+  let nx = 0;
+  let ny = 0;
+  let nz = 0;
+  pts.forEach((p, k) => {
+    const q = pts[(k + 1) % pts.length]!;
+    nx += (p[1] - q[1]) * (p[2] + q[2]);
+    ny += (p[2] - q[2]) * (p[0] + q[0]);
+    nz += (p[0] - q[0]) * (p[1] + q[1]);
+  });
+  const [ax, ay, az] = [Math.abs(nx), Math.abs(ny), Math.abs(nz)];
+  const flat = (p: [number, number, number]): THREE.Vector2 =>
+    ax >= ay && ax >= az
+      ? new THREE.Vector2(p[1], p[2])
+      : ay >= az
+        ? new THREE.Vector2(p[2], p[0])
+        : new THREE.Vector2(p[0], p[1]);
+  const ring = pts.map(flat);
+  const ccw = THREE.ShapeUtils.isClockWise(ring) === false;
+  // Convex: every corner turns the same way.
+  const convex = ring.every((p, k) => {
+    const q = ring[(k + 1) % ring.length]!;
+    const r = ring[(k + 2) % ring.length]!;
+    const c = (q.x - p.x) * (r.y - q.y) - (q.y - p.y) * (r.x - q.x);
+    return ccw ? c >= -1e-9 : c <= 1e-9;
+  });
+  if (convex) {
+    const out: [number, number, number][][] = [];
+    for (let k = 1; k + 1 < pts.length; k++)
+      out.push([pts[0]!, pts[k]!, pts[k + 1]!]);
+    return out;
+  }
+  return THREE.ShapeUtils.triangulateShape(ring, []).map((t) => {
+    const [i, j, k] = t as [number, number, number];
+    // Wound as the face is.
+    const a = ring[i]!;
+    const b = ring[j]!;
+    const c = ring[k]!;
+    const cw = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) < 0;
+    return cw === !ccw
+      ? [pts[i]!, pts[j]!, pts[k]!]
+      : [pts[i]!, pts[k]!, pts[j]!];
+  });
+}
+
 /** The walls' material: vertex colours, and each face's covering from the
  * atlas, tiled across it in metres; the outdoor fixtures' spotlights
  * light only their outside faces (`indoor` 0). */
@@ -451,8 +503,8 @@ function roofGeometry(roof: Roof3d): THREE.BufferGeometry {
       across = new THREE.Vector3(0, 1, 0).cross(n).normalize();
       down = n.clone().cross(across).normalize();
     }
-    for (let k = 0; k + 1 < rest.length; k++)
-      for (const v of [p0!, rest[k]!, rest[k + 1]!]) {
+    for (const tri of faceTriangles(face.points))
+      for (const v of tri) {
         pos.push(v[0], v[1], v[2]);
         col.push(c.r, c.g, c.b);
         uv.push(
@@ -2631,7 +2683,11 @@ function createView3d(options: View3dOptions): View3dHandle {
             : spec.sidingColor,
         roughness: slab.lid ? 0.92 : 0.9,
       });
-      const mesh = new THREE.Mesh(geom, [mat, edge]);
+      // (A ceiling's edge lit as its underside is, so no band shows.)
+      const mesh = new THREE.Mesh(geom, [
+        mat,
+        slab.lid ? ceilingLit(edge.clone()) : edge,
+      ]);
       mesh.name = slab.name || `Room ${slab.id}`;
       if (!slab.lid) mesh.userData["roomId"] = slab.id;
       mesh.receiveShadow = true;

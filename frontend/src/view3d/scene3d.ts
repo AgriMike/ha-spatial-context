@@ -326,6 +326,16 @@ const ABOVE_SLIVER_M = 0.06;
 /** A ledge's lid over a closet: how far its top sits below the walls'
  * tops, so it reads as one surface with them without fighting them. */
 const LID_DROP_M = 0.001;
+/** A stairwell (open space in a house that's no room) is at least this
+ * clear of every room, not a sliver between a room's edge and the walls'
+ * outline: the spot and 5 cm each way. */
+const STAIRWELL_REACH: [number, number][] = [
+  [0, 0],
+  [0.05, 0],
+  [-0.05, 0],
+  [0, 0.05],
+  [0, -0.05],
+];
 /** How far a vaulted ceiling stays under the roof's surface: past its
  * fascia's depth. */
 const VAULT_CLEAR_M = 0.2;
@@ -774,6 +784,15 @@ function buildFloor(
     /** The highest ceiling (its walls' top, metres above this floor's
      * level) of a lower floor's indoor room over a spot, else null. */
     lowerCeiling: (x: number, z: number) => number | null;
+    /** Whether a spot is inside a lower floor's house (its walls' closed
+     * outline): open down to it where this floor has no room. */
+    lowerHouse: (x: number, z: number) => boolean;
+    /** The corners (x and z, metres) of the rooms of the floors above, so
+     * a stairwell's vault runs square to them. */
+    upperLines: { xs: number[]; zs: number[] };
+    /** Whether a room of a floor above covers a spot (not a staircase
+     * drawn up there: that's the stairwell's). */
+    upperRoom: (x: number, z: number) => boolean;
     /** The highest planned roof surface at a spot that lies below `y`
      * (metres above this floor's level), else null. */
     roofBelow: (x: number, z: number, y: number) => number | null;
@@ -2877,6 +2896,37 @@ function buildFloor(
   // open to look into). One that a room above covers only in part is left
   // open.
   const vaults: { id: string; positions: number[] }[] = [];
+  // Open space inside the house that's no room on any floor (a
+  // stairwell): vaulted as one with the rooms open to it (see below).
+  const houseLoops = houseLoopsOf(layout);
+  // A vault's grid: through every corner, no wider than 30 cm.
+  const axis = (vals: number[]) => {
+    const u = [...new Set(vals.map((v) => Math.round(v * 1000) / 1000))].sort(
+      (a, b) => a - b,
+    );
+    const out: number[] = [];
+    u.forEach((v, i) => {
+      out.push(v);
+      const next = u[i + 1];
+      if (next === undefined) return;
+      const n = Math.ceil((next - v) / 0.3);
+      for (let k = 1; k < n; k++) out.push(v + ((next - v) * k) / n);
+    });
+    return out;
+  };
+  /** The vault's height at a spot over a room whose walls stop at `level`
+   * (clear of the roof's rafters, and its fascia where an eave runs on
+   * inside). */
+  const vaultY = (level: number, x: number, z: number) => {
+    const r = exterior.vaultAt(x, z);
+    return r === null ? level : Math.max(level, r - VAULT_CLEAR_M);
+  };
+  const stairwell = (x: number, z: number) =>
+    houseLoops.some((loop) => pointInPolygon(x / m, z / m, loop)) &&
+    !layout.rooms.some(
+      (o) => o.points.length >= 3 && pointInPolygon(x / m, z / m, o.points),
+    ) &&
+    !exterior.upperRoom(x, z);
   if (exterior.roofShown)
     for (const room of layout.rooms) {
       if (room.outdoor || room.points.length < 3) continue;
@@ -2897,30 +2947,9 @@ function buildFloor(
         }
       if (covered) continue;
       const level = (room.floor_offset_m ?? 0) + H;
+      const flatSet = room.ceiling === "flat";
       const pts = room.points.map(([x, y]): Vec2 => [x * m, y * m]);
-      // The vault's height at a spot.
-      const raw = (x: number, z: number) => {
-        const r = exterior.vaultAt(x, z);
-        // Clear of the roof's rafters and its fascia where an eave runs
-        // on inside.
-        return r === null ? level : Math.max(level, r - VAULT_CLEAR_M);
-      };
-      const vy = raw;
-      // Its grid: through every corner, no wider than 30 cm.
-      const axis = (vals: number[]) => {
-        const u = [
-          ...new Set(vals.map((v) => Math.round(v * 1000) / 1000)),
-        ].sort((a, b) => a - b);
-        const out: number[] = [];
-        u.forEach((v, i) => {
-          out.push(v);
-          const next = u[i + 1];
-          if (next === undefined) return;
-          const n = Math.ceil((next - v) / 0.3);
-          for (let k = 1; k < n; k++) out.push(v + ((next - v) * k) / n);
-        });
-        return out;
-      };
+      const vy = (x: number, z: number) => vaultY(level, x, z);
       // Through the dormers' and the roof's sections' edges too, so a step
       // falls square on them.
       const [bx0, bx1] = [
@@ -2982,7 +3011,7 @@ function buildFloor(
               [1, 1],
             ] as const)
               peak = Math.max(peak, corner(i, j, ci, cj)[1]!);
-      if (peak > level + 0.05) {
+      if (!flatSet && peak > level + 0.05) {
         const pos: number[] = [];
         /** A quad between two edges (each from its start to its end),
          * where their heights differ: each half only where its end does
@@ -3067,10 +3096,11 @@ function buildFloor(
             const y = vy(p[0] + nx * 0.01, p[1] + nz * 0.01);
             return y > level + 0.005 ? y + 0.04 : y;
           };
-          // Open (no wall) to another room at its level beyond it: one
-          // space, its vault carrying on over (not to a stairwell, or a
+          // Open (no wall) to another room at its level beyond it, or a
+          // stairwell: one space, its vault carrying on over (not to a
           // room a step down, which it closes off over).
           const openTo = ([x, z]: Vec2) =>
+            stairwell(x - nx * 0.15, z - nz * 0.15) ||
             layout.rooms.some(
               (o) =>
                 o !== room &&
@@ -3133,13 +3163,107 @@ function buildFloor(
               if (in0 < b0 + 0.005 && in1 < b1 + 0.005) continue;
             } else if (Math.max(y0, y1) < level + 0.005) continue;
             const [f0, f1] = [Math.min(b0, y0), Math.min(b1, y1)];
-            pos.push(p0[0], f0, p0[1], p1[0], f1, p1[1], p1[0], y1, p1[1]);
-            pos.push(p0[0], f0, p0[1], p1[0], y1, p1[1], p0[0], y0, p0[1]);
+            // A hair inside its own room (another's beside it, on the far
+            // side of the same wall, doesn't fight it).
+            const [ix, iz] = open ? [0, 0] : [nx * 0.01, nz * 0.01];
+            const [a0, a1] = [p0[0] + ix, p0[1] + iz];
+            const [c0, c1] = [p1[0] + ix, p1[1] + iz];
+            pos.push(a0, f0, a1, c0, f1, c1, c0, y1, c1);
+            pos.push(a0, f0, a1, c0, y1, c1, a0, y0, a1);
           }
         });
         vaults.push({ id: `${room.id}:vault`, positions: pos });
         continue;
       }
+      // Up to a higher ceiling beyond it: a vaulted room of its own beside
+      // it, or a lower floor's house open below (a stairwell).
+      const face: number[] = [];
+      pts.forEach((a, k) => {
+        const b = pts[(k + 1) % pts.length]!;
+        const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (len < 0.01) return;
+        let [nx, nz] = [(a[1] - b[1]) / len, (b[0] - a[0]) / len];
+        const mid: Vec2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        if (!pointInPolygon(mid[0] + nx * 0.01, mid[1] + nz * 0.01, pts))
+          [nx, nz] = [-nx, -nz];
+        const beyond = (p: Vec2): number | null => {
+          const x = p[0] - nx * 0.15;
+          const z = p[1] - nz * 0.15;
+          const other = layout.rooms.find(
+            (o) =>
+              o !== room &&
+              !o.outdoor &&
+              o.points.length >= 3 &&
+              pointInPolygon(x / m, z / m, o.points),
+          );
+          // (Its height at the edge itself, where it meets this face.)
+          if (other) {
+            const ol = (other.floor_offset_m ?? 0) + H;
+            return other.ceiling === "flat" ? ol : vaultY(ol, p[0], p[1]);
+          }
+          return exterior.lowerHouse(x, z) ? vaultY(level, p[0], p[1]) : null;
+        };
+        const at = (t: number): Vec2 => [
+          a[0] + (b[0] - a[0]) * t,
+          a[1] + (b[1] - a[1]) * t,
+        ];
+        // What lies beyond (a room, open below, or neither): pieces end
+        // where it changes, so none spans two (and slopes across).
+        const kind = (t: number) => {
+          const [x, z] = at(t);
+          const bx = x - nx * 0.15;
+          const bz = z - nz * 0.15;
+          const other = layout.rooms.find(
+            (o) =>
+              o !== room &&
+              !o.outdoor &&
+              o.points.length >= 3 &&
+              pointInPolygon(bx / m, bz / m, o.points),
+          );
+          return other ? other.id : exterior.lowerHouse(bx, bz) ? "open" : "";
+        };
+        const n = Math.max(1, Math.ceil(len / 0.25));
+        const ts: number[] = [0];
+        for (let s = 1; s <= n; s++) {
+          let [lo, hi] = [ts[ts.length - 1]!, s / n];
+          if (kind(lo + 1e-4) !== kind(hi - 1e-4)) {
+            const k0 = kind(lo + 1e-4);
+            for (let it = 0; it < 20; it++) {
+              const midT = (lo + hi) / 2;
+              if (kind(midT) === k0) lo = midT;
+              else hi = midT;
+            }
+            ts.push((lo + hi) / 2);
+          }
+          ts.push(s / n);
+        }
+        // (Each end sampled a centimetre in: at a corner the spot beyond
+        // may fall on a neighbour's edge.)
+        const hair = 0.01 / len;
+        for (let s = 0; s + 1 < ts.length; s++) {
+          const [ta, tb] = [ts[s]!, ts[s + 1]!];
+          if (tb - ta < 1e-6) continue;
+          const p0 = at(ta);
+          const p1 = at(tb);
+          const span = Math.min(hair, (tb - ta) / 4);
+          const [t0, t1] = [beyond(at(ta + span)), beyond(at(tb - span))];
+          if (t0 === null || t1 === null) continue;
+          if (Math.max(t0, t1) < level + 0.01) continue;
+          const [y0, y1] = [
+            Math.max(level, t0) + 0.04,
+            Math.max(level, t1) + 0.04,
+          ];
+          // Down over the ceiling's own edge (its 4 cm slab), a hair out
+          // past it, so the two read as one face.
+          const lo = level - LID_DROP_M - 0.05;
+          const [ox, oz] = [-nx * 0.003, -nz * 0.003];
+          const [a0, a1] = [p0[0] + ox, p0[1] + oz];
+          const [c0, c1] = [p1[0] + ox, p1[1] + oz];
+          face.push(a0, lo, a1, c0, lo, c1, c0, y1, c1);
+          face.push(a0, lo, a1, c0, y1, c1, a0, y0, a1);
+        }
+      });
+      if (face.length) vaults.push({ id: `${room.id}:step`, positions: face });
       slabs.push({
         id: `${room.id}:ceiling`,
         name: `${room.name} ceiling`,
@@ -3154,6 +3278,90 @@ function buildFloor(
         lid: true,
       });
     }
+
+  // The stairwell's: over this floor's house where no room on any floor
+  // is, at this floor's walls' height, down to them along a wall.
+  if (exterior.roofShown && houseLoops.length) {
+    const lp = houseLoops.flat().map(([x, y]): Vec2 => [x * m, y * m]);
+    const [bx0, bx1] = [
+      Math.min(...lp.map((p) => p[0])),
+      Math.max(...lp.map((p) => p[0])),
+    ];
+    const [bz0, bz1] = [
+      Math.min(...lp.map((p) => p[1])),
+      Math.max(...lp.map((p) => p[1])),
+    ];
+    const roomPts = layout.rooms.flatMap((r) =>
+      r.points.map(([x, y]): Vec2 => [x * m, y * m]),
+    );
+    const gx = axis(
+      [
+        ...lp.map((p) => p[0]),
+        ...roomPts.map((p) => p[0]),
+        ...exterior.upperLines.xs,
+        ...exterior.roofLines.xs,
+      ].filter((x) => x >= bx0 && x <= bx1),
+    );
+    const gz = axis(
+      [
+        ...lp.map((p) => p[1]),
+        ...roomPts.map((p) => p[1]),
+        ...exterior.upperLines.zs,
+        ...exterior.roofLines.zs,
+      ].filter((z) => z >= bz0 && z <= bz1),
+    );
+    // (Not a sliver between a room's edge and the walls' outline.)
+    const open = gz
+      .slice(0, -1)
+      .map((z, j) =>
+        gx
+          .slice(0, -1)
+          .map(
+            (x, i) =>
+              gx[i + 1]! - x > 0.05 &&
+              gz[j + 1]! - z > 0.05 &&
+              stairwell((x + gx[i + 1]!) / 2, (z + gz[j + 1]!) / 2),
+          ),
+      );
+    const cell = (i: number, j: number) => !!open[j]?.[i];
+    const vy = (x: number, z: number) => vaultY(H, x, z);
+    const pos: number[] = [];
+    for (let j = 0; j + 1 < gz.length; j++)
+      for (let i = 0; i + 1 < gx.length; i++) {
+        if (!cell(i, j)) continue;
+        const P = (ii: number, jj: number) => [
+          gx[ii]!,
+          vy(gx[ii]!, gz[jj]!),
+          gz[jj]!,
+        ];
+        pos.push(...P(i, j), ...P(i + 1, j), ...P(i + 1, j + 1));
+        pos.push(...P(i, j), ...P(i + 1, j + 1), ...P(i, j + 1));
+        // Down to the walls' height where it meets the house's own wall
+        // (beyond it, outside: no room, nothing above).
+        const edge = (a: [number, number], b: [number, number], o: Vec2) => {
+          const [ox, oz] = o;
+          if (
+            houseLoops.some((loop) => pointInPolygon(ox / m, oz / m, loop)) ||
+            exterior.upperRoom(ox, oz)
+          )
+            return;
+          const A = P(...a);
+          const B = P(...b);
+          if (Math.max(A[1]!, B[1]!) < H + 0.005) return;
+          pos.push(A[0]!, H, A[2]!, B[0]!, H, B[2]!, ...B);
+          pos.push(A[0]!, H, A[2]!, ...B, ...A);
+        };
+        const cx = (gx[i]! + gx[i + 1]!) / 2;
+        const cz = (gz[j]! + gz[j + 1]!) / 2;
+        if (!cell(i - 1, j)) edge([i, j], [i, j + 1], [gx[i]! - 0.15, cz]);
+        if (!cell(i + 1, j))
+          edge([i + 1, j], [i + 1, j + 1], [gx[i + 1]! + 0.15, cz]);
+        if (!cell(i, j - 1)) edge([i, j], [i + 1, j], [cx, gz[j]! - 0.15]);
+        if (!cell(i, j + 1))
+          edge([i, j + 1], [i + 1, j + 1], [cx, gz[j + 1]! + 0.15]);
+      }
+    if (pos.length) vaults.push({ id: "stairwell:vault", positions: pos });
+  }
 
   // Furniture.
   const states = computeItemStates(layout.furniture, hass);
@@ -3820,6 +4028,38 @@ export function buildScene(input: SceneInput): Scene3d {
             );
           }),
         below: belowOf(f, input.context ?? input.floors),
+        lowerHouse: (x, z) =>
+          (input.context ?? input.floors).some((g) => {
+            if (g.baseY >= f.baseY - 0.3) return false;
+            const gm = metersPerUnit(g.layout.scale);
+            return houseLoopsOf(g.layout).some((loop) =>
+              pointInPolygon(x / gm, z / gm, loop),
+            );
+          }),
+        upperRoom: (x, z) =>
+          (input.context ?? input.floors).some((g) => {
+            if (g.baseY <= f.baseY + 0.5) return false;
+            const gm = metersPerUnit(g.layout.scale);
+            return g.layout.rooms.some(
+              (r) =>
+                !r.outdoor &&
+                r.points.length >= 3 &&
+                pointInPolygon(x / gm, z / gm, r.points),
+            );
+          }),
+        upperLines: (() => {
+          const out = { xs: [] as number[], zs: [] as number[] };
+          for (const g of input.context ?? input.floors) {
+            if (g.baseY <= f.baseY + 0.5) continue;
+            const gm = metersPerUnit(g.layout.scale);
+            for (const r of g.layout.rooms)
+              for (const [x, y] of r.points) {
+                out.xs.push(x * gm);
+                out.zs.push(y * gm);
+              }
+          }
+          return out;
+        })(),
         lowerCeiling: (x, z) => {
           let best: number | null = null;
           for (const g of input.context ?? input.floors) {
@@ -4460,6 +4700,7 @@ function plannedRoof(
           y0,
           ceiling: y0 + f.wallHeight,
           y1: y0 + f.wallHeight + 0.6,
+          flat: r.ceiling === "flat",
           poly: r.points.map(([x, y]): Vec2 => [x * fm, y * fm]),
         };
       });
@@ -4483,11 +4724,12 @@ function plannedRoof(
     const over = indoor.filter(
       (o) => o.y0 > r.y0 + 1 && insidePoly(o.poly, cx, cz),
     );
-    if (over.length)
+    if (over.length || r.flat)
       return {
         ...r,
-        top: Math.min(...over.map((o) => o.y0)),
+        top: over.length ? Math.min(...over.map((o) => o.y0)) : r.ceiling,
         topAt: undefined as ((x: number, z: number) => number) | undefined,
+        only: undefined as ((x: number, z: number) => boolean) | undefined,
       };
     return {
       ...r,
@@ -4496,8 +4738,48 @@ function plannedRoof(
         const h = lowestRoof(x, z);
         return h === null ? r.ceiling : Math.max(r.ceiling, h - VAULT_CLEAR_M);
       },
+      only: undefined as ((x: number, z: number) => boolean) | undefined,
     };
   });
+  // A stairwell (in a floor's house, no room on any floor): vaulted up
+  // from that floor's walls' height, as its rooms are.
+  const roomAt = (x: number, z: number) =>
+    floorsAll.some((f) => {
+      const fm = metersPerUnit(f.layout.scale);
+      return f.layout.rooms.some(
+        (r) => r.points.length >= 3 && pointInPolygon(x / fm, z / fm, r.points),
+      );
+    });
+  const noRoom = (x: number, z: number) =>
+    !STAIRWELL_REACH.some(([dx, dz]) => roomAt(x + dx, z + dz));
+  for (const f of floorsAll) {
+    const fm = metersPerUnit(f.layout.scale);
+    const ceiling = f.baseY + f.wallHeight;
+    for (const loop of houseLoopsOf(f.layout)) {
+      const poly = loop.map(([x, y]): Vec2 => [x * fm, y * fm]);
+      // (Away from the outside walls: an eave's end there is the house's
+      // edge, not over a stairwell.)
+      const inward = (x: number, z: number) =>
+        noRoom(x, z) &&
+        poly.every((p, k) => {
+          const q = poly[(k + 1) % poly.length]!;
+          return pointToSegmentDistance(x, z, p[0], p[1], q[0], q[1]) > 0.3;
+        });
+      stacked.push({
+        y0: f.baseY,
+        ceiling,
+        y1: ceiling + 0.6,
+        flat: false,
+        poly,
+        top: ceiling,
+        topAt: (x: number, z: number) => {
+          const h = lowestRoof(x, z);
+          return h === null ? ceiling : Math.max(ceiling, h - VAULT_CLEAR_M);
+        },
+        only: inward,
+      });
+    }
+  }
   // The rooms whose floors are above an eave: a roof there is cut away
   // inside them (it runs on under their floors, hidden).
   const roomsOver = (eave: number) =>
@@ -4756,7 +5038,8 @@ function plannedRoof(
             (r) =>
               y > r.y0 + 0.01 &&
               y < (r.topAt ? r.topAt(x, z) : r.top) - 0.01 &&
-              insidePoly(r.poly, x, z),
+              insidePoly(r.poly, x, z) &&
+              (!r.only || r.only(x, z)),
           ),
         );
       });
@@ -4876,6 +5159,7 @@ function indoorStrips(
     top: number;
     poly: Vec2[];
     topAt?: ((x: number, z: number) => number) | undefined;
+    only?: ((x: number, z: number) => boolean) | undefined;
   }[],
 ): Vec2[][] {
   const o = s.overhang;
@@ -4897,7 +5181,8 @@ function indoorStrips(
       .map((r) => ({
         poly: r.poly,
         under: (x: number, z: number) =>
-          !r.topAt || lowAt(x, z) - VAULT_CLEAR_M < r.topAt(x, z) - 0.05,
+          (!r.only || r.only(x, z)) &&
+          (!r.topAt || lowAt(x, z) - VAULT_CLEAR_M < r.topAt(x, z) - 0.05),
       }));
   const drop = ROOF_HEEL_M - s.pitch * o;
   const ridge = Math.max(s.eave0, s.eave1) + (s.pitch * (s.c1 - s.c0)) / 2;
@@ -5388,6 +5673,17 @@ function upperWallsOf(floor: FloorInput, floors: FloorInput[]): UpperWall[] {
 
 /** For one floor: the height (metres above its level) of the lowest floor
  * above that has a room over a point on the floor plane, else null. */
+/** A floor's house: its walls' closed outlines (plan units). */
+function houseLoopsOf(layout: FloorLayout): [number, number][][] {
+  return layout.walls
+    .filter(
+      (w) =>
+        w.points.length >= 4 &&
+        distance(...w.points[0]!, ...w.points[w.points.length - 1]!) < 1,
+    )
+    .map((w) => w.points);
+}
+
 function floorAboveOf(
   floor: FloorInput,
   floors: FloorInput[],
