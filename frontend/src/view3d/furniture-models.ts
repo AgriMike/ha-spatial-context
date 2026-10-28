@@ -1103,6 +1103,112 @@ const cabinet: Builder = (m, o, tint, item) => {
 /** White oak shaker cabinets' wood. */
 const WHITE_OAK = "#d3b98f";
 
+/** White oak's grain: a pale warm board with fine darker streaks along it
+ * and a few faint rays, one repeat `OAK_REPEAT` metres along and across
+ * (see grainBox), seamless both ways. */
+const OAK_REPEAT: [number, number] = [1.2, 0.3];
+let oakTexture: THREE.Texture | null = null;
+function oakGrainTexture(): THREE.Texture {
+  if (oakTexture) return oakTexture;
+  const cv = document.createElement("canvas");
+  cv.width = 1024;
+  cv.height = 256;
+  const ctx = cv.getContext("2d");
+  if (ctx) {
+    const { width: w, height: h } = cv;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+    let seed = 11;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    // Streaks: gentle waves whose periods fit the width, drawn again a
+    // repeat up and down so they wrap.
+    for (let k = 0; k < 70; k++) {
+      const y0 = rnd() * h;
+      const amp = 2 + rnd() * 7;
+      const per = w / (1 + Math.floor(rnd() * 3));
+      const ph = rnd() * Math.PI * 2;
+      ctx.strokeStyle = `rgba(92,62,30,${0.03 + rnd() * 0.08})`;
+      ctx.lineWidth = 0.6 + rnd() * 2.2;
+      for (const dy of [-h, 0, h]) {
+        ctx.beginPath();
+        for (let x = 0; x <= w; x += 8) {
+          const y = y0 + dy + amp * Math.sin((x / per) * Math.PI * 2 + ph);
+          if (x) ctx.lineTo(x, y);
+          else ctx.moveTo(x, y);
+        }
+        ctx.stroke();
+      }
+    }
+    // Rays: short pale flecks across the grain.
+    for (let k = 0; k < 140; k++) {
+      ctx.fillStyle = `rgba(255,248,232,${0.12 + rnd() * 0.18})`;
+      ctx.fillRect(rnd() * w, rnd() * h, 6 + rnd() * 18, 1 + rnd() * 1.5);
+    }
+  }
+  oakTexture = new THREE.CanvasTexture(cv);
+  oakTexture.colorSpace = THREE.SRGBColorSpace;
+  oakTexture.wrapS = THREE.RepeatWrapping;
+  oakTexture.wrapT = THREE.RepeatWrapping;
+  oakTexture.anisotropy = 4;
+  return oakTexture;
+}
+
+const OAK_MATS = new Map<string, THREE.MeshStandardMaterial>();
+/** White oak, grained (a colour picked tints it). */
+function oakMaterial(tint: string | null = null): THREE.MeshStandardMaterial {
+  const key = tint ?? WHITE_OAK;
+  let m = OAK_MATS.get(key);
+  if (!m) {
+    m = new THREE.MeshStandardMaterial({
+      map: oakGrainTexture(),
+      color: key,
+      roughness: 0.6,
+    });
+    OAK_MATS.set(key, m);
+  }
+  return m;
+}
+
+/** A box (as Model.box) in a grained wood laid at its real size (texture
+ * coordinates in metres), so a long piece and a short one show the same
+ * grain, lined up across pieces; the grain along x, or up (`upright`). */
+function grainBox(
+  m: Model,
+  w: number,
+  h: number,
+  d: number,
+  x: number,
+  y: number,
+  z: number,
+  wood: THREE.Material,
+  upright = false,
+): void {
+  if (w <= 0 || h <= 0 || d <= 0) return;
+  const g = new THREE.BoxGeometry(w, h, d);
+  g.translate(x, y + h / 2, z);
+  const pos = g.getAttribute("position") as THREE.BufferAttribute;
+  const nor = g.getAttribute("normal") as THREE.BufferAttribute;
+  const uv = g.getAttribute("uv") as THREE.BufferAttribute;
+  for (let i = 0; i < pos.count; i++) {
+    const [px, py, pz] = [pos.getX(i), pos.getY(i), pos.getZ(i)];
+    const [nx, ny] = [Math.abs(nor.getX(i)), Math.abs(nor.getY(i))];
+    // Along the grain, then across it, on each face.
+    const [a, b] = upright
+      ? nx > 0.5
+        ? [py, pz]
+        : ny > 0.5
+          ? [pz, px]
+          : [py, px]
+      : nx > 0.5
+        ? [pz, py]
+        : ny > 0.5
+          ? [px, pz]
+          : [px, py];
+    uv.setXY(i, a / OAK_REPEAT[0], b / OAK_REPEAT[1]);
+  }
+  m.add(g, wood);
+}
+
 /** A shaker front (a door or a drawer) `w` × `h` standing on `y`, its
  * face at `z`: a frame of stiles and rails round a recessed panel; a
  * short drawer's a plain slab. */
@@ -1224,7 +1330,9 @@ const shaker: Builder = (m, o, tint, item) => {
   }
   const wood = mat(oak, 0.6);
   const panel = mat(shade(oak, 0.93), 0.65);
-  const counter = type === "base" || type === "drawers" || type === "sink";
+  const counter =
+    (type === "base" || type === "drawers" || type === "sink") &&
+    !item.model?.noTop;
   const kick = type === "wall" ? 0 : 0.1;
   const top = counter ? 0.03 : 0;
   const t = 0.019;
@@ -1295,9 +1403,19 @@ const shaker: Builder = (m, o, tint, item) => {
   const doorH = y - y0;
   if (doors > 0 && doorH > 0.05) {
     // A tall pantry's doors in two tiers: tall ones below, a short pair
-    // above (a third of the way, lined up with the wall cabinets).
+    // above (a third of the way, lined up with the wall cabinets); as set
+    // on the item, one tier or two halves.
+    const set = item.model?.doorTiers;
     const tiers =
-      type === "tall" && doorH > 1.6 ? [doorH * 0.66, doorH * 0.34] : [doorH];
+      set === 1
+        ? [doorH]
+        : set === 2
+          ? type === "tall" && doorH > 1.6
+            ? [doorH * 0.66, doorH * 0.34]
+            : [doorH / 2, doorH / 2]
+          : type === "tall" && doorH > 1.6
+            ? [doorH * 0.66, doorH * 0.34]
+            : [doorH];
     let ty = y0;
     tiers.forEach((th, tier) => {
       const dw = W / doors;
@@ -1306,12 +1424,23 @@ const shaker: Builder = (m, o, tint, item) => {
         const x = -W / 2 + dw * (k + 0.5);
         shakerFront(m, x, ty + gap / 2, dw - gap, th - gap, face, wood, panel);
         // The pull by the door's free edge: the pair's middle, else its
-        // right; high on a base, low on a wall cabinet.
-        const edge = doors === 1 ? 1 : k % 2 === 0 ? 1 : -1;
+        // right (or all on the side set, as seen from the front however
+        // it's mirrored); high on a base, low on a wall cabinet.
+        const side = item.model?.handleSide;
+        const edge = side
+          ? (side === "right" ? 1 : -1) * (m.flip ? -1 : 1)
+          : doors === 1
+            ? 1
+            : k % 2 === 0
+              ? 1
+              : -1;
+        // (An upper tier's pulls low, a lower one's high.)
+        const upper = tiers.length > 1 && tier === tiers.length - 1;
+        const lower = tiers.length > 1 && tier === 0;
         const py =
-          type === "wall" || (type === "tall" && tier === 1)
+          type === "wall" || upper
             ? ty + 0.07 + len / 2
-            : type === "tall"
+            : type === "tall" || lower
               ? ty + Math.min(th - 0.07 - len / 2, 1.05)
               : ty + th - 0.07 - len / 2;
         barPull(m, x + edge * (dw / 2 - 0.045), py, face, true, len);
@@ -1842,12 +1971,16 @@ const sonos: Builder = (m, _o, tint, item) => {
 };
 
 /** A tile backsplash's texture: small hexagons (5 cm across the flats)
- * in shades of grey, dark grout between, one repeat `HEX_TILE` metres
- * across and up (see backsplash). */
+ * in shades of their colour, dark grout between, one repeat `HEX_TILE`
+ * metres across and up (see backsplash). */
 const HEX_TILE: [number, number] = [6 * 0.052, 6 * 0.045];
-let hexTexture: THREE.Texture | null = null;
-function hexTileTexture(): THREE.Texture {
-  if (hexTexture) return hexTexture;
+/** The grey tile's own colour (each tile's shade a hair off it). */
+const HEX_GREY = "#a6a8aa";
+const HEX_TEXTURES = new Map<string, THREE.Texture>();
+function hexTileTexture(tile: string): THREE.Texture {
+  const known = HEX_TEXTURES.get(tile);
+  if (known) return known;
+  const [br, bg, bb] = [1, 3, 5].map((i) => parseInt(tile.slice(i, i + 2), 16));
   const cv = document.createElement("canvas");
   cv.width = 512;
   cv.height = Math.round((512 * HEX_TILE[1]) / HEX_TILE[0]);
@@ -1863,13 +1996,16 @@ function hexTileTexture(): THREE.Texture {
     // the same as their other halves across it, so the repeat is seamless.
     let seed = 7;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    const greys = Array.from({ length: 36 }, () => Math.round(164 + 4 * rnd()));
+    // (Each a hair off the tile's colour, as the grey's were off 166.)
+    const greys = Array.from({ length: 36 }, () => (164 + 4 * rnd()) / 166);
     for (let row = -1; row <= 6; row++)
       for (let col = -1; col <= 6; col++) {
         const cx = col * dx + (row % 2 ? dx / 2 : 0) + dx / 2;
         const cy = row * dy + dy / 2;
         const g = greys[((row + 6) % 6) * 6 + ((col + 6) % 6)]!;
-        ctx.fillStyle = `rgb(${g},${g + 2},${g + 4})`;
+        const c = (v: number | undefined) =>
+          Math.min(255, Math.round((v ?? 166) * g));
+        ctx.fillStyle = `rgb(${c(br)},${c(bg)},${c(bb)})`;
         ctx.beginPath();
         for (let k = 0; k < 6; k++) {
           const a = Math.PI / 6 + (k * Math.PI) / 3;
@@ -1882,25 +2018,25 @@ function hexTileTexture(): THREE.Texture {
         ctx.fill();
       }
   }
-  hexTexture = new THREE.CanvasTexture(cv);
-  hexTexture.colorSpace = THREE.SRGBColorSpace;
-  hexTexture.wrapS = THREE.RepeatWrapping;
-  hexTexture.wrapT = THREE.RepeatWrapping;
-  hexTexture.anisotropy = 4;
-  return hexTexture;
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  HEX_TEXTURES.set(tile, tex);
+  return tex;
 }
 
 const TILE_MATS = new Map<string, THREE.MeshStandardMaterial>();
-/** The tile, tinted (white: as drawn). */
-function tileMaterial(tint: string): THREE.MeshStandardMaterial {
-  let m = TILE_MATS.get(tint);
+/** The tile in a colour, its grout the same dark grey whatever it is. */
+function tileMaterial(tile: string): THREE.MeshStandardMaterial {
+  let m = TILE_MATS.get(tile);
   if (!m) {
     m = new THREE.MeshStandardMaterial({
-      map: hexTileTexture(),
-      color: tint,
+      map: hexTileTexture(tile),
       roughness: 0.35,
     });
-    TILE_MATS.set(tint, m);
+    TILE_MATS.set(tile, m);
   }
   return m;
 }
@@ -1938,14 +2074,16 @@ function panelPieces(
 }
 
 /** A tile backsplash (its back at -z, against the wall): a thin slab,
- * its face tiled in small grey hexagons with dark grout at their real
- * size however big it's drawn, stopping round any window or door in the
- * wall behind it (see scene3d); a colour tints the tiles. */
-const backsplash: Builder = (m, _o, tint, item) => {
+ * its face tiled in small hexagons (its catalog's colour, else grey) with
+ * dark grout at their real size however big it's drawn, stopping round
+ * any window or door in the wall behind it (see scene3d); a colour picked
+ * is the tiles', the grout staying as it is. */
+const backsplash: Builder = (m, o, tint, item) => {
   const { W, D, H } = m;
   const t = Math.min(D, 0.012);
   const grout = mat("#3b3b3c", 0.8);
-  const tile = tileMaterial(tint ?? "#ffffff");
+  const own = typeof o["tile"] === "string" ? o["tile"] : HEX_GREY;
+  const tile = tileMaterial((tint ?? own).toLowerCase());
   for (const [x0, x1, y0, y1] of panelPieces(W, H, item.model?.gaps)) {
     const w = x1 - x0;
     const h = y1 - y0;
@@ -4057,8 +4195,33 @@ const tv: Builder = (m, _o, _tint, item) => {
   );
 };
 
-const mirror: Builder = (m, _o, tint) => {
+/** A mirror: leaning on the floor in a frame; or round on the wall (its
+ * back at -z), its glass in a slim matte black bezel. */
+const mirror: Builder = (m, o, tint) => {
   const { W, D, H } = m;
+  if (flag(o, "round")) {
+    const r = Math.min(W, H) / 2;
+    const t = Math.min(D, 0.022);
+    const bezel = mat(tint ?? "#1d1d1d", 0.9, 0.15);
+    const back = -D / 2;
+    m.cyl(r, r, t, 0, H / 2, back + t / 2, bezel, 64, "z");
+    // A lip standing a little proud round the glass.
+    const ring = new THREE.TorusGeometry(r - 0.004, 0.004, 8, 96);
+    ring.translate(0, H / 2, back + t);
+    m.add(ring, bezel);
+    m.cyl(
+      r - 0.007,
+      r - 0.007,
+      0.003,
+      0,
+      H / 2,
+      back + t + 0.0015,
+      mat("#dfe8ee", 0.02, 0.9),
+      64,
+      "z",
+    );
+    return;
+  }
   m.box(W, H, Math.min(D, 0.04), 0, 0, 0, mat(tint ?? C.woodDark, 0.6), -0.08);
   m.box(
     W - 0.06,
@@ -4149,10 +4312,197 @@ const weightBench: Builder = (m, _o, tint) => {
     );
 };
 
+/** A floating shelf: a slab (as thick as its height where that's set
+ * slim, else 4 cm), plain or grained white oak at its real size. */
 const floatingShelf: Builder = (m, _o, tint, item) => {
-  const { W, D } = m;
+  const { W, D, H } = m;
   const y = item.y0 > 0.3 ? 0 : 1.4;
-  m.box(W, 0.04, D, 0, y, 0, mat(tint ?? C.wood, 0.65));
+  const t = H <= 0.12 ? H : 0.04;
+  if (item.model?.finish === "white_oak")
+    grainBox(m, W, t, D, 0, y, 0, oakMaterial(tint));
+  else m.box(W, t, D, 0, y, 0, mat(tint ?? C.wood, 0.65));
+};
+
+/** Book spines' colours (cloth and paper, muted). */
+const BOOK_COLORS = [
+  "#2f3e4e",
+  "#6b2f2f",
+  "#3f5a46",
+  "#c9b99a",
+  "#1f1f22",
+  "#8a6a3b",
+  "#4a3f5c",
+  "#e7e1d4",
+  "#7d8b8f",
+  "#a3472f",
+  "#2c4a63",
+  "#b8a17a",
+];
+
+/** An open bookshelf like a cabinet with no doors (front at +z): white oak
+ * (or painted the colour picked) on a toe kick, its cubbies in rows set on
+ * the item (heights from the top down, the last row filling the rest)
+ * and columns, each framed by a face frame a little wider than the panels
+ * behind it, so a lip runs round every opening; a light strip hides
+ * behind it on the edges set, lit with the item's light. Each cubby holds
+ * books as full as it's set. */
+const openBookshelf: Builder = (m, o, tint, item) => {
+  const { W, D, H } = m;
+  const set = item.model?.cubbies;
+  const wood = tint ? mat(tint, 0.6) : oakMaterial();
+  const piece = (
+    w: number,
+    h: number,
+    d: number,
+    x: number,
+    y: number,
+    z: number,
+    up = false,
+  ) =>
+    tint
+      ? m.box(w, h, d, x, y, z, wood)
+      : grainBox(m, w, h, d, x, y, z, wood, up);
+  const t = 0.019;
+  const frame = 0.035;
+  const fd = 0.019;
+  const kick = item.y0 < 0.05 ? 0.08 : 0;
+  const back = 0.006;
+  const boxD = D - fd;
+  const bz = -D / 2 + boxD / 2;
+  // The box: sides, top, bottom, back; the recessed toe kick.
+  for (const s of [-1, 1])
+    piece(t, H - kick, boxD, s * (W / 2 - t / 2), kick, bz, true);
+  piece(W - 2 * t, t, boxD, 0, H - t, bz);
+  piece(W - 2 * t, t, boxD, 0, kick, bz);
+  piece(W - 2 * t, H - kick - 2 * t, back, 0, kick + t, -D / 2 + back / 2);
+  if (kick)
+    m.box(
+      W - 0.006,
+      kick,
+      boxD - 0.075,
+      0,
+      0,
+      bz - 0.0375,
+      mat(shade(tint ?? WHITE_OAK, 0.45), 0.8),
+    );
+  // Its cubbies: rows from the top down, columns across.
+  const inner = H - kick - 2 * t;
+  const cols = Math.max(
+    1,
+    Math.min(
+      8,
+      Math.round(set?.cols ?? num(o, "cols", Math.max(1, Math.round(W / 0.4)))),
+    ),
+  );
+  let rows = (set?.rows ?? []).map((h) => Math.max(0.05, h));
+  const room = (n: number) => inner - (n - 1) * t;
+  if (!rows.length) {
+    const n = Math.max(1, Math.round(inner / 0.36));
+    rows = Array.from({ length: n }, () => room(n) / n);
+  } else {
+    // The last row fills what's left (or they all shrink to fit).
+    const rest =
+      room(rows.length) - rows.slice(0, -1).reduce((a, h) => a + h, 0);
+    if (rest >= 0.06) rows[rows.length - 1] = rest;
+    else {
+      const k = room(rows.length) / rows.reduce((a, h) => a + h, 0);
+      rows = rows.map((h) => h * k);
+    }
+  }
+  const cw = (W - 2 * t - (cols - 1) * t) / cols;
+  const colX = (c: number) => -W / 2 + t + c * (cw + t) + cw / 2;
+  // Fixed shelves between the rows, dividers between the columns.
+  const rowY: number[] = [];
+  let y = H - t;
+  rows.forEach((h, r) => {
+    y -= h;
+    rowY.push(y);
+    if (r < rows.length - 1) {
+      piece(W - 2 * t, t, boxD - back, 0, y - t, bz + back / 2);
+      y -= t;
+    }
+  });
+  for (let c = 1; c < cols; c++)
+    piece(
+      t,
+      inner,
+      boxD - back,
+      colX(c) - cw / 2 - t / 2,
+      kick + t,
+      bz + back / 2,
+      true,
+    );
+  // The face frame: stiles and rails, a lip round each opening.
+  const fz = D / 2 - fd / 2;
+  for (const s of [-1, 1])
+    piece(frame, H - kick, fd, s * (W / 2 - frame / 2), kick, fz, true);
+  for (let c = 1; c < cols; c++)
+    piece(frame, inner, fd, colX(c) - cw / 2 - t / 2, kick + t, fz, true);
+  piece(W - 2 * frame, frame, fd, 0, H - frame, fz);
+  piece(W - 2 * frame, frame, fd, 0, kick, fz);
+  for (const ry of rowY.slice(0, -1))
+    piece(W - 2 * frame, frame, fd, 0, ry - t / 2 - frame / 2, fz);
+  // Light strips behind the lip, on the edges set.
+  const lit = item.light;
+  const strip = lit
+    ? mat("#fffaf0", 0.4, 0, { glow: lit.color, glowLevel: 0.8 + lit.level })
+    : mat("#e6e6e2", 0.4);
+  const lip = (frame - t) / 2;
+  const sz = D / 2 - fd - 0.008;
+  let seed = Math.round(W * 1000 + H * 37 + cols * 7);
+  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  rows.forEach((rh, r) => {
+    const y0 = rowY[r]!;
+    for (let c = 0; c < cols; c++) {
+      const k = r * cols + c;
+      const x = colX(c);
+      const edges = set?.edges?.[k] ?? "";
+      if (edges.includes("t"))
+        m.box(cw - 0.01, 0.004, 0.012, x, y0 + rh - 0.004, sz, strip);
+      if (edges.includes("b")) m.box(cw - 0.01, 0.004, 0.012, x, y0, sz, strip);
+      if (edges.includes("l"))
+        m.box(
+          0.004,
+          rh - 0.01,
+          0.012,
+          x - cw / 2 + 0.002,
+          y0 + 0.005,
+          sz,
+          strip,
+        );
+      if (edges.includes("r"))
+        m.box(
+          0.004,
+          rh - 0.01,
+          0.012,
+          x + cw / 2 - 0.002,
+          y0 + 0.005,
+          sz,
+          strip,
+        );
+      // Books from the left, as full as it's set (three quarters, else).
+      const full = Math.max(0, Math.min(1, set?.books?.[k] ?? 0.75));
+      const x0 = -cw / 2 + lip + 0.005;
+      const end = x0 + (cw - 2 * lip - 0.01) * full;
+      const bd = Math.min(boxD - back - 0.03, 0.24);
+      const clear = rh - lip - 0.01;
+      let bx = x0;
+      while (full > 0 && bx < end - 0.012) {
+        const bw = Math.min(end - bx, 0.018 + rand() * 0.028);
+        const bh = Math.min(clear, 0.33) * (0.7 + rand() * 0.25);
+        m.box(
+          bw - 0.002,
+          bh,
+          bd,
+          x + bx + bw / 2,
+          y0,
+          -D / 2 + back + bd / 2 + 0.01,
+          mat(BOOK_COLORS[Math.floor(rand() * BOOK_COLORS.length)]!, 0.8),
+        );
+        bx += bw;
+      }
+    }
+  });
 };
 
 /** A darker or lighter version of a hex colour. */
@@ -4219,6 +4569,7 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^sonos_/, sonos],
   [/^island_shaker/, kitchenIsland],
   [/^backsplash_/, backsplash],
+  [/^bookshelf_open/, openBookshelf],
   [/^sink_delta_everest/, everestSink],
   [/^faucet_delta_nicoli/, nicoliFaucet],
   [/^sink_rack_/, sinkRack],

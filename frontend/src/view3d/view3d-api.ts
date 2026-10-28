@@ -177,6 +177,26 @@ export interface Item3d {
     /** A cabinet's face set by hand: its drawers' heights from the top
      * (metres) and the doors below them (null: the catalog's). */
     fronts?: { drawers: number[] | null; doors: number | null };
+    /** Which side a cabinet's door pulls are set on (absent: by each
+     * door's free edge). */
+    handleSide?: "left" | "right";
+    /** A cabinet's doors in one tier or two (a top half, a bottom), and
+     * its stone top left off (absent: its own). */
+    doorTiers?: number;
+    noTop?: boolean;
+    /** A wood finish worn instead of a plain colour. */
+    finish?: "white_oak";
+    /** An open bookshelf's cubbies set by hand: their heights from the
+     * top down (metres, the last row filling the rest), how many across,
+     * and per cubby (row by row from the top left) how full of books it
+     * is (0-1) and its edges with a light strip ("t", "b", "l", "r");
+     * null: its own. */
+    cubbies?: {
+      rows: number[] | null;
+      cols: number | null;
+      books: number[] | null;
+      edges: string[] | null;
+    };
     /** A houseplant's pot set by hand (diameter, metres; its shape) and
      * how full it grows (1 as drawn); null: the species' own. */
     plant?: {

@@ -2718,8 +2718,8 @@ const PLANT: {
 const more = (n: number) => Math.max(1, Math.round(n * PLANT.full));
 
 /** A pot standing at (x, y, z): tapered (or straight, a low bowl, a
- * square planter), its lip, the soil; the soil's height. A basket is
- * woven in bands. Its size and shape set on the item win. */
+ * square planter, none at all), its lip, the soil; the soil's height. A
+ * basket is woven in bands. Its size and shape set on the item win. */
 function pot(
   m: Model,
   r: number,
@@ -2736,6 +2736,8 @@ function pot(
   const shape = PLANT.shape ?? "taper";
   if (shape === "bowl") h = Math.min(h, r * 0.8);
   PLANT.r = r;
+  // No pot: it grows from where it stands (set into another's soil).
+  if (shape === "none") return y;
   const body = mat(color, opts.basket ? 0.95 : 0.55);
   if (shape === "square") {
     m.box(r * 1.8, h * 0.92, r * 1.8, x, y, z, body);

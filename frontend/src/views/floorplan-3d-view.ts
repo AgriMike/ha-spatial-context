@@ -582,6 +582,18 @@ export class Floorplan3dView extends LitElement {
       .nudge ha-icon {
         --mdc-icon-size: 20px;
       }
+      .checks {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 10px;
+        justify-content: flex-end;
+      }
+      .checks .check {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        white-space: nowrap;
+      }
       .nudge {
         display: grid;
         grid-template-columns: repeat(3, 36px);
@@ -3982,6 +3994,7 @@ export class Floorplan3dView extends LitElement {
         ["cylinder", L("potCylinder")],
         ["bowl", L("potBowl")],
         ["square", L("potSquare")],
+        ["none", L("potNone")],
       ],
       (v) => set({ pot_shape: v || null }),
     )}
@@ -4074,7 +4087,190 @@ export class Floorplan3dView extends LitElement {
           ["4", "4"],
         ],
         (v) => set({ doors: v == null || v === "" ? null : Number(v) }),
-      )}`;
+      )}
+      ${this._select<string>(
+        L("doorTiers"),
+        item.door_tiers == null ? "" : String(item.door_tiers),
+        [
+          ["", L("auto")],
+          ["1", L("doorTiersOne")],
+          ["2", L("doorTiersTwo")],
+        ],
+        (v) => set({ door_tiers: v ? Number(v) : null }),
+      )}
+      ${this._select<"left" | "right">(
+        L("handleSide"),
+        item.handle_side ?? null,
+        [
+          ["", L("auto")],
+          ["left", L("handleLeft")],
+          ["right", L("handleRight")],
+        ],
+        (v) => set({ handle_side: v }),
+      )}
+      ${
+        ["base", "drawers", "sink"].includes(
+          String(catalogItem(item.kind)?.opts["shaker"] ?? ""),
+        )
+          ? html`<label class="row">
+              <span>${L("countertop")}</span>
+              <input
+                type="checkbox"
+                .checked=${item.countertop !== false}
+                @change=${(e: Event) =>
+                  set({
+                    countertop: (e.target as HTMLInputElement).checked
+                      ? null
+                      : false,
+                  })}
+              />
+            </label>`
+          : nothing
+      }`;
+  }
+
+  /** The open bookshelf cubby being set (-1: all of them). */
+  @state() private _cubby = -1;
+
+  /** An open bookshelf's cubbies: rows (heights from the top down) and
+   * columns, then for one cubby or all, how full of books it is and which
+   * of its edges carry a light strip. */
+  private _renderBookshelf(
+    item: FurnitureItem,
+    set: (patch: Partial<FurnitureItem>) => void,
+  ) {
+    const L = (k: string) => localize(`edit3d.${k}`);
+    const entry = catalogItem(item.kind);
+    // As the model lays them out (see furniture-models.ts's openBookshelf).
+    const height =
+      (item.height_cm ?? Number(entry?.opts["h3d"] ?? 1.83) * 100) / 100;
+    const kick = (item.elevation_cm ?? 0) < 5 ? 0.08 : 0;
+    const inner = height - kick - 2 * 0.019;
+    const rows = item.shelves_cm?.length
+      ? item.shelves_cm.length
+      : Math.max(1, Math.round(inner / 0.36));
+    const cols = Math.max(
+      1,
+      Math.min(
+        8,
+        item.columns ??
+          Number(
+            entry?.opts["cols"] ??
+              Math.max(1, Math.round(item.width_cm / 100 / 0.4)),
+          ),
+      ),
+    );
+    const n = rows * cols;
+    const cubby = this._cubby < n ? this._cubby : -1;
+    const books = Array.from({ length: n }, (_, k) => item.books?.[k] ?? 0.75);
+    const edges = Array.from(
+      { length: n },
+      (_, k) => item.strip_edges?.[k] ?? "",
+    );
+    const shown = cubby < 0 ? 0 : cubby;
+    const which = (k: number) => (cubby < 0 ? true : k === cubby);
+    const edge = (e: string) =>
+      html`<label class="check">
+        <input
+          type="checkbox"
+          .checked=${edges[shown]!.includes(e)}
+          @change=${(ev: Event) => {
+            const on = (ev.target as HTMLInputElement).checked;
+            set({
+              strip_edges: edges.map((s, k) =>
+                which(k)
+                  ? on
+                    ? s.includes(e)
+                      ? s
+                      : s + e
+                    : s.replace(e, "")
+                  : s,
+              ),
+            });
+          }}
+        />
+        ${L(`edge_${e}`)}
+      </label>`;
+    return html`<label class="row">
+        <span>${L("cubbyHeights")}</span>
+        <input
+          type="text"
+          inputmode="decimal"
+          placeholder=${L("auto")}
+          .value=${item.shelves_cm?.map((c) => Math.round(c * 10) / 10).join(", ") ?? ""}
+          @change=${(e: Event) => {
+            const raw = (e.target as HTMLInputElement).value.trim();
+            const list = raw
+              .split(/[,\s]+/)
+              .map(Number)
+              .filter((v) => Number.isFinite(v) && v >= 5)
+              .slice(0, 12);
+            set({ shelves_cm: raw === "" ? null : list });
+          }}
+        />
+        <span class="unit">cm</span>
+      </label>
+      ${this._select<string>(
+        L("cubbyColumns"),
+        item.columns == null ? "" : String(item.columns),
+        [
+          ["", L("auto")],
+          ...[1, 2, 3, 4, 5, 6, 7, 8].map((c): [string, string] => [
+            String(c),
+            String(c),
+          ]),
+        ],
+        (v) => set({ columns: v ? Number(v) : null }),
+      )}
+      ${this._select<string>(
+        L("cubby"),
+        String(cubby),
+        [
+          ["-1", L("cubbyAll")],
+          ...Array.from({ length: n }, (_, k): [string, string] => [
+            String(k),
+            L("cubbyAt")
+              .replace("{row}", String(Math.floor(k / cols) + 1))
+              .replace("{col}", String((k % cols) + 1)),
+          ]),
+        ],
+        (v) => (this._cubby = v == null ? -1 : Number(v)),
+      )}
+      ${this._num(
+        L("cubbyBooks"),
+        Math.round(books[shown]! * 100),
+        (v) =>
+          set({
+            books: books.map((b, k) =>
+              which(k) ? Math.max(0, Math.min(100, v ?? 75)) / 100 : b,
+            ),
+          }),
+        { unit: "%", min: 0, max: 100, step: 5 },
+      )}
+      <div class="row">
+        <span>${L("cubbyStrips")}</span>
+        <span class="checks">${["t", "b", "l", "r"].map(edge)}</span>
+      </div>`;
+  }
+
+  /** Moves the item 1 cm (10 with Shift) along its own width (`lx`) or
+   * out from its back (`lz`). */
+  private _nudgeItem(
+    layout: FloorLayout,
+    item: FurnitureItem,
+    lx: number,
+    lz: number,
+    e: MouseEvent,
+  ) {
+    if (item.locked) return;
+    const step = (e.shiftKey ? 10 : 1) * this._perCm;
+    const r = (item.rotation_deg * Math.PI) / 180;
+    this._edit(
+      patchItem(layout, item.id, {
+        x: item.x + (lx * Math.cos(r) - lz * Math.sin(r)) * step,
+        y: item.y + (lx * Math.sin(r) + lz * Math.cos(r)) * step,
+      }),
+    );
   }
 
   /** An opening's look in 3D: a door's style, a window's type, grid and
@@ -4154,21 +4350,47 @@ export class Floorplan3dView extends LitElement {
       ${trim}`;
     if (o.type === "door")
       return html`${this._select<DoorStyle>(
-        L("doorStyle"),
-        o.door_style ?? "slab",
-        [
-          ["slab", L("doorSlab")],
-          ["six_panel", L("doorSixPanel")],
-          ["craftsman", L("doorCraftsman")],
-          ["half_lite", L("doorHalfLite")],
-          ["full_lite", L("doorFullLite")],
-          ["french", L("doorFrench")],
-          ["sliding", L("doorSliding")],
-        ],
-        (v) => v && set({ door_style: v }),
-      )}
-      ${this._color(L("paint"), o.paint_color, (v) => set({ paint_color: v }))}
-      ${trim}`;
+          L("doorStyle"),
+          o.door_style ?? null,
+          [
+            ["", L("auto")],
+            ["mission", L("doorMission")],
+            ["slab", L("doorSlab")],
+            ["six_panel", L("doorSixPanel")],
+            ["craftsman", L("doorCraftsman")],
+            ["half_lite", L("doorHalfLite")],
+            ["full_lite", L("doorFullLite")],
+            ["french", L("doorFrench")],
+            ["sliding", L("doorSliding")],
+            ["none", L("doorNone")],
+          ],
+          (v) => set({ door_style: v }),
+        )}
+        ${this._num(
+          L("doorOpen"),
+          o.door_open_deg ?? null,
+          (v) =>
+            set({
+              door_open_deg: v == null ? null : Math.max(0, Math.min(180, v)),
+            }),
+          { unit: "°", min: 0, max: 180, step: 15, placeholder: "90" },
+        )}
+        <div class="buttons">
+          <button @click=${() => set({ door_open_deg: 0 })}>
+            ${L("doorClose")}
+          </button>
+          <button @click=${() => set({ door_open_deg: null })}>
+            ${L("doorOpenWide")}
+          </button>
+          <button @click=${() => set({ door_hinge_flip: !o.door_hinge_flip })}>
+            ${L("doorFlipHinge")}
+          </button>
+          <button @click=${() => set({ door_swing_flip: !o.door_swing_flip })}>
+            ${L("doorFlipSwing")}
+          </button>
+        </div>
+        ${this._color(L("paint"), o.paint_color, (v) => set({ paint_color: v }))}
+        ${trim}`;
     // Where it sits in the wall (blank: from its style and the wall).
     const cm = (v: number | null, lo: number) =>
       v == null ? null : Math.max(lo, Math.min(1000, v)) / 100;
@@ -4914,7 +5136,59 @@ export class Floorplan3dView extends LitElement {
         ${this._renderItemFloor(item)}
         ${entry?.opts["shaker"] && entry.opts["shaker"] !== "hood" ? this._renderCabinetFronts(item, set) : nothing}
         ${entry && (["houseplant", "plant", "cactus"].includes(entry.draw) || entry.id === "bonsai") ? this._renderPlantPot(item, set) : nothing}
+        ${entry?.id.startsWith("bookshelf_open") ? this._renderBookshelf(item, set) : nothing}
+        ${
+          entry?.draw === "floatingShelf"
+            ? this._select<"white_oak">(
+                localize("edit3d.finish"),
+                item.finish ?? null,
+                [
+                  ["", localize("edit3d.finishColour")],
+                  ["white_oak", localize("edit3d.finishWhiteOak")],
+                ],
+                (v) => set({ finish: v }),
+              )
+            : nothing
+        }
         ${entry?.id.startsWith("backsplash_") ? this._num(localize("edit3d.openingGap"), item.opening_gap_cm ?? null, (v) => set({ opening_gap_cm: v == null ? null : Math.max(0, Math.min(50, v)) }), { unit: "cm", min: 0, max: 50, placeholder: "0" }) : nothing}
+        <div class="row">
+          <span>${localize("edit3d.nudge")}</span>
+          <div class="nudge">
+            <span></span>
+            <button
+              title=${localize("edit3d.nudgeForward")}
+              ?disabled=${!!item.locked}
+              @click=${(e: MouseEvent) => this._nudgeItem(layout, item, 0, 1, e)}
+            >
+              <ha-icon icon="mdi:arrow-up"></ha-icon>
+            </button>
+            <span></span>
+            <button
+              title=${localize("edit3d.nudgeLeft")}
+              ?disabled=${!!item.locked}
+              @click=${(e: MouseEvent) => this._nudgeItem(layout, item, -1, 0, e)}
+            >
+              <ha-icon icon="mdi:arrow-left"></ha-icon>
+            </button>
+            <span></span>
+            <button
+              title=${localize("edit3d.nudgeRight")}
+              ?disabled=${!!item.locked}
+              @click=${(e: MouseEvent) => this._nudgeItem(layout, item, 1, 0, e)}
+            >
+              <ha-icon icon="mdi:arrow-right"></ha-icon>
+            </button>
+            <span></span>
+            <button
+              title=${localize("edit3d.nudgeBack")}
+              ?disabled=${!!item.locked}
+              @click=${(e: MouseEvent) => this._nudgeItem(layout, item, 0, -1, e)}
+            >
+              <ha-icon icon="mdi:arrow-down"></ha-icon>
+            </button>
+            <span></span>
+          </div>
+        </div>
         ${this._num(localize("edit3d.rotation"), item.rotation_deg, (v) => v !== null && set({ rotation_deg: ((v % 360) + 360) % 360 }), { unit: "°" })}
         ${this._color(localize("edit3d.color"), item.color, (v) => set({ color: v }))}
         ${this._renderItemModel(item)}

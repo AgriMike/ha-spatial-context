@@ -184,7 +184,9 @@ export type DoorStyle =
   | "half_lite"
   | "full_lite"
   | "french"
-  | "sliding";
+  | "sliding"
+  | "mission"
+  | "none";
 export type WindowType = "picture" | "single_hung" | "casement" | "slider";
 export type WindowGrid = "none" | "colonial" | "prairie" | "craftsman";
 export type GarageStyle =
@@ -212,9 +214,16 @@ export interface Opening {
    * on the wall, drawn as a thin line inside the wall and letting in less
    * light — or "full", floor to ceiling, letting in more. */
   window_style?: "standard" | "transom" | "full";
-  /** An outside door's look (absent: a plain slab, or a sliding patio
-   * door when it's wider than 1.2 m). */
-  door_style?: DoorStyle;
+  /** A door's look (absent: outside, a plain slab, or a sliding patio
+   * door when it's wider than 1.2 m; between rooms, a three panel mission
+   * door, or none where it's wider than 1.3 m). */
+  door_style?: DoorStyle | null;
+  /** A door between rooms: how far it stands open, degrees (absent: 90),
+   * and its hinges and swing put on the other jamb and the other side of
+   * the wall. */
+  door_open_deg?: number | null;
+  door_hinge_flip?: boolean;
+  door_swing_flip?: boolean;
   /** How a window opens, which sets its dividing rails (absent: one
    * fixed pane). */
   window_type?: WindowType;
@@ -320,11 +329,31 @@ export interface FurnitureItem {
    * the catalog cabinet's own. */
   drawers_cm?: number[] | null;
   doors?: number | null;
-  /** A houseplant's pot: its diameter (centimetres) and shape, and how
-   * full the plant grows (1 as drawn: 2 twice the leaves and branches);
-   * unset = the species' own. */
+  /** Which side a cabinet's door pulls are on (each door hinged on the
+   * other); unset = by the doors' free edges (a pair's in the middle). */
+  handle_side?: "left" | "right" | null;
+  /** A cabinet's doors in one tier or two (a top half and a bottom), and
+   * whether a base cabinet has its stone top (false: none); unset = its
+   * own. */
+  door_tiers?: number | null;
+  countertop?: boolean | null;
+  /** A wood finish worn instead of a plain colour (a floating shelf). */
+  finish?: "white_oak" | null;
+  /** An open bookshelf's cubbies: their heights from the top down
+   * (centimetres, the last row filling what's left) and how many across;
+   * then per cubby, row by row from the top left, how full of books it
+   * is (0-1) and which of its edges carry a light strip ("t", "b", "l",
+   * "r", run together); unset = its own. */
+  shelves_cm?: number[] | null;
+  columns?: number | null;
+  books?: number[] | null;
+  strip_edges?: string[] | null;
+  /** A houseplant's pot: its diameter (centimetres) and shape ("none":
+   * no pot, the plant set into another's), and how full the plant grows
+   * (1 as drawn: 2 twice the leaves and branches); unset = the species'
+   * own. */
   pot_cm?: number | null;
-  pot_shape?: "taper" | "cylinder" | "bowl" | "square" | null;
+  pot_shape?: "taper" | "cylinder" | "bowl" | "square" | "none" | null;
   fullness?: number | null;
   /** How far a backsplash's tile stops short of a window or door in the
    * wall behind it, centimetres (absent: right up to its casing). */

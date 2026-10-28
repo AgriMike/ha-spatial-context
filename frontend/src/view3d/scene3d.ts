@@ -136,6 +136,9 @@ const TRIM_BEZEL = "#1d1d1e";
 /** An outside door's leaf. */
 const DOOR = "#f6f4ef";
 const DOOR_DARK = "#8f8b84";
+/** A door between rooms: stained wood. */
+const DOOR_INSIDE = "#6f4527";
+const DOOR_INSIDE_DARK = "#4a2e1a";
 /** A door's hardware (knob, handles, strap hinges): dark bronze. */
 const HARDWARE = "#3b3530";
 /** Glass in a garage door: the dark garage behind it. */
@@ -2088,6 +2091,108 @@ function buildFloor(
           });
         });
       };
+      /** A door between rooms over [s0, s1] x [y0, y1]: a leaf with its
+       * panels let in (a mission door's three, one over another; else as
+       * the style's), a knob each side by its free edge; hung on the s0
+       * jamb (s1 `hingeAtEnd`), its face to the `side` face of the wall
+       * (1 the wall's left as it runs, -1 its right), swung `openDeg`
+       * open toward that side. */
+      const insideDoor = (
+        s0: number,
+        s1: number,
+        y0: number,
+        y1: number,
+        style: DoorStyle,
+        color: string,
+        hingeAtEnd: boolean,
+        side: 1 | -1,
+        openDeg: number,
+      ) => {
+        const D = 0.035;
+        const first = walls.length;
+        const firstPane = panes.length;
+        const h = y1 - y0;
+        const lw = s1 - s0;
+        const st = Math.min(0.12, lw * 0.15);
+        const X = (f: number) => s0 + st + (lw - 2 * st) * f;
+        const Y = (f: number) => y0 + h * f;
+        const n: Vec2 = [-dz, dx];
+        const off = (b: Box3d, o: number): Box3d => ({
+          ...b,
+          x: b.x + n[0] * o,
+          z: b.z + n[1] * o,
+        });
+        if (style === "mission") {
+          // Three flat panels, one over another, let into the leaf.
+          const rows: [number, number][] = [
+            [0.08, 0.36],
+            [0.4, 0.64],
+            [0.68, 0.93],
+          ];
+          const holes = rows.map(
+            ([r0, r1]): [number, number, number, number] => [
+              X(0),
+              X(1),
+              Y(r0),
+              Y(r1),
+            ],
+          );
+          leafAround(s0, s1, y0, y1, holes, D, color);
+          const panel = shadeHex(color, 0.92);
+          for (const [p0, p1, q0, q1] of holes)
+            walls.push({ ...box(p0, p1, q0, q1, D * 0.4), color: panel });
+        } else {
+          // Another style: its leaf as an outside door's, drawn the same
+          // both ways (its glass and panels on the leaf's faces).
+          doorLeaf(s0, s1, y0, y1, style, color);
+        }
+        // A knob each side by its free edge.
+        const latch = hingeAtEnd ? s0 + st / 2 : s1 - st / 2;
+        for (const o of [-1, 1])
+          walls.push({
+            ...off(
+              box(latch - 0.025, latch + 0.025, y0 + 0.93, y0 + 0.99, 0.03),
+              o * (D / 2 + 0.015),
+            ),
+            color: HARDWARE,
+          });
+        // To the wall's face on its side, then swung open about its hinge
+        // there.
+        const shift = side * (t / 2 - D / 2 - 0.004);
+        const sh = hingeAtEnd ? s1 : s0;
+        const [hx, hz] = at(sh);
+        const P: Vec2 = [
+          hx + n[0] * side * (t / 2),
+          hz + n[1] * side * (t / 2),
+        ];
+        const sgn = hingeAtEnd ? -1 : 1;
+        const e1: Vec2 = [dx * sgn, dz * sgn];
+        const e2: Vec2 = [n[0] * side, n[1] * side];
+        const th = (Math.max(0, Math.min(180, openDeg)) * Math.PI) / 180;
+        const [c, s] = [Math.cos(th), Math.sin(th)];
+        const swing = (b: Box3d): Box3d => {
+          const q: Vec2 = [
+            b.x + n[0] * shift - P[0],
+            b.z + n[1] * shift - P[1],
+          ];
+          const a1 = q[0] * e1[0] + q[1] * e1[1];
+          const a2 = q[0] * e2[0] + q[1] * e2[1];
+          const r1 = a1 * c - a2 * s;
+          const r2 = a1 * s + a2 * c;
+          // Its length runs along the leaf, turned with it.
+          const ux = dx * c + sgn * s * e2[0];
+          const uz = dz * c + sgn * s * e2[1];
+          return {
+            ...b,
+            x: P[0] + r1 * e1[0] + r2 * e2[0],
+            z: P[1] + r1 * e1[1] + r2 * e2[1],
+            angle: Math.atan2(-uz, ux),
+          };
+        };
+        for (let k = first; k < walls.length; k++) walls[k] = swing(walls[k]!);
+        for (let k = firstPane; k < panes.length; k++)
+          panes[k] = { ...panes[k]!, box: swing(panes[k]!.box) };
+      };
       /** A garage door's sections, panels, glass and hardware: the door
        * stands over [s0, s1] from `bottom` up to `head` (higher sections
        * rolled up out of sight), `D` thick. */
@@ -2439,6 +2544,21 @@ function buildFloor(
             doorStyle ?? "slab",
             opening.paint_color ?? (dark ? DOOR_DARK : DOOR),
           );
+        } else if (isDoor && !opening.garage) {
+          const style =
+            doorStyle ?? (hole.s1 - hole.s0 > 1.3 ? "none" : "mission");
+          if (style !== "none" && style !== "sliding")
+            insideDoor(
+              hole.s0 + JOINT_INSET_M,
+              hole.s1 - JOINT_INSET_M,
+              sill,
+              head - JOINT_INSET_M,
+              style,
+              opening.paint_color ?? (dark ? DOOR_INSIDE_DARK : DOOR_INSIDE),
+              !!opening.door_hinge_flip,
+              opening.door_swing_flip ? -1 : 1,
+              opening.door_open_deg ?? 90,
+            );
         }
         // A window's rails (how it opens) and grid, in the trim's white.
         if (!isDoor) {
@@ -3683,6 +3803,23 @@ function buildFloor(
                     fronts: {
                       drawers: item.drawers_cm?.map((c) => c / 100) ?? null,
                       doors: item.doors ?? null,
+                    },
+                  }
+                : {}),
+              ...(item.handle_side ? { handleSide: item.handle_side } : {}),
+              ...(item.door_tiers ? { doorTiers: item.door_tiers } : {}),
+              ...(item.countertop === false ? { noTop: true } : {}),
+              ...(item.finish ? { finish: item.finish } : {}),
+              ...(item.shelves_cm != null ||
+              item.columns != null ||
+              item.books != null ||
+              item.strip_edges != null
+                ? {
+                    cubbies: {
+                      rows: item.shelves_cm?.map((c) => c / 100) ?? null,
+                      cols: item.columns ?? null,
+                      books: item.books ?? null,
+                      edges: item.strip_edges ?? null,
                     },
                   }
                 : {}),

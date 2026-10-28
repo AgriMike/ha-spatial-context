@@ -265,6 +265,24 @@ const LIVING: Row[] = [
   ["bookcase_small", "Bookcase (small)", 80, 30, "shelf"],
   ["bookcase", "Bookcase", 90, 35, "shelf"],
   ["bookcase_wide", "Wide bookcase", 160, 35, "shelf"],
+  // Open cabinets in white oak: their cubbies set in the 3D editor (see
+  // furniture-models.ts's openBookshelf).
+  [
+    "bookshelf_open",
+    "Open bookshelf (adjustable cubbies, white oak)",
+    90,
+    35,
+    "cubby",
+    { cols: 2, h3d: 1.83 },
+  ],
+  [
+    "bookshelf_open_wide",
+    "Wide open bookshelf (adjustable cubbies, white oak)",
+    180,
+    35,
+    "cubby",
+    { cols: 4, h3d: 1.83 },
+  ],
   ["bookcase_corner", "Corner bookcase", 60, 60, "box", { x: true }],
   ["floating_shelf_60", "Floating shelf 60 cm", 60, 20, "floatingShelf"],
   ["floating_shelf_90", "Floating shelf 90 cm", 90, 25, "floatingShelf"],
@@ -443,7 +461,15 @@ const KITCHEN: Row[] = [
     240,
     2,
     "box",
-    { h3d: 0.46, y3d: 0.92 },
+    { h3d: 0.46, y3d: 0.92, tile: "#a6a8aa" },
+  ],
+  [
+    "backsplash_hex_tile_white",
+    "Backsplash, small hex tile (white, dark grout)",
+    240,
+    2,
+    "box",
+    { h3d: 0.46, y3d: 0.92, tile: "#f2f1ec" },
   ],
   [
     "shaker_range_hood",
@@ -3317,6 +3343,15 @@ const DECOR: Row[] = [
   ],
   ["floor_mirror", "Floor mirror", 70, 8, "mirror"],
   ["wall_mirror", "Wall mirror", 90, 4, "mirror"],
+  // Round, in a slim matte black bezel, centred about 1.5 m up.
+  ...[40, 50, 60, 76, 90].map((cm): Row => [
+    `mirror_round_${cm}`,
+    `Round mirror ${cm} cm (black bezel)`,
+    cm,
+    3,
+    "mirror",
+    { round: true, h3d: cm / 100, y3d: 1.5 - cm / 200 },
+  ]),
   ["grandfather_clock", "Grandfather clock", 55, 30, "clock"],
   ["globe", "Floor globe", 50, 50, "globe"],
   ["area_rug_5x8", "Area rug 5×8 ft", 152, 244, "rug"],

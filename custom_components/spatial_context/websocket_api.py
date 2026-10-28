@@ -162,17 +162,29 @@ _OPENING_SCHEMA = {
     vol.Optional("window_style"): vol.In(["standard", "transom", "full"]),
     # Its look in 3D: an outside door's style, a window's type, grid and
     # shutters, a garage door's style, and the paint on them.
-    vol.Optional("door_style"): vol.In(
-        [
-            "slab",
-            "six_panel",
-            "craftsman",
-            "half_lite",
-            "full_lite",
-            "french",
-            "sliding",
-        ]
+    vol.Optional("door_style"): vol.Any(
+        None,
+        vol.In(
+            [
+                "slab",
+                "six_panel",
+                "craftsman",
+                "half_lite",
+                "full_lite",
+                "french",
+                "sliding",
+                "mission",
+                "none",
+            ]
+        ),
     ),
+    # A door between rooms: how far it stands open (degrees, unset: wide
+    # open), and its hinges and swing put on the other jamb and side.
+    vol.Optional("door_open_deg"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=0, max=180))
+    ),
+    vol.Optional("door_hinge_flip"): bool,
+    vol.Optional("door_swing_flip"): bool,
     vol.Optional("window_type"): vol.In(
         ["picture", "single_hung", "casement", "slider"]
     ),
@@ -288,12 +300,48 @@ _FURNITURE_SCHEMA = {
     vol.Optional("doors"): vol.Any(
         None, vol.All(vol.Coerce(int), vol.Range(min=0, max=4))
     ),
+    # Which side a cabinet's door pulls are on; unset = by the doors' own
+    # free edges.
+    vol.Optional("handle_side"): vol.Any(None, vol.In(["left", "right"])),
+    # A cabinet's doors in one tier or two (a top half and a bottom), and
+    # whether a base cabinet has its stone top; unset = its own.
+    vol.Optional("door_tiers"): vol.Any(
+        None, vol.All(vol.Coerce(int), vol.Range(min=1, max=2))
+    ),
+    vol.Optional("countertop"): vol.Any(None, bool),
+    # A wood finish worn instead of a plain colour (a floating shelf).
+    vol.Optional("finish"): vol.Any(None, vol.In(["white_oak"])),
+    # An open bookshelf's cubbies: their heights from the top down (cm,
+    # the last filling what's left), how many across, and per cubby (row
+    # by row from the top left) how full of books it is (0-1) and which
+    # of its edges carry a light strip ("t", "b", "l", "r").
+    vol.Optional("shelves_cm"): vol.Any(
+        None,
+        vol.All(
+            [vol.All(vol.Coerce(float), vol.Range(min=5, max=300))],
+            vol.Length(max=12),
+        ),
+    ),
+    vol.Optional("columns"): vol.Any(
+        None, vol.All(vol.Coerce(int), vol.Range(min=1, max=8))
+    ),
+    vol.Optional("books"): vol.Any(
+        None,
+        vol.All(
+            [vol.All(vol.Coerce(float), vol.Range(min=0, max=1))],
+            vol.Length(max=96),
+        ),
+    ),
+    vol.Optional("strip_edges"): vol.Any(
+        None,
+        vol.All([vol.Match(r"^[tblr]{0,4}$")], vol.Length(max=96)),
+    ),
     # A houseplant's pot (diameter in cm, shape) and how full it grows.
     vol.Optional("pot_cm"): vol.Any(
         None, vol.All(vol.Coerce(float), vol.Range(min=3, max=300))
     ),
     vol.Optional("pot_shape"): vol.Any(
-        None, vol.In(["taper", "cylinder", "bowl", "square"])
+        None, vol.In(["taper", "cylinder", "bowl", "square", "none"])
     ),
     vol.Optional("fullness"): vol.Any(
         None, vol.All(vol.Coerce(float), vol.Range(min=0.25, max=3))
