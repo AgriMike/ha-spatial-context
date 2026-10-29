@@ -247,6 +247,9 @@ export interface Item3d {
     tileTurned?: boolean;
     /** ...and laid from its right end. */
     tileFromRight?: boolean;
+    /** A towel bar's folded towel: how far it hangs (metres), its
+     * colour. */
+    towel?: { len: number; color: string | null };
   };
   /** A site feature (see site-models.ts): a surface laid on the ground
    * (concrete, asphalt, pavers, lawn, a planting bed…) or a fence, wall

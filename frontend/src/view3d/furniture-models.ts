@@ -2501,8 +2501,9 @@ const bathFaucet: Builder = (m, _o, tint) => {
 
 /** A shower niche set in a tile wall (its front, at +z, flush with the
  * tile; recessed 10" behind it): its back and the shelf it stands on in
- * white hex tile, its sides and top plain white, closed round the back
- * (out the far side of a wall thinner than it's deep). */
+ * white hex tile, its sides and top plain white, a 1 cm black trim round
+ * its opening, closed round the back (out the far side of a wall thinner
+ * than it's deep). */
 const showerNiche: Builder = (m, _o, tint) => {
   const { W, D, H } = m;
   const R = 0.254;
@@ -2539,6 +2540,63 @@ const showerNiche: Builder = (m, _o, tint) => {
   f.rotateX(-Math.PI / 2);
   f.translate(0, 0.0008, front - R / 2);
   m.add(f, tile);
+  // A 1 cm matte black trim round its opening, on the tile's edge.
+  const trim = mat("#1b1b1b", 0.55);
+  const b = 0.01;
+  const t = 0.004;
+  m.box(W + 2 * b, b, t, 0, H, front + t / 2, trim);
+  m.box(W + 2 * b, b, t, 0, -b, front + t / 2, trim);
+  for (const sx of [-1, 1])
+    m.box(b, H, t, sx * (W / 2 + b / 2), 0, front + t / 2, trim);
+};
+
+/** A towel bar (its back at -z, on the wall), matte black (or a colour
+ * picked): a square bar between two blocky posts out from the wall, flat
+ * on top, as wide as the item; and, if set, a bath towel folded in thirds
+ * over it, hanging front and back. */
+const towelBar: Builder = (m, _o, tint, item) => {
+  const { W, D, H } = m;
+  const black = mat(tint ?? "#1b1b1b", tint ? 0.4 : 0.6, tint ? 0.6 : 0);
+  const post = Math.min(0.032, W / 6);
+  const bar = 0.013;
+  const barY = H / 2;
+  const barZ = D / 2 - bar / 2 - 0.004;
+  // The posts: a plate on the wall, out to the bar, flat on top.
+  for (const s of [-1, 1]) {
+    const x = s * (W / 2 - post / 2);
+    m.box(post, H, 0.006, x, 0, -D / 2 + 0.003, black);
+    m.box(post, bar + 0.006, D, x, barY - (bar + 0.006) / 2, 0, black);
+  }
+  m.box(W - 2 * post + 0.002, bar, bar, 0, barY - bar / 2, barZ, black);
+  const towel = item.model?.towel;
+  if (!towel) return;
+  // The towel: its width along the bar (between the posts), a fold over
+  // the bar, its front hanging the length set, its back a little shorter.
+  const cloth = mat(towel.color ?? "#f1efe9", 0.97);
+  const band = mat(shade(towel.color ?? "#f1efe9", 0.86), 0.97);
+  const tw = Math.max(0.1, Math.min(W - 2 * post - 0.03, 0.5));
+  const t = 0.011;
+  const top = barY + bar / 2;
+  const len = Math.max(0.05, towel.len);
+  m.cyl(
+    t + bar / 2,
+    t + bar / 2,
+    tw,
+    0,
+    top - t - bar / 2,
+    barZ,
+    cloth,
+    16,
+    "x",
+  );
+  for (const [z, drop] of [
+    [barZ + bar / 2 + t / 2, len],
+    [barZ - bar / 2 - t / 2, len * 0.88],
+  ] as const) {
+    m.soft(tw, drop, t, 0, top - t - drop, z, cloth, 0.005);
+    // A woven band near its hem.
+    m.box(tw + 0.001, 0.035, t + 0.001, 0, top - t - drop + 0.06, z, band);
+  }
 };
 
 /** A shower valve's trim (its back at -z, on the wall): a round matte
@@ -5790,6 +5848,7 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^shower_glass_panel/, showerGlassPanel],
   [/^floor_tile_pebble/, pebbleFloor],
   [/^shower_valve_black/, showerValve],
+  [/^towel_bar_black/, towelBar],
   [/^shower_niche/, showerNiche],
   [/^bath_sink_vessel_rect/, vesselSink],
   [/^bath_faucet_black/, bathFaucet],

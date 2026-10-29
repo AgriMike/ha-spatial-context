@@ -403,6 +403,11 @@ export interface FurnitureItem {
   tile_turned?: boolean | null;
   /** A tile wall's tiles laid from its right end (else its left). */
   tile_from_right?: boolean | null;
+  /** A towel bar's folded towel: shown, how far it hangs (cm, unset:
+   * 55), its colour (unset: white). */
+  towel?: boolean | null;
+  towel_cm?: number | null;
+  towel_color?: string | null;
   /** How wide a climbing plant's leaves fan round its front, degrees
    * (90 fills a corner); unset = its own. */
   leaf_spread_deg?: number | null;

@@ -412,6 +412,12 @@ _FURNITURE_SCHEMA = {
     vol.Optional("tile_turned"): vol.Any(None, bool),
     # ...and laid from its right end (its grout lines meeting a corner).
     vol.Optional("tile_from_right"): vol.Any(None, bool),
+    # A towel bar's folded towel: shown, how far it hangs (cm), its colour.
+    vol.Optional("towel"): vol.Any(None, bool),
+    vol.Optional("towel_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=5, max=200))
+    ),
+    vol.Optional("towel_color"): vol.Any(vol.Match(r"^#[0-9a-fA-F]{6}$"), None),
     vol.Optional("opening_gap_cm"): vol.Any(
         None, vol.All(vol.Coerce(float), vol.Range(min=0, max=50))
     ),

@@ -1171,6 +1171,16 @@ const BATHROOM: Row[] = [
     "box",
     { h3d: 0.305, y3d: 1.2 },
   ],
+  // A square bar on blocky posts, as wide as set, 1.2 m up unless moved;
+  // a folded towel over it if set (its drop and colour too).
+  [
+    "towel_bar_black",
+    "Towel bar (matte black)",
+    61,
+    7,
+    "box",
+    { h3d: 0.035, y3d: 1.2 },
+  ],
   [
     "shower_valve_black",
     "Shower valve trim (matte black)",

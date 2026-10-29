@@ -5374,6 +5374,48 @@ export class Floorplan3dView extends LitElement {
             : nothing
         }
         ${
+          entry?.id.startsWith("towel_bar")
+            ? html`<label class="row">
+                  <span>${localize("edit3d.towel")}</span>
+                  <input
+                    type="checkbox"
+                    .checked=${!!item.towel}
+                    @change=${(e: Event) =>
+                      set({
+                        towel: (e.target as HTMLInputElement).checked
+                          ? true
+                          : null,
+                      })}
+                  />
+                </label>
+                ${
+                  item.towel
+                    ? html`${this._num(
+                        localize("edit3d.towelLength"),
+                        item.towel_cm ?? null,
+                        (v) =>
+                          set({
+                            towel_cm:
+                              v == null ? null : Math.max(5, Math.min(200, v)),
+                          }),
+                        {
+                          unit: "cm",
+                          min: 5,
+                          max: 200,
+                          step: 5,
+                          placeholder: "55",
+                        },
+                      )}
+                      ${this._color(
+                        localize("edit3d.towelColor"),
+                        item.towel_color,
+                        (v) => set({ towel_color: v }),
+                      )}`
+                    : nothing
+                }`
+            : nothing
+        }
+        ${
           entry?.id.startsWith("backsplash_")
             ? html`<label class="row">
                 <span>${localize("edit3d.tileFromRight")}</span>

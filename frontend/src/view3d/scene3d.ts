@@ -4094,6 +4094,14 @@ function buildFloor(
               ...(item.no_lid ? { noLid: true } : {}),
               ...(item.tile_turned ? { tileTurned: true } : {}),
               ...(item.tile_from_right ? { tileFromRight: true } : {}),
+              ...(item.towel
+                ? {
+                    towel: {
+                      len: (item.towel_cm ?? 55) / 100,
+                      color: item.towel_color ?? null,
+                    },
+                  }
+                : {}),
               ...(entry.id.startsWith("shower_glass_door")
                 ? {
                     door: {
