@@ -932,8 +932,25 @@ function stairsModel(
       const x = (i === 0 ? -1 : 1) * (W / 2 + 0.05);
       // A straight wall down each side from the floor to the flight's
       // foot (between it and a flight beside it, too), its top a hair
-      // under the floor so the two never fight.
-      box(0.1, rise - 0.004, D, x, (rise - 0.004) / 2, 0, paint);
+      // under the floor so the two never fight; where a flight climbs
+      // beside it, the wall between them rises over that one's nosings.
+      const tops = st.sideTops?.[i];
+      if (tops && tops.length >= 2) {
+        const low = Math.min(st.front, st.back);
+        const shape = new THREE.Shape();
+        shape.moveTo(tops[0]![0], 0);
+        shape.lineTo(tops[tops.length - 1]![0], 0);
+        for (const [z, level] of [...tops].reverse())
+          shape.lineTo(z, Math.max(rise - 0.004, level - low));
+        const g = new THREE.ExtrudeGeometry(shape, {
+          depth: 0.1,
+          bevelEnabled: false,
+        });
+        // Its profile's x along z, extruded across the side.
+        g.rotateY(-Math.PI / 2);
+        const mesh = add(g, paint, 0);
+        mesh.position.x = x + 0.05;
+      } else box(0.1, rise - 0.004, D, x, (rise - 0.004) / 2, 0, paint);
       if (!on) return;
       const top = rise + 0.95;
       const ends = [-D / 2 + 0.05, D / 2 - 0.05];

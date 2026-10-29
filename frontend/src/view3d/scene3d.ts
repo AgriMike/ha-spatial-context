@@ -1255,12 +1255,59 @@ function buildFloor(
         top,
         landing,
         outdoor,
+        P,
+        d,
         sides: [
           [P(-w / 2, -d / 2), P(-w / 2, d / 2)],
           [P(w / 2, -d / 2), P(w / 2, d / 2)],
         ] as [Vec2, Vec2][],
       };
     });
+  /** A flight's side shared with a flight climbing beside it (a split
+   * level's up flight beside its down one): the wall between them stands
+   * a cap's height over that flight's nosings, as [z, level] along this
+   * side (see Item3d's stairs.sideTops). */
+  const STAIR_CAP_M = 0.15;
+  const sideTop = (si: number, side: 0 | 1): [number, number][] | null => {
+    const st = stairs[si]!;
+    const seg = st.sides[side]!;
+    const o = stairs.find(
+      (o, oi) =>
+        oi !== si &&
+        o.top > st.top + 0.3 &&
+        o.sides.some((os) => alongShare(seg, os, 0.3) >= 0.4),
+    );
+    if (!o) return null;
+    // Each flight's frame: its middle and the way to its front.
+    const frame = (f: typeof st) => {
+      const c = f.P(0, 0);
+      const fw = f.P(0, 1);
+      return { c, u: [fw[0] - c[0], fw[1] - c[1]] as Vec2 };
+    };
+    const me = frame(st);
+    const it = frame(o);
+    const lz = (fr: typeof me, p: Vec2) =>
+      (p[0] - fr.c[0]) * fr.u[0] + (p[1] - fr.c[1]) * fr.u[1];
+    // Its nosing line's level over a spot (flat past its ends).
+    const levelAt = (p: Vec2) => {
+      const t = Math.max(0, Math.min(1, (lz(it, p) + o.d / 2) / o.d));
+      return o.back + (o.front - o.back) * t + STAIR_CAP_M;
+    };
+    const [a, b] = seg;
+    const at = (z: number): Vec2 => {
+      const t = (z + st.d / 2) / st.d;
+      return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    };
+    // Along this side: its ends, and that flight's ends where they fall.
+    const zs = new Set([-st.d / 2, st.d / 2]);
+    for (const e of [-o.d / 2, o.d / 2]) {
+      const z = lz(me, o.P(0, e));
+      if (z > -st.d / 2 && z < st.d / 2) zs.add(z);
+    }
+    return [...zs]
+      .sort((p, q) => p - q)
+      .map((z): [number, number] => [z, levelAt(at(z))]);
+  };
   /** How much of segment [a, b] (metres) runs within `reach` of [p, q]. */
   const alongShare = (
     [a, b]: [Vec2, Vec2],
@@ -3440,6 +3487,26 @@ function buildFloor(
           const mx = (p[0] + q[0]) / 2 / m;
           const mz = (p[1] + q[1]) / 2 / m;
           const dl = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
+          // A floor above carrying a wall on, from below this ceiling (a
+          // split level's half wall over it): its wall to draw, open over
+          // a half wall.
+          const ux = (q[0] - p[0]) / dl;
+          const uz = (q[1] - p[1]) / dl;
+          const [cx, cz] = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+          if (
+            upperWalls.some((w) => {
+              if (w.y > level + 0.5) return false;
+              const wl = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
+              if (wl < 0.05) return false;
+              const vx = (w.b[0] - w.a[0]) / wl;
+              const vz = (w.b[1] - w.a[1]) / wl;
+              if (Math.abs(ux * vz - uz * vx) > 0.09) return false;
+              const s = (cx - w.a[0]) * vx + (cz - w.a[1]) * vz;
+              if (s < -0.02 || s > wl + 0.02) return false;
+              return Math.abs((cx - w.a[0]) * vz - (cz - w.a[1]) * vx) < 0.35;
+            })
+          )
+            return false;
           return layout.walls.some(
             (w) =>
               !ledgeWalls.has(w) &&
@@ -3554,9 +3621,26 @@ function buildFloor(
             // Open to the next room: only the step up to it from that
             // room's vault, where its own is higher (that room's to fill
             // where it's lower).
+            const bare = !walled(p0, p1);
             const open =
-              !walled(p0, p1) &&
-              openTo([(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2]);
+              bare && openTo([(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2]);
+            // No wall, and another room beyond (a step down to it, or under
+            // a floor above): nothing to fill; the space runs on.
+            if (bare && !open) {
+              const bx = (p0[0] + p1[0]) / 2 - nx * 0.15;
+              const bz = (p0[1] + p1[1]) / 2 - nz * 0.15;
+              if (
+                exterior.upperRoom(bx, bz) ||
+                layout.rooms.some(
+                  (o) =>
+                    o !== room &&
+                    !o.outdoor &&
+                    o.points.length >= 3 &&
+                    pointInPolygon(bx / m, bz / m, o.points),
+                )
+              )
+                continue;
+            }
             const yOut = (p: Vec2) =>
               open ? vy(p[0] - nx * 0.01, p[1] - nz * 0.01) : level;
             const [b0, b1] = [yOut(q0), yOut(q1)];
@@ -4034,6 +4118,10 @@ function buildFloor(
               rails: [railed(si, 0), railed(si, 1)] as [boolean, boolean],
               landing: flight.landing,
               outdoor: flight.outdoor,
+              sideTops: [sideTop(si, 0), sideTop(si, 1)] as [
+                [number, number][] | null,
+                [number, number][] | null,
+              ],
               railEnds: [railEnds(si, 0), railEnds(si, 1)] as [
                 [number, number],
                 [number, number],

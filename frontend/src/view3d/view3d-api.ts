@@ -265,6 +265,11 @@ export interface Item3d {
     railEnds?: [[number, number], [number, number]];
     /** Out of doors (deck stairs): open treads on stringers. */
     outdoor?: boolean;
+    /** Per side (left, right), where a flight climbing beside it shares
+     * the wall between them: that wall's top along it, as [z, level]
+     * pairs in the item's frame (z back to front, metres; level above the
+     * floor's), else null (level with the floor). */
+    sideTops?: [[number, number][] | null, [number, number][] | null];
   };
 }
 
