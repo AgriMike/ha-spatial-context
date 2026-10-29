@@ -77,6 +77,7 @@ import {
 } from "../canvas/live-state";
 import {
   catalogItem,
+  CUSTOM_COUNTER_KIND,
   isShapeKind,
   type CatalogItem,
 } from "../canvas/furniture-catalog";
@@ -131,6 +132,9 @@ const TRIM_WHITE_DARK = "#9a968f";
 /** White oak casing (indoors, chosen on the opening). */
 const TRIM_OAK = "#d3b98f";
 const TRIM_OAK_DARK = "#85745a";
+/** Maple: very light, near cream (as the Lato floor). */
+const TRIM_MAPLE = "#e6dccb";
+const TRIM_MAPLE_DARK = "#8f887d";
 /** A bezel round the casing indoors, unless coloured: matte black. */
 const TRIM_BEZEL = "#1d1d1e";
 /** An outside door's leaf. */
@@ -889,6 +893,15 @@ function buildFloor(
       roof !== null && roof > H + 0.3 && exterior.lowerRoomNear(x, z, 0.01)
     );
   };
+  const ownHouse = houseLoopsOf(layout);
+  /** A spot (metres) with no room of its own that's still inside the
+   * house, not out under the sky: a room below and the roof well above
+   * this storey (a stairwell, the space beside a closet), or inside this
+   * floor's own walls. (Beside a lower room standing up past this floor,
+   * see the pass after the walls: painted up to its ceiling.) */
+  const housed = (x: number, z: number) =>
+    sheltered(x, z) ||
+    ownHouse.some((loop) => pointInPolygon(x / m, z / m, loop));
   const wallSides = (a: Vec2, b: Vec2, t: number) => {
     const len = distance(a[0], a[1], b[0], b[1]);
     const nx = -(b[1] - a[1]) / len;
@@ -905,10 +918,7 @@ function buildFloor(
         );
         if (room) offsets.add(room.floor_offset_m ?? 0);
         if (room && !room.outdoor) indoors[side]++;
-        // No room of its own here, but a room below and the roof well
-        // above this storey: inside the house (a stairwell, the space
-        // beside a closet), not out under the sky.
-        else if (!room && sheltered(x * m, y * m)) indoors[side]++;
+        else if (!room && housed(x * m, y * m)) indoors[side]++;
       }
     }
     const outside: 1 | -1 | undefined =
@@ -1066,7 +1076,7 @@ function buildFloor(
           !r.outdoor &&
           r.points.length >= 3 &&
           pointInPolygon(x / m, z / m, r.points),
-      ) || sheltered(x, z);
+      ) || housed(x, z);
     for (let k = 0; k < n; k++) {
       const s = ((k + 0.5) * L) / n;
       const x = a[0] * m + ux * s;
@@ -2820,13 +2830,17 @@ function buildFloor(
           // two, white outside, its own inside (from across the wall's
           // inside face).
           const oak =
-            opening.trim_finish === "white_oak"
+            opening.trim_finish === "maple"
               ? dark
-                ? TRIM_OAK_DARK
-                : TRIM_OAK
-              : opening.trim_finish === "stained"
-                ? stain
-                : null;
+                ? TRIM_MAPLE_DARK
+                : TRIM_MAPLE
+              : opening.trim_finish === "white_oak"
+                ? dark
+                  ? TRIM_OAK_DARK
+                  : TRIM_OAK
+                : opening.trim_finish === "stained"
+                  ? stain
+                  : null;
           const split =
             !!oak ||
             bezel > 0.001 ||
@@ -2917,15 +2931,19 @@ function buildFloor(
         // white oak).
         if (!outside && isDoor && !opening.garage) {
           const color =
-            opening.trim_finish === "white_oak"
+            opening.trim_finish === "maple"
               ? dark
-                ? TRIM_OAK_DARK
-                : TRIM_OAK
-              : opening.trim_finish === "white"
+                ? TRIM_MAPLE_DARK
+                : TRIM_MAPLE
+              : opening.trim_finish === "white_oak"
                 ? dark
-                  ? TRIM_WHITE_DARK
-                  : TRIM_WHITE
-                : stain;
+                  ? TRIM_OAK_DARK
+                  : TRIM_OAK
+                : opening.trim_finish === "white"
+                  ? dark
+                    ? TRIM_WHITE_DARK
+                    : TRIM_WHITE
+                  : stain;
           const pieces: [number, number, number, number][] = [
             [hole.s0 - trimSide, hole.s0 + JOINT_INSET_M, sill, head + trimTop],
             [hole.s1 - JOINT_INSET_M, hole.s1 + trimSide, sill, head + trimTop],
@@ -3894,6 +3912,10 @@ function buildFloor(
           ? item.elevation_cm / 100
           : auto.y0,
     };
+    // A custom countertop made thicker grows down: its top stays at
+    // counter height.
+    if (entry?.id === CUSTOM_COUNTER_KIND && item.elevation_cm == null)
+      placed.y0 = auto.y0 + auto.height - placed.height;
     // Out in the yard (in none of the floor's rooms), on the ground;
     // else in a room set higher or lower, with it.
     const grounded =
@@ -4026,7 +4048,8 @@ function buildFloor(
       ...(entry &&
       !flight &&
       shape === "block" &&
-      !(item.points && item.points.length >= 2) &&
+      (!(item.points && item.points.length >= 2) ||
+        entry.id === CUSTOM_COUNTER_KIND) &&
       !isShapeKind(entry.id)
         ? {
             model: {
@@ -4035,6 +4058,9 @@ function buildFloor(
               opts: entry.opts,
               flip,
               tint: own,
+              ...(entry.id === CUSTOM_COUNTER_KIND
+                ? { outline: drawnOutline(item) }
+                : {}),
               ...(item.pot_cm != null ||
               item.pot_shape != null ||
               item.fullness != null ||
@@ -4068,6 +4094,7 @@ function buildFloor(
                 : {}),
               ...(item.handle_side ? { handleSide: item.handle_side } : {}),
               ...(item.door_tiers ? { doorTiers: item.door_tiers } : {}),
+              ...(item.no_lid ? { noLid: true } : {}),
               ...(item.countertop === false ? { noTop: true } : {}),
               ...(item.finish ? { finish: item.finish } : {}),
               ...(item.slat_cm != null || item.slat_gap_cm != null
@@ -4225,11 +4252,11 @@ function buildFloor(
     const sn = Math.sin(b.angle);
     const cs = Math.cos(b.angle);
     const reach = b.depth / 2 + 0.15;
-    const n = Math.max(1, Math.min(200, Math.ceil(b.length / 0.25)));
+    const n = Math.max(1, Math.min(200, Math.ceil(b.length / 0.1)));
     const step = b.length / n;
     // The lower room's ceiling beside each stretch (null: none above
     // this wall's foot).
-    const ceils = Array.from({ length: n }, (_, i) => {
+    const raw = Array.from({ length: n }, (_, i) => {
       const f = -b.length / 2 + step * (i + 0.5);
       const px = b.x + cs * f + sn * b.outside! * reach;
       const pz = b.z - sn * f + cs * b.outside! * reach;
@@ -4240,6 +4267,16 @@ function buildFloor(
       if (c !== null && roof !== null) c = Math.min(c, roof - ROOF_HEEL_M);
       return c !== null && c > b.y0 + 0.05 ? Math.min(c, b.y1) : null;
     });
+    // Under a sloping (vaulted) ceiling, each stretch painted up to the
+    // higher of its neighbours', so no sided notch shows below the slope.
+    const ceils = raw.map((c, i) =>
+      c === null
+        ? null
+        : Math.max(
+            c,
+            ...[raw[i - 1], raw[i + 1]].filter((v): v is number => v != null),
+          ),
+    );
     if (ceils.every((c) => c === null)) continue;
     const { outside: _side, ...inner } = b;
     const slice = (i0: number, i1: number, part: Box3d): Box3d => {
@@ -4254,7 +4291,12 @@ function buildFloor(
     const parts: Box3d[] = [];
     let i0 = 0;
     for (let i = 1; i <= n; i++) {
-      if (i < n && (ceils[i] === null) === (ceils[i0] === null)) continue;
+      if (
+        i < n &&
+        (ceils[i] === null) === (ceils[i0] === null) &&
+        Math.abs((ceils[i] ?? 0) - (ceils[i0] ?? 0)) < 0.005
+      )
+        continue;
       const run = ceils.slice(i0, i).filter((c): c is number => c !== null);
       if (!run.length) parts.push(slice(i0, i, b));
       else {
@@ -4607,6 +4649,31 @@ export function retainingDepth(item: FurnitureItem): number {
     : 0.3;
 }
 
+/** A drawn item's closed outline with its corners rounded (as its plan
+ * drawing), centred in its own frame, metres; its box when not drawn. */
+function drawnOutline(item: FurnitureItem): [number, number][] {
+  const w = item.width_cm;
+  const d = item.depth_cm;
+  if (!item.points || item.points.length < 3)
+    return [
+      [-w / 200, -d / 200],
+      [w / 200, -d / 200],
+      [w / 200, d / 200],
+      [-w / 200, d / 200],
+    ];
+  const raw = item.points.map(([fx, fy]): [number, number] => [fx * w, fy * d]);
+  const radii = cornerRadii(
+    item.corners?.length ? { corners: item.corners.join(",") } : {},
+    w,
+    d,
+    raw.length,
+    6,
+  );
+  return roundedPolyPoints(raw, true, radii, 8).map(
+    ([x, y]): [number, number] => [x / 100 - w / 200, y / 100 - d / 200],
+  );
+}
+
 /** A site item's outline in its own frame (metres, corners rounded as
  * the plan draws them) and what it is. */
 function siteSpec(
@@ -4841,14 +4908,28 @@ export function buildScene(input: SceneInput): Scene3d {
           for (const g of input.context ?? input.floors) {
             if (g.baseY >= f.baseY - 0.3) continue;
             const gm = metersPerUnit(g.layout.scale);
-            const inside = g.layout.rooms.some(
+            const room = g.layout.rooms.find(
               (r) =>
                 !r.outdoor &&
                 r.points.length >= 3 &&
                 pointInPolygon(x / gm, z / gm, r.points),
             );
-            if (!inside) continue;
-            const c = g.baseY + g.wallHeight - f.baseY;
+            if (!room) continue;
+            let c = g.baseY + g.wallHeight;
+            // Vaulted up under the roof there (no storey over it, its
+            // ceiling not set flat): as high as that.
+            const open =
+              room.ceiling !== "flat" &&
+              !(input.context ?? input.floors).some((u) => {
+                if (u.baseY <= g.baseY + 0.5) return false;
+                const um = metersPerUnit(u.layout.scale);
+                return houseLoopsOf(u.layout).some((loop) =>
+                  pointInPolygon(x / um, z / um, loop),
+                );
+              });
+            if (open && input.roof)
+              c = vaultUnder(c, vaultRoofAt(sections, isDormer, x, z));
+            c -= f.baseY;
             if (best === null || c > best) best = c;
           }
           return best;

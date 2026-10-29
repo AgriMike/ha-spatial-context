@@ -1102,6 +1102,11 @@ const cabinet: Builder = (m, o, tint, item) => {
 
 /** White oak shaker cabinets' wood. */
 const WHITE_OAK = "#d3b98f";
+/** Maple: very light, near cream (as the Lato floor). */
+const MAPLE = "#e6dccb";
+/** A wood finish's colour: white oak unless set. */
+const woodOf = (finish: string | undefined) =>
+  finish === "maple" ? MAPLE : finish === "walnut" ? WALNUT : WHITE_OAK;
 
 /** White oak's grain: a pale warm board with fine darker streaks along it
  * and a few faint rays, one repeat `OAK_REPEAT` metres along and across
@@ -1323,7 +1328,7 @@ function plankHood(m: Model, oak: string): void {
 const shaker: Builder = (m, o, tint, item) => {
   const { W, D, H } = m;
   const type = typeof o["shaker"] === "string" ? o["shaker"] : "base";
-  const oak = tint ?? WHITE_OAK;
+  const oak = tint ?? woodOf(item.model?.finish);
   if (type === "hood") {
     plankHood(m, oak);
     return;
@@ -4314,7 +4319,7 @@ const weightBench: Builder = (m, _o, tint) => {
 
 /** A wood finish's grained material (a colour picked tints it). */
 const grainOf = (finish: string | undefined, tint: string | null) =>
-  oakMaterial(tint ?? (finish === "walnut" ? WALNUT : WHITE_OAK));
+  oakMaterial(tint ?? woodOf(finish));
 
 /** A floating shelf: a slab (as thick as its height where that's set
  * slim, else 4 cm), plain or grained white oak or walnut at its real
@@ -4612,6 +4617,249 @@ const mxMaster: Builder = (m, _o, tint) => {
   );
 };
 
+/** A Sidio crate (any colour, grey unless picked): a stacking crate with
+ * thin walls ribbed outside (rails round it, posts at its corners and
+ * near its ends, an inverted V braced across each long side and an X on
+ * each end), a hand hole high on each end, and its clear lid with black
+ * latches over the hand holes (unless shown off). */
+const sidioCrate: Builder = (m, _o, tint, item) => {
+  const { W, D, H } = m;
+  const lidOn = !item.model?.noLid;
+  const lidT = lidOn ? 0.014 : 0;
+  const h = H - lidT;
+  const body = mat(tint ?? "#7e8287", 0.75);
+  const rib = mat(shade(tint ?? "#7e8287", 0.92), 0.75);
+  const wall = 0.006;
+  const r = 0.008;
+  // The tub: a floor and four walls, slightly in from its rim.
+  m.box(W - 0.012, 0.006, D - 0.012, 0, 0.004, 0, body);
+  for (const s of [-1, 1]) {
+    m.box(
+      W - 0.012,
+      h - 0.004,
+      wall,
+      0,
+      0.004,
+      s * (D / 2 - 0.006 - wall / 2),
+      body,
+    );
+    m.box(
+      wall,
+      h - 0.004,
+      D - 0.012,
+      s * (W / 2 - 0.006 - wall / 2),
+      0.004,
+      0,
+      body,
+    );
+  }
+  // Rails round it: the rim, two between, a foot.
+  for (const y of [0, h * 0.36, h * 0.68, h - 0.022])
+    for (const s of [-1, 1]) {
+      m.box(W, 0.012, r, 0, y, s * (D / 2 - r / 2), rib);
+      m.box(r, 0.012, D, s * (W / 2 - r / 2), y, 0, rib);
+    }
+  // Posts at its corners and near each end of the long sides.
+  for (const sx of [-1, 1])
+    for (const sz of [-1, 1]) {
+      m.box(
+        0.018,
+        h,
+        0.018,
+        sx * (W / 2 - 0.009),
+        0,
+        sz * (D / 2 - 0.009),
+        rib,
+      );
+      m.box(0.01, h, r, sx * (W / 2 - W * 0.1), 0, sz * (D / 2 - r / 2), rib);
+    }
+  /** A brace from (x0, y0) to (x1, y1) across a face at depth `z`, along
+   * x (a long side) or z (an end). */
+  const brace = (
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    at: number,
+    along: "x" | "z",
+  ) => {
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    const g = new THREE.BoxGeometry(len, 0.01, r);
+    g.rotateZ(Math.atan2(y1 - y0, x1 - x0));
+    if (along === "z") g.rotateY(Math.PI / 2);
+    const [cx, cy] = [(x0 + x1) / 2, (y0 + y1) / 2];
+    if (along === "x") g.translate(cx, cy, at);
+    else g.translate(at, cy, cx);
+    m.add(g, rib);
+  };
+  const xIn = W / 2 - W * 0.1;
+  for (const s of [-1, 1]) {
+    const z = s * (D / 2 - r / 2);
+    brace(-xIn, 0.02, 0, h - 0.02, z, "x");
+    brace(0, h - 0.02, xIn, 0.02, z, "x");
+    const x = s * (W / 2 - r / 2);
+    const zIn = D / 2 - 0.02;
+    brace(-zIn, 0.02, zIn, h * 0.68, x, "z");
+    brace(-zIn, h * 0.68, zIn, 0.02, x, "z");
+  }
+  // Hand holes high on each end.
+  const dark = mat("#1b1b1b", 0.8);
+  for (const s of [-1, 1])
+    m.box(0.002, 0.03, D * 0.32, s * (W / 2 + 0.0005), h - 0.07, 0, dark);
+  if (!lidOn) return;
+  // The lid: clear, a rim round it, latches over the hand holes.
+  const clear = mat("#dfe7ea", 0.1, 0, { opacity: 0.4 });
+  m.box(W + 0.004, lidT, D + 0.004, 0, h, 0, clear);
+  for (const s of [-1, 1]) {
+    m.box(
+      W + 0.004,
+      lidT + 0.004,
+      0.012,
+      0,
+      h - 0.002,
+      s * (D / 2 - 0.004),
+      clear,
+    );
+    m.box(
+      0.024,
+      0.07,
+      D * 0.22,
+      s * (W / 2 + 0.008),
+      h - 0.05,
+      0,
+      mat("#141414", 0.5),
+    );
+  }
+};
+
+/** A custom countertop: its drawn outline (corners rounded) cut from a
+ * slab as thick as the item is tall, grained white oak unless set (maple,
+ * walnut, stained as the doors, matte black, white; a colour picked
+ * paints it). */
+const customCounter: Builder = (m, _o, tint, item) => {
+  const { W, D, H } = m;
+  const finish = item.model?.finish ?? "white_oak";
+  const top = tint
+    ? mat(tint, 0.6)
+    : finish === "black"
+      ? mat("#1d1d1d", 0.85)
+      : finish === "white"
+        ? mat("#f3f1ec", 0.7)
+        : oakMaterial(finish === "stained" ? "#6f4527" : woodOf(finish));
+  const pts = item.model?.outline;
+  if (!pts || pts.length < 3) {
+    m.box(W, H, D, 0, 0, 0, top);
+    return;
+  }
+  const shape = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(x, -z)));
+  const g = new THREE.ExtrudeGeometry(shape, {
+    depth: H,
+    bevelEnabled: false,
+  });
+  g.rotateX(-Math.PI / 2);
+  g.computeVertexNormals();
+  planarUv(g, 1);
+  m.add(g, top);
+};
+
+/** Knoll's Generation chair (front at +z), light: a five-star base on
+ * dark casters, a gas column, the seat's shell and a black leather
+ * cushion, arms with dark pads, and its back: an elastomer grid (ribs
+ * with gaps between) wider at the shoulders, leaning back, curved round
+ * the sitter, bulging at the lumbar, on a spine up from the seat. A
+ * colour picked is its frame's and back's. */
+const knollGeneration: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const shell = mat(tint ?? "#dcd8cf", 0.55);
+  const back = mat(tint ? shade(tint, 1.04) : "#e6e1d6", 0.65);
+  const leather = mat("#171717", 0.45);
+  const caster = mat("#4b4c4f", 0.5);
+  const pad = mat("#5c5e62", 0.6);
+  const steel = mat("#a4a7ab", 0.3, 0.7);
+  // The base: five arms out from a hub, a caster under each end.
+  const r = Math.min(W, D) / 2 - 0.03;
+  for (let k = 0; k < 5; k++) {
+    const a = (k / 5) * Math.PI * 2 + Math.PI / 2;
+    const g = new THREE.BoxGeometry(r, 0.032, 0.05);
+    g.translate(r / 2, 0.075, 0);
+    g.rotateY(a);
+    m.add(g, shell);
+    const [cx, cz] = [Math.cos(a) * r, -Math.sin(a) * r];
+    m.box(0.03, 0.03, 0.03, cx, 0.05, cz, shell);
+    m.sphere(0.027, cx, 0.027, cz, caster, 1.2, 1, 0.7);
+  }
+  m.cyl(0.05, 0.055, 0.06, 0, 0.06, 0, shell, 20);
+  // The column, a shroud round its foot.
+  m.cyl(0.032, 0.036, 0.12, 0, 0.11, 0, shell, 20);
+  m.cyl(0.024, 0.024, 0.16, 0, 0.22, 0, steel, 16);
+  // The mechanism, the seat's shell, the cushion.
+  const seatY = 0.42;
+  m.soft(0.3, 0.06, 0.3, 0, seatY - 0.06, -0.02, shell, 0.02);
+  m.soft(0.5, 0.025, 0.46, 0, seatY, 0.03, shell, 0.01);
+  m.soft(0.49, 0.045, 0.45, 0, seatY + 0.02, 0.035, leather, 0.02);
+  // Its front rolled down (a waterfall edge).
+  m.cyl(0.022, 0.022, 0.47, 0, seatY + 0.042, 0.035 + 0.2, leather, 16, "x");
+  // The arms: a post up from under the seat, a dark pad on it.
+  for (const s of [-1, 1]) {
+    m.box(0.05, 0.03, 0.12, s * 0.17, seatY - 0.03, -0.05, shell);
+    m.box(0.035, 0.27, 0.05, s * 0.255, seatY - 0.03, -0.06, shell);
+    m.soft(0.08, 0.028, 0.27, s * 0.26, seatY + 0.24, -0.02, pad, 0.012);
+  }
+  // The back: rows of ribs from just over the seat to the top.
+  const y0 = 0.56;
+  const y1 = Math.max(y0 + 0.3, H - 0.01);
+  const rows = 24;
+  const dh = (y1 - y0) / rows;
+  const zBase = -D / 2 + 0.11;
+  const R = 0.42;
+  const zAt = (y: number) => {
+    const f = (y - y0) / (y1 - y0);
+    return (
+      zBase - (y - y0) * 0.22 + 0.025 * Math.exp(-(((f - 0.22) / 0.16) ** 2))
+    );
+  };
+  for (let i = 0; i < rows; i++) {
+    const f = (i + 0.5) / rows;
+    // Narrow at the lumbar, widest at the shoulders, rounded over the top.
+    let w = 0.38 + 0.1 * Math.sin((Math.PI / 2) * Math.min(1, f / 0.75));
+    if (f > 0.82) w *= Math.sqrt(Math.max(0.15, 1 - ((f - 0.82) / 0.2) ** 2));
+    const y = y0 + i * dh;
+    const zc = zAt(y + dh / 2) + R;
+    const half = Math.asin(Math.min(0.95, w / 2 / R));
+    const n = Math.max(6, Math.round(w / 0.016));
+    const edge = i === 0 || i === rows - 1;
+    for (let j = 0; j < n; j++) {
+      const t = -half + ((j + 0.5) * 2 * half) / n;
+      const solid = edge || j === 0 || j === n - 1;
+      const seg = 2 * R * Math.sin(half / n);
+      turnedBox(
+        m,
+        solid ? seg + 0.002 : seg * 0.74,
+        solid ? dh + 0.001 : dh * 0.8,
+        0.012,
+        R * Math.sin(t),
+        y,
+        zc - R * Math.cos(t),
+        -t,
+        back,
+      );
+    }
+  }
+  // The spine: from the mechanism up behind the back's foot.
+  m.box(0.07, 0.04, 0.2, 0, seatY - 0.05, zBase + 0.07, shell);
+  turnedBox(
+    m,
+    0.08,
+    y0 + 0.12 - (seatY - 0.02),
+    0.035,
+    0,
+    seatY - 0.02,
+    zBase - 0.03,
+    0,
+    shell,
+  );
+};
+
 /** Book spines' colours (cloth and paper, muted). */
 const BOOK_COLORS = [
   "#2f3e4e",
@@ -4672,13 +4920,7 @@ const openBookshelf: Builder = (m, o, tint, item) => {
       0,
       0,
       bz - 0.0375,
-      mat(
-        shade(
-          tint ?? (item.model?.finish === "walnut" ? WALNUT : WHITE_OAK),
-          0.45,
-        ),
-        0.8,
-      ),
+      mat(shade(tint ?? woodOf(item.model?.finish), 0.45), 0.8),
     );
   // Its cubbies: rows from the top down, columns across.
   const inner = H - kick - 2 * t;
@@ -4891,6 +5133,9 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^bookshelf_open/, openBookshelf],
   [/^slat_wall/, slatWall],
   [/^espresso_philips_baristina/, baristina],
+  [/^countertop_custom/, customCounter],
+  [/^office_chair_knoll_generation/, knollGeneration],
+  [/^sidio_crate/, sidioCrate],
   [/^monitor_samsung_viewfinity/, viewfinity],
   [/^laptop_dell_xps/, dellXps],
   [/^keyboard_logitech_mx_keys/, mxKeys],

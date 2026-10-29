@@ -215,7 +215,7 @@ _OPENING_SCHEMA = {
     ),
     # The casing round it indoors: white (unset) or white oak.
     vol.Optional("trim_finish"): vol.Any(
-        None, vol.In(["white", "white_oak", "stained"])
+        None, vol.In(["white", "white_oak", "maple", "stained"])
     ),
     # ...and how wide it is, cm (unset: as outside): up its sides, over
     # and under it (unset: as its sides), and a bezel round its outer edge
@@ -322,12 +322,17 @@ _FURNITURE_SCHEMA = {
     vol.Optional("handle_side"): vol.Any(None, vol.In(["left", "right"])),
     # A cabinet's doors in one tier or two (a top half and a bottom), and
     # whether a base cabinet has its stone top; unset = its own.
+    # A crate shown with its lid off.
+    vol.Optional("no_lid"): vol.Any(None, bool),
     vol.Optional("door_tiers"): vol.Any(
         None, vol.All(vol.Coerce(int), vol.Range(min=1, max=2))
     ),
     vol.Optional("countertop"): vol.Any(None, bool),
     # A wood finish worn instead of a plain colour (a floating shelf).
-    vol.Optional("finish"): vol.Any(None, vol.In(["white_oak", "walnut"])),
+    vol.Optional("finish"): vol.Any(
+        None,
+        vol.In(["white_oak", "maple", "walnut", "stained", "black", "white"]),
+    ),
     # A slat wall's slats: how wide each is and the gap between, cm.
     vol.Optional("slat_cm"): vol.Any(
         None, vol.All(vol.Coerce(float), vol.Range(min=0.5, max=50))

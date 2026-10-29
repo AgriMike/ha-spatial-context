@@ -59,7 +59,11 @@ import {
   toolRowStyles,
 } from "../styles";
 import { localize } from "../i18n";
-import { catalogItem, isShapeKind } from "../canvas/furniture-catalog";
+import {
+  catalogItem,
+  isOutlineKind,
+  isShapeKind,
+} from "../canvas/furniture-catalog";
 import { defaultCornerPct, shapeCornerCount } from "../canvas/furniture-draw";
 import {
   isToggleable,
@@ -1353,7 +1357,8 @@ export class CanvasOverlay extends LitElement {
    * round as the shorter side allows. */
   private _renderCorners(item: FurnitureItem) {
     const entry = catalogItem(item.kind);
-    if (!entry || !isShapeKind(item.kind)) return nothing;
+    if (!entry || !(isShapeKind(item.kind) || isOutlineKind(item.kind)))
+      return nothing;
     const count = shapeCornerCount(entry.draw, entry.opts, item.points);
     if (count === 0) return nothing;
     const fallback = defaultCornerPct(item.width_cm, item.depth_cm);

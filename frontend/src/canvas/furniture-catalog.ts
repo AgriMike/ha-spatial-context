@@ -559,6 +559,16 @@ const KITCHEN: Row[] = [
   ["countertop_120", "Countertop 120 cm", 120, 64, "counter"],
   ["countertop_180", "Countertop 180 cm", 180, 64, "counter"],
   ["countertop_240", "Countertop 240 cm", 240, 64, "counter"],
+  // Drawn corner by corner (as the free-form shape), 4 cm thick, its top
+  // at counter height (91 cm) unless set.
+  [
+    "countertop_custom",
+    "Custom countertop (draw it)",
+    120,
+    64,
+    "shapeFreeform",
+    { h3d: 0.04, y3d: 0.874 },
+  ],
   ["sink_single", "Kitchen sink (single)", 80, 60, "sink", { basins: 1 }],
   ["sink_double", "Kitchen sink (double)", 90, 60, "sink", { basins: 2 }],
   [
@@ -1207,6 +1217,15 @@ const OFFICE: Row[] = [
     { enclosed: true },
   ],
   ["office_chair", "Office chair", 65, 65, "officeChair"],
+  // Knoll's Generation: 26.75" wide, 25" deep, about 40" tall.
+  [
+    "office_chair_knoll_generation",
+    "Knoll Generation chair (light, leather seat)",
+    68,
+    64,
+    "officeChair",
+    { h3d: 1.0 },
+  ],
   ["executive_chair", "Executive chair", 72, 72, "officeChair"],
   ["gaming_chair", "Gaming chair", 70, 70, "officeChair"],
   ["drafting_stool", "Drafting stool", 55, 55, "officeChair"],
@@ -3034,6 +3053,23 @@ const GARAGE: Row[] = [
   ["riding_mower", "Riding mower", 110, 180, "mower", { riding: true }],
   ["wheelbarrow", "Wheelbarrow", 70, 150, "wheelbarrow"],
   ["storage_totes", "Storage totes", 60, 40, "cubby", { cols: 2 }],
+  // Sidio crates: 19.34" x 12.77", 11.38" and 6.88" tall with the lid.
+  [
+    "sidio_crate_full",
+    "Sidio crate (full size)",
+    49.1,
+    32.4,
+    "box",
+    { h3d: 0.289 },
+  ],
+  [
+    "sidio_crate_half",
+    "Sidio crate (half size)",
+    49.1,
+    32.4,
+    "box",
+    { h3d: 0.175 },
+  ],
   ["gun_safe", "Gun safe", 75, 60, "device", { button: true }],
   ["ski_rack", "Ski rack", 120, 25, "rack", { rails: 1 }],
   ["golf_bag", "Golf bag", 40, 40, "circle", { inner: 0.6 }],
@@ -3667,8 +3703,16 @@ const SITE: Row[] = [
 
 /** Kinds drawn corner by corner: the free-form shape, and the site's. */
 export function isOutlineKind(kind: string | null | undefined): boolean {
-  return !!kind && (kind === "shape_freeform" || kind.startsWith("site_"));
+  return (
+    !!kind &&
+    (kind === "shape_freeform" ||
+      kind === CUSTOM_COUNTER_KIND ||
+      kind.startsWith("site_"))
+  );
 }
+
+/** A countertop drawn corner by corner, cut to any shape. */
+export const CUSTOM_COUNTER_KIND = "countertop_custom";
 
 /** The free-form shape: armed, each click on the plan adds a corner
  * (see floorplan-canvas.ts); the outline is kept on the item. */

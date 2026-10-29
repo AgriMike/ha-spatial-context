@@ -183,9 +183,14 @@ export interface Item3d {
     /** A cabinet's doors in one tier or two (a top half, a bottom), and
      * its stone top left off (absent: its own). */
     doorTiers?: number;
+    /** A crate with its lid off. */
+    noLid?: boolean;
     noTop?: boolean;
     /** A wood finish worn instead of a plain colour. */
-    finish?: "white_oak" | "walnut";
+    finish?: "white_oak" | "maple" | "walnut" | "stained" | "black" | "white";
+    /** A drawn item's outline (a custom countertop), corners rounded, in
+     * its own frame (before any flip), metres. */
+    outline?: [number, number][];
     /** A slat wall's slats set by hand: width and gap, metres. */
     slats?: { width: number | null; gap: number | null };
     /** An open bookshelf's cubbies set by hand: their heights from the

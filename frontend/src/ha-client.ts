@@ -488,6 +488,7 @@ const ITEM_FINISH_KEYS = [
   "doors",
   "handle_side",
   "door_tiers",
+  "no_lid",
   "countertop",
   "finish",
   "slat_cm",

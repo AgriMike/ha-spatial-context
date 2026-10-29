@@ -245,7 +245,7 @@ export interface Opening {
   /** A window's own height, metres, set by hand (absent: its style's). */
   height_m?: number | null;
   /** The casing round it indoors (absent: white). */
-  trim_finish?: "white" | "white_oak" | "stained" | null;
+  trim_finish?: "white" | "white_oak" | "maple" | "stained" | null;
   /** ...and how wide it is, centimetres (absent: as outside): up its
    * sides, over it and under it (absent: as its sides). */
   trim_width_cm?: number | null;
@@ -344,10 +344,15 @@ export interface FurnitureItem {
    * whether a base cabinet has its stone top (false: none); unset = its
    * own. */
   door_tiers?: number | null;
+  /** A crate shown with its lid off. */
+  no_lid?: boolean | null;
   countertop?: boolean | null;
   /** A wood finish worn instead of a plain colour (a floating shelf; a
    * bookshelf's or slat wall's wood). */
-  finish?: "white_oak" | "walnut" | null;
+  /** A wood finish (stained, matte black and white too, for a custom
+   * countertop). */
+  finish?:
+    "white_oak" | "maple" | "walnut" | "stained" | "black" | "white" | null;
   /** A slat wall's slats: each one's width and the gap between them,
    * centimetres; unset = its own. */
   slat_cm?: number | null;

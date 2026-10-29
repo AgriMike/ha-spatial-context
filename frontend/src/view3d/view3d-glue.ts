@@ -498,12 +498,13 @@ function wallGeometry(
   for (let v = 0; v < count; v++) {
     const face = Math.floor(v / 4);
     // Its top (and bottom) is the same painted cap on every wall, so
-    // tops read as one clean cut where walls meet. An inside wall's ends
-    // are painted (a jamb, a wall stopping above a half wall); an outside
-    // wall's are sided: where one shows past a corner it's the outside of
-    // the house (its door jambs are cased over).
+    // tops read as one clean cut where walls meet; its ends painted too
+    // (a jamb, a wall stopping above a half wall; where an outside wall's
+    // end runs a hair past a corner into a room, as the room's wall).
     const cap = face === 2 || face === 3;
-    const isOutdoor = !cap && indoor >= 0 && !(v >= indoor && v < indoor + 4);
+    const end = face === 0 || face === 1;
+    const isOutdoor =
+      !cap && !end && indoor >= 0 && !(v >= indoor && v < indoor + 4);
     const side = face === 4 ? 0 : face === 5 ? 1 : -1;
     const cov = !own && !isOutdoor && side >= 0 ? covers?.[side] : null;
     const c = own ?? (isOutdoor ? outdoor : (cov?.color ?? paint));
