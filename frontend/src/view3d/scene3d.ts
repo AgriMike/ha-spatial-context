@@ -4040,6 +4040,8 @@ function buildFloor(
                 : {}),
               ...(item.pot_cm != null ||
               item.pot_shape != null ||
+              item.pot_h_cm != null ||
+              item.pot_color != null ||
               item.fullness != null ||
               item.leaf_spread_deg != null ||
               item.lean_deg != null ||
@@ -4049,6 +4051,8 @@ function buildFloor(
                       pot: item.pot_cm != null ? item.pot_cm / 100 : null,
                       shape: item.pot_shape ?? null,
                       full: item.fullness ?? null,
+                      potH: item.pot_h_cm != null ? item.pot_h_cm / 100 : null,
+                      potColor: item.pot_color ?? null,
                       spread:
                         item.leaf_spread_deg != null
                           ? (item.leaf_spread_deg * Math.PI) / 180

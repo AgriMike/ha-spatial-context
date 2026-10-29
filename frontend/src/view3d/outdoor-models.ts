@@ -2580,6 +2580,11 @@ function boulders(m: Model, rand: () => number, several: boolean): void {
 function plantModel(m: Model, item: Item3d, o: Opts): boolean {
   const spec = item.model?.plant;
   PLANT.soil = null;
+  // Its pot as set (a plant's set never carrying on to the next).
+  PLANT.pot = spec?.pot ?? null;
+  PLANT.potH = spec?.potH ?? null;
+  PLANT.potColor = spec?.potColor ?? null;
+  PLANT.shape = spec?.shape ?? null;
   PLANT.lean = Math.max(-1.05, Math.min(1.05, spec?.lean ?? 0));
   PLANT.wide = Math.max(0.5, Math.min(3, spec?.wide ?? 1));
   if (houseplant(new Shaped(m), item, o)) return true;
@@ -2712,6 +2717,9 @@ const POT = {
  * and the radius its pot came out at. */
 const PLANT: {
   pot: number | null;
+  /** Its pot's height and colour set by hand. */
+  potH: number | null;
+  potColor: string | null;
   shape: string | null;
   full: number;
   spread: number | null;
@@ -2723,6 +2731,8 @@ const PLANT: {
   wide: number;
 } = {
   pot: null,
+  potH: null,
+  potColor: null,
   shape: null,
   full: 1,
   spread: null,
@@ -2746,11 +2756,10 @@ function pot(
   opts: { x?: number; y?: number; z?: number; basket?: boolean } = {},
 ): number {
   const { x = 0, y = 0, z = 0 } = opts;
-  if (PLANT.pot) {
-    const k = PLANT.pot / 2 / r;
-    r = PLANT.pot / 2;
-    h = Math.min(h * k, m.H * 0.6);
-  }
+  // Its width and height set apart (a wider pot no taller).
+  if (PLANT.pot) r = PLANT.pot / 2;
+  if (PLANT.potH) h = Math.min(PLANT.potH, m.H * 0.9);
+  if (PLANT.potColor) color = PLANT.potColor;
   const shape = PLANT.shape ?? "taper";
   if (shape === "bowl") h = Math.min(h, r * 0.8);
   PLANT.r = r;
@@ -2782,14 +2791,16 @@ function pot(
         28,
       );
     }
-  const soil = y + h * 0.93;
+  // The soil just over the lip's top, inside its rim (the lip's solid,
+  // so the soil lower down would be hidden).
+  const soil = y + h + 0.001;
   PLANT.soil = soil;
   if (shape === "square")
     m.box(r * 1.7, 0.012, r * 1.7, x, soil - 0.012, z, mat("#3a2a1f", 0.95));
   else
     m.cyl(
-      r * 0.96,
-      r * 0.96,
+      r * 0.94,
+      r * 0.94,
       0.012,
       x,
       soil - 0.012,
@@ -3943,6 +3954,8 @@ function houseplant(m: Model, item: Item3d, o: Opts): boolean {
   const own = spec.tint ?? null;
   const p = (d: string) => own ?? d;
   PLANT.pot = spec.plant?.pot ?? null;
+  PLANT.potH = spec.plant?.potH ?? null;
+  PLANT.potColor = spec.plant?.potColor ?? null;
   PLANT.shape = spec.plant?.shape ?? null;
   PLANT.full = Math.max(0.25, Math.min(3, spec.plant?.full ?? 1));
   PLANT.spread = spec.plant?.spread ?? null;

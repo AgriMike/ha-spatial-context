@@ -396,6 +396,11 @@ _FURNITURE_SCHEMA = {
     vol.Optional("pot_cm"): vol.Any(
         None, vol.All(vol.Coerce(float), vol.Range(min=3, max=300))
     ),
+    # Its pot's height (cm) and colour, set apart from its width.
+    vol.Optional("pot_h_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=2, max=300))
+    ),
+    vol.Optional("pot_color"): vol.Any(vol.Match(r"^#[0-9a-fA-F]{6}$"), None),
     vol.Optional("pot_shape"): vol.Any(
         None, vol.In(["taper", "cylinder", "bowl", "square", "none"])
     ),

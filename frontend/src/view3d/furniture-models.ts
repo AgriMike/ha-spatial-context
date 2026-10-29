@@ -1440,6 +1440,43 @@ function plankHood(m: Model, oak: string): void {
  * taking up the rest when there are no doors), then its doors across the
  * rest — else its type's own. */
 const shaker: Builder = (m, o, tint, item) => {
+  shakerAt(m, o, tint, item);
+  // Its wood grained at real size (not one texture stretched per face).
+  if (!tint) grainParts(m);
+};
+
+/** A model's grained wood (oak, walnut, maple) laid at real size: up the
+ * fronts and sides, along x on top. */
+function grainParts(m: Model): void {
+  const parts = (
+    m as unknown as {
+      parts: Map<THREE.Material, THREE.BufferGeometry[]>;
+    }
+  ).parts;
+  for (const [mt, list] of parts) {
+    const map = (mt as THREE.MeshStandardMaterial).map;
+    if (!map || (map !== oakTexture && map !== mapleTexture)) continue;
+    for (const g of list) {
+      const pos = g.getAttribute("position");
+      const nor = g.getAttribute("normal");
+      const uv = new Float32Array(pos.count * 2);
+      for (let i = 0; i < pos.count; i++) {
+        const nx = Math.abs(nor.getX(i));
+        const ny = Math.abs(nor.getY(i));
+        const nz = Math.abs(nor.getZ(i));
+        const [x, y, z] = [pos.getX(i), pos.getY(i), pos.getZ(i)];
+        // Along the grain, then across it.
+        const [a, b] =
+          ny >= nx && ny >= nz ? [x, z] : nz >= nx ? [y, x] : [y, z];
+        uv[i * 2] = a / OAK_REPEAT[0];
+        uv[i * 2 + 1] = b / OAK_REPEAT[1];
+      }
+      g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+    }
+  }
+}
+
+const shakerAt: Builder = (m, o, tint, item) => {
   const { W, D, H } = m;
   const type = typeof o["shaker"] === "string" ? o["shaker"] : "base";
   const oak = tint ?? woodOf(item.model?.finish);
@@ -1447,8 +1484,10 @@ const shaker: Builder = (m, o, tint, item) => {
     plankHood(m, oak);
     return;
   }
-  const wood = mat(oak, 0.6);
-  const panel = mat(shade(oak, 0.93), 0.65);
+  const wood = tint ? mat(oak, 0.6) : oakMaterial(oak);
+  const panel = tint
+    ? mat(shade(oak, 0.93), 0.65)
+    : oakMaterial(shade(oak, 0.93));
   const counter =
     (type === "base" || type === "drawers" || type === "sink") &&
     !item.model?.noTop;

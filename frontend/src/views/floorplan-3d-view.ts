@@ -45,6 +45,7 @@ import {
   type FurnitureCategory,
 } from "../canvas/furniture-catalog";
 import { pointInPolygon } from "../canvas/geometry";
+import { defaultCornerPct, shapeCornerCount } from "../canvas/furniture-draw";
 import "./search-select";
 import type { SearchOption } from "./search-select";
 import {
@@ -3990,6 +3991,13 @@ export class Floorplan3dView extends LitElement {
       (v) => set({ pot_cm: v && v >= 3 ? Math.min(300, v) : null }),
       { unit: "cm", min: 3, placeholder: L("auto") },
     )}
+    ${this._num(
+      L("potHeight"),
+      item.pot_h_cm ?? null,
+      (v) => set({ pot_h_cm: v && v >= 2 ? Math.min(300, v) : null }),
+      { unit: "cm", min: 2, placeholder: L("auto") },
+    )}
+    ${this._color(L("potColor"), item.pot_color, (v) => set({ pot_color: v }))}
     ${this._select<NonNullable<FurnitureItem["pot_shape"]>>(
       L("potShape"),
       item.pot_shape ?? null,
@@ -5188,6 +5196,53 @@ export class Floorplan3dView extends LitElement {
     }`;
   }
 
+  /** A drawn item's corner rounding (a custom countertop's): all at
+   * once, then each corner (up to eight), 0 % square to 100 % as round as
+   * the shorter side allows. */
+  private _renderCorners(
+    item: FurnitureItem,
+    entry: CatalogItem,
+    set: (patch: Partial<FurnitureItem>) => void,
+  ) {
+    const count = shapeCornerCount(entry.draw, entry.opts, item.points);
+    if (count === 0) return nothing;
+    const fallback = defaultCornerPct(item.width_cm, item.depth_cm);
+    const values = Array.from(
+      { length: count },
+      (_, i) => item.corners?.[i] ?? fallback,
+    );
+    const all = values.every((v) => v === values[0]) ? values[0]! : null;
+    const pct = (v: number | null) => Math.max(0, Math.min(100, v ?? 0));
+    return html`${this._num(
+        localize("edit3d.cornersAll"),
+        all,
+        (v) => v != null && set({ corners: Array(count).fill(pct(v)) }),
+        { unit: "%", min: 0, max: 100, step: 5, placeholder: "—" },
+      )}
+      ${
+        count <= 8
+          ? values.map((v, i) =>
+              this._num(
+                localize("edit3d.cornerN", { n: i + 1 }),
+                v,
+                (next) =>
+                  set({
+                    corners: values.map((old, j) =>
+                      j === i ? pct(next) : old,
+                    ),
+                  }),
+                { unit: "%", min: 0, max: 100, step: 5 },
+              ),
+            )
+          : nothing
+      }
+      <div class="buttons">
+        <button @click=${() => set({ corners: Array(count).fill(0) })}>
+          ${localize("edit3d.cornersSquare")}
+        </button>
+      </div>`;
+  }
+
   /** An item's scale against its catalog size: setting it sizes its
    * width, depth and height together (its height only where it has one of
    * its own or set by hand). */
@@ -5318,6 +5373,7 @@ export class Floorplan3dView extends LitElement {
               </label>`
             : nothing
         }
+        ${entry?.id === CUSTOM_COUNTER_KIND ? this._renderCorners(item, entry, set) : nothing}
         ${
           entry?.id === CUSTOM_COUNTER_KIND
             ? this._select<

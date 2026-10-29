@@ -508,6 +508,8 @@ const ITEM_FINISH_KEYS = [
   "book_align",
   "pot_cm",
   "pot_shape",
+  "pot_h_cm",
+  "pot_color",
   "fullness",
   "leaf_spread_deg",
   "opening_gap_cm",

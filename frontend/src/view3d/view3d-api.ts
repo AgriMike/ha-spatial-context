@@ -219,6 +219,9 @@ export interface Item3d {
       pot: number | null;
       shape: string | null;
       full: number | null;
+      /** Its pot's height (metres) and colour set by hand. */
+      potH?: number | null;
+      potColor?: string | null;
       /** How wide its leaves fan round its front, radians. */
       spread?: number | null;
       /** Leaning toward its front, radians (back if negative), and its

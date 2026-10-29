@@ -391,6 +391,10 @@ export interface FurnitureItem {
    * own. */
   pot_cm?: number | null;
   pot_shape?: "taper" | "cylinder" | "bowl" | "square" | "none" | null;
+  /** Its pot's height, centimetres (unset: the species' own, whatever
+   * its width), and its colour (unset: the species' own). */
+  pot_h_cm?: number | null;
+  pot_color?: string | null;
   fullness?: number | null;
   /** How far a backsplash's tile stops short of a window or door in the
    * wall behind it, centimetres (absent: right up to its casing). */
