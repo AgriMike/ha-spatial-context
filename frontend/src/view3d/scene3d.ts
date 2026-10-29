@@ -1289,11 +1289,19 @@ function buildFloor(
         o.sides.some((os) => alongShare(seg, os, 0.3) >= 0.4),
     );
     if (!o) return null;
-    // Its nosing line, back (-d/2) to front, a rail's height up.
-    return [-st.d / 2, st.d / 2].map((z): [number, number] => [
+    // Its nosing line, back (-d/2) to front, a rail's height up; cut
+    // where it runs into a wall (as a railing would: see railEnds).
+    const at = (z: number): [number, number] => [
       z,
       st.back + ((st.front - st.back) * (z + st.d / 2)) / st.d + STAIR_CAP_M,
-    ]);
+    ];
+    const [lowCut, highCut] = railEnds(si, side);
+    const low = st.front < st.back ? st.d / 2 : -st.d / 2;
+    const toward = Math.sign(-low);
+    const zs = [low + toward * lowCut, -low - toward * highCut].sort(
+      (p, q) => p - q,
+    );
+    return zs.map(at);
   };
   /** How much of segment [a, b] (metres) runs within `reach` of [p, q]. */
   const alongShare = (

@@ -1179,7 +1179,7 @@ const BATHROOM: Row[] = [
   ],
   [
     "floor_tile_pebble",
-    "Pebble floor tile (grey, dark grout)",
+    "Pebble floor tile (black sliced pebbles, dark grout)",
     90,
     90,
     "box",

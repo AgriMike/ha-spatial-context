@@ -2282,105 +2282,177 @@ function rectTileMaterial(tile: string): THREE.MeshStandardMaterial {
   return m;
 }
 
-/** River pebbles' texture: grey stones, rounded, some long, some round,
- * each its own shade with a soft highlight and a few pale veins, set in
- * dark grout; one seamless repeat `PEBBLE_TILE` metres square (a 12"
+/** Sliced pebbles' texture: flat black stones, most of them long, their
+ * outlines irregular, lying every which way and packed close, a dark grey
+ * grout between; each face matte charcoal, darker at its edge, a few with
+ * a pale vein. One seamless repeat `PEBBLE_TILE` metres square (a 12"
  * sheet). */
 const PEBBLE_TILE = 0.3;
 let pebbleMat: THREE.MeshStandardMaterial | null = null;
 function pebbleMaterial(): THREE.MeshStandardMaterial {
   if (pebbleMat) return pebbleMat;
   const N = 1024;
+  const px = N / (PEBBLE_TILE * 1000);
   const cv = document.createElement("canvas");
   cv.width = N;
   cv.height = N;
   const ctx = cv.getContext("2d");
   if (ctx) {
-    ctx.fillStyle = "#1c1d1e";
+    ctx.fillStyle = "#4d4e51";
     ctx.fillRect(0, 0, N, N);
-    let seed = 41;
+    let seed = 57;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    // A stone a cell (about 4 cm), jittered; drawn again a repeat round.
-    const cells = 6;
-    const c = N / cells;
-    const greys: [number, number, number][] = [
-      [96, 101, 104],
-      [110, 116, 119],
-      [84, 89, 92],
-      [124, 129, 131],
-      [72, 77, 80],
-      [138, 141, 141],
-    ];
-    for (let i = 0; i < cells; i++)
-      for (let j = 0; j < cells; j++) {
-        // Rows a half cell offset, every stone nudged off the grid.
-        const cx = (i + 0.5 + (j % 2) * 0.5 + (rnd() - 0.5) * 0.45) * c;
-        const cy = (j + 0.5 + (rnd() - 0.5) * 0.4) * c;
-        const long = 0.6 + rnd() * 0.42;
-        const rx = (c / 2) * (0.92 + rnd() * 0.26) * (long > 0.9 ? 1 : 1.15);
-        const ry = rx * long;
-        const a = rnd() * Math.PI;
-        const [r, g, b] = greys[Math.floor(rnd() * greys.length)]!;
-        const veins = Math.floor(rnd() * 3);
-        const vein = Array.from({ length: veins }, () => [
-          rnd() * 2 - 1,
-          rnd() * 2 - 1,
-          rnd() * Math.PI,
-        ]);
-        for (const dx of [-N, 0, N])
-          for (const dy of [-N, 0, N]) {
-            const x = cx + dx;
-            const y = cy + dy;
-            if (x < -c || x > N + c || y < -c || y > N + c) continue;
-            ctx.save();
-            ctx.translate(x, y);
-            ctx.rotate(a);
-            ctx.beginPath();
-            ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
-            ctx.clip();
-            // Its body, lit from the top left, darker to its edge.
-            const grad = ctx.createRadialGradient(
-              -rx * 0.3,
-              -ry * 0.35,
-              rx * 0.1,
-              0,
-              0,
-              rx * 1.05,
-            );
-            grad.addColorStop(0, `rgb(${r + 30},${g + 30},${b + 30})`);
-            grad.addColorStop(0.6, `rgb(${r},${g},${b})`);
-            grad.addColorStop(1, `rgb(${r - 28},${g - 28},${b - 28})`);
-            ctx.fillStyle = grad;
-            ctx.fillRect(-rx, -ry, rx * 2, ry * 2);
-            ctx.strokeStyle = "rgba(225,228,226,0.28)";
-            ctx.lineWidth = 1.2;
-            for (const [vx, vy, va] of vein) {
-              ctx.beginPath();
-              ctx.moveTo(
-                vx! * rx - Math.cos(va!) * rx,
-                vy! * ry - Math.sin(va!) * ry,
-              );
-              ctx.lineTo(
-                vx! * rx + Math.cos(va!) * rx,
-                vy! * ry + Math.sin(va!) * ry,
-              );
-              ctx.stroke();
-            }
-            ctx.restore();
-          }
+    // Each stone as a row of circles along its length (for spacing),
+    // placed where it clears the others by a grout line, round the
+    // repeat's edges too; the biggest first, smaller ones filling in.
+    type Stone = { x: number; y: number; a: number; len: number; wid: number };
+    const stones: Stone[] = [];
+    const circles = (s: Stone) => {
+      const out: [number, number, number][] = [];
+      const r = s.wid / 2;
+      const span = Math.max(0, s.len / 2 - r);
+      const k = Math.max(1, Math.ceil(span / (r * 0.6)));
+      for (let i = -k; i <= k; i++) {
+        const t = (span * i) / k;
+        // Narrowing toward its ends.
+        const rr = r * (1 - 0.25 * (Math.abs(t) / Math.max(1, span)) ** 2);
+        out.push([s.x + Math.cos(s.a) * t, s.y + Math.sin(s.a) * t, rr]);
       }
+      return out;
+    };
+    const gap = 3.2 * px;
+    const wrapD = (d: number) => d - N * Math.round(d / N);
+    const clear = (s: Stone) => {
+      const mine = circles(s);
+      for (const o of stones) {
+        if (
+          Math.hypot(wrapD(o.x - s.x), wrapD(o.y - s.y)) >
+          (o.len + s.len) / 2 + gap
+        )
+          continue;
+        for (const [ax, ay, ar] of circles(o))
+          for (const [bx, by, br] of mine)
+            if (Math.hypot(wrapD(ax - bx), wrapD(ay - by)) < ar + br + gap)
+              return false;
+      }
+      return true;
+    };
+    const bands: [number, number, number][] = [
+      // [length range low, high (mm)], tries
+      [55, 75, 900],
+      [40, 58, 1600],
+      [26, 42, 2600],
+      [18, 28, 2600],
+    ];
+    for (const [lo, hi, tries] of bands)
+      for (let t = 0; t < tries; t++) {
+        const len = (lo + rnd() * (hi - lo)) * px;
+        const s: Stone = {
+          x: rnd() * N,
+          y: rnd() * N,
+          a: rnd() * Math.PI,
+          len,
+          wid: len * (0.36 + rnd() * 0.34),
+        };
+        if (clear(s)) stones.push(s);
+      }
+    for (const s of stones) {
+      // Its outline: an egg, one end fuller, its edge a little uneven.
+      const n = 28;
+      const wob = [rnd(), rnd(), rnd()].map((v) => v * Math.PI * 2);
+      const full = (rnd() - 0.5) * 0.3;
+      const pts: [number, number][] = [];
+      for (let i = 0; i < n; i++) {
+        const th = (i / n) * Math.PI * 2;
+        const c = Math.cos(th);
+        const sn = Math.sin(th);
+        const rough =
+          1 +
+          0.05 * Math.sin(3 * th + wob[0]!) +
+          0.04 * Math.sin(5 * th + wob[1]!) +
+          0.025 * Math.sin(8 * th + wob[2]!);
+        const lx = (c * s.len) / 2;
+        const ly = ((sn * s.wid) / 2) * (1 + full * c);
+        pts.push([lx * rough, ly * rough]);
+      }
+      const shade = 20 + Math.floor(rnd() * 10);
+      const veins = rnd() < 0.3 ? 1 + Math.floor(rnd() * 2) : 0;
+      const vein = Array.from({ length: veins }, () => [
+        (rnd() - 0.5) * s.len * 0.6,
+        (rnd() - 0.5) * s.wid * 0.5,
+        rnd() * Math.PI,
+      ]);
+      for (const dx of [-N, 0, N])
+        for (const dy of [-N, 0, N]) {
+          const x = s.x + dx;
+          const y = s.y + dy;
+          if (x < -s.len || x > N + s.len || y < -s.len || y > N + s.len)
+            continue;
+          ctx.save();
+          ctx.translate(x, y);
+          ctx.rotate(s.a);
+          const path = (k: number) => {
+            ctx.beginPath();
+            pts.forEach(([px_, py_], i) =>
+              i ? ctx.lineTo(px_ * k, py_ * k) : ctx.moveTo(px_ * k, py_ * k),
+            );
+            ctx.closePath();
+          };
+          // Its rounded edge, then the flat sliced face inside it.
+          path(1);
+          ctx.fillStyle = `rgb(${shade - 12},${shade - 12},${shade - 11})`;
+          ctx.fill();
+          path(0.86);
+          ctx.fillStyle = `rgb(${shade},${shade},${shade + 2})`;
+          ctx.fill();
+          ctx.clip();
+          // Faint mottling, and a pale vein on a few.
+          for (let k = 0; k < 6; k++) {
+            ctx.fillStyle = `rgba(${rnd() < 0.5 ? "255,255,255" : "0,0,0"},0.035)`;
+            ctx.beginPath();
+            ctx.ellipse(
+              (rnd() - 0.5) * s.len * 0.7,
+              (rnd() - 0.5) * s.wid * 0.6,
+              s.wid * (0.15 + rnd() * 0.25),
+              s.wid * (0.1 + rnd() * 0.15),
+              rnd() * Math.PI,
+              0,
+              Math.PI * 2,
+            );
+            ctx.fill();
+          }
+          ctx.strokeStyle = "rgba(200,200,198,0.22)";
+          ctx.lineWidth = 0.9;
+          for (const [vx, vy, va] of vein) {
+            ctx.beginPath();
+            ctx.moveTo(
+              vx! - Math.cos(va!) * s.wid,
+              vy! - Math.sin(va!) * s.wid,
+            );
+            ctx.quadraticCurveTo(
+              vx! + s.wid * 0.2,
+              vy! - s.wid * 0.15,
+              vx! + Math.cos(va!) * s.wid,
+              vy! + Math.sin(va!) * s.wid,
+            );
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+    }
   }
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
   tex.anisotropy = 4;
-  pebbleMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.55 });
+  pebbleMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 });
   return pebbleMat;
 }
 
-/** A pebble floor tile: a thin slab on the floor, its top grey river
- * pebbles in dark grout at their real size however big it's drawn. */
+/** A pebble floor tile: a thin slab on the floor, its top flat black
+ * sliced pebbles in dark grout at their real size however big it's
+ * drawn. */
 const pebbleFloor: Builder = (m) => {
   const { W, D, H } = m;
   const g = new THREE.BoxGeometry(W, Math.min(H, 0.02), D);
