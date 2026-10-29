@@ -217,7 +217,7 @@ function itemShape(
   if (kind === STAIRS_KIND) return "stairs";
   if (entry && OUTDOOR_MODELLED.has(entry.category)) return "block";
   if (/stand|pedestal|basket/.test(kind)) return "block";
-  if (/shower(?!_bench)/.test(kind)) return "shower";
+  if (/shower(?!_bench|_glass)/.test(kind)) return "shower";
   if (/tree|olive/.test(kind) && entry?.category === "outdoor") return "tree";
   // Houseplants are modelled species by species (outdoor-models.ts).
   if (entry && (HOUSEPLANT_DRAWS.has(entry.draw) || entry.id === "bonsai"))
@@ -4070,8 +4070,25 @@ function buildFloor(
                   }
                 : {}),
               ...(item.handle_side ? { handleSide: item.handle_side } : {}),
+              ...(item.handle_style === "edge"
+                ? {
+                    edgePull: {
+                      len: item.handle_cm != null ? item.handle_cm / 100 : null,
+                    },
+                  }
+                : {}),
+              ...(item.front_style === "slab" ? { slab: true } : {}),
               ...(item.door_tiers ? { doorTiers: item.door_tiers } : {}),
               ...(item.no_lid ? { noLid: true } : {}),
+              ...(entry.id.startsWith("shower_glass_door")
+                ? {
+                    door: {
+                      open: ((item.door_open_deg ?? 0) * Math.PI) / 180,
+                      hingeRight: !!item.door_hinge_flip,
+                      swingBack: !!item.door_swing_flip,
+                    },
+                  }
+                : {}),
               ...(item.countertop === false ? { noTop: true } : {}),
               ...(item.finish ? { finish: item.finish } : {}),
               ...(item.slat_cm != null || item.slat_gap_cm != null

@@ -320,10 +320,24 @@ _FURNITURE_SCHEMA = {
     # Which side a cabinet's door pulls are on; unset = by the doors' own
     # free edges.
     vol.Optional("handle_side"): vol.Any(None, vol.In(["left", "right"])),
+    # A cabinet's pulls: bars (unset) or matte black edge pulls on the
+    # fronts' top edges, how long (cm); its fronts shaker (unset) or slab.
+    vol.Optional("handle_style"): vol.Any(None, vol.In(["bar", "edge"])),
+    vol.Optional("handle_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=2, max=200))
+    ),
+    vol.Optional("front_style"): vol.Any(None, vol.In(["shaker", "slab"])),
     # A cabinet's doors in one tier or two (a top half and a bottom), and
     # whether a base cabinet has its stone top; unset = its own.
     # A crate shown with its lid off.
     vol.Optional("no_lid"): vol.Any(None, bool),
+    # A glass shower door: how far it stands open (degrees, unset:
+    # closed), and its hinges and swing put on the other edge and side.
+    vol.Optional("door_open_deg"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=0, max=180))
+    ),
+    vol.Optional("door_hinge_flip"): vol.Any(None, bool),
+    vol.Optional("door_swing_flip"): vol.Any(None, bool),
     vol.Optional("door_tiers"): vol.Any(
         None, vol.All(vol.Coerce(int), vol.Range(min=1, max=2))
     ),

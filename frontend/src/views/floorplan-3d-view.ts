@@ -4147,6 +4147,37 @@ export class Floorplan3dView extends LitElement {
         ],
         (v) => set({ handle_side: v }),
       )}
+      ${this._select<"bar" | "edge">(
+        L("handleStyle"),
+        item.handle_style ?? "bar",
+        [
+          ["bar", L("handleBar")],
+          ["edge", L("handleEdge")],
+        ],
+        (v) => set({ handle_style: v === "bar" ? null : v }),
+      )}
+      ${
+        item.handle_style === "edge"
+          ? this._num(
+              L("handleLength"),
+              item.handle_cm ?? null,
+              (v) =>
+                set({
+                  handle_cm: v == null ? null : Math.max(2, Math.min(200, v)),
+                }),
+              { unit: "cm", min: 2, max: 200, placeholder: L("auto") },
+            )
+          : nothing
+      }
+      ${this._select<"shaker" | "slab">(
+        L("frontStyle"),
+        item.front_style ?? "shaker",
+        [
+          ["shaker", L("frontShaker")],
+          ["slab", L("frontSlab")],
+        ],
+        (v) => set({ front_style: v === "shaker" ? null : v }),
+      )}
       ${
         ["base", "drawers", "sink"].includes(
           String(catalogItem(item.kind)?.opts["shaker"] ?? ""),
@@ -5232,6 +5263,44 @@ export class Floorplan3dView extends LitElement {
         ${entry?.opts["shaker"] && entry.opts["shaker"] !== "hood" ? this._renderCabinetFronts(item, set) : nothing}
         ${entry && (["houseplant", "plant", "cactus"].includes(entry.draw) || entry.id === "bonsai") ? this._renderPlantPot(item, set) : nothing}
         ${entry?.id.startsWith("bookshelf_open") ? this._renderBookshelf(item, set) : nothing}
+        ${
+          entry?.id.startsWith("shower_glass_door")
+            ? html`${this._num(
+                  localize("edit3d.doorOpen"),
+                  item.door_open_deg ?? null,
+                  (v) =>
+                    set({
+                      door_open_deg:
+                        v == null ? null : Math.max(0, Math.min(180, v)),
+                    }),
+                  { unit: "°", min: 0, max: 180, step: 15, placeholder: "0" },
+                )}
+                <div class="buttons">
+                  <button @click=${() => set({ door_open_deg: null })}>
+                    ${localize("edit3d.doorClose")}
+                  </button>
+                  <button @click=${() => set({ door_open_deg: 90 })}>
+                    ${localize("edit3d.doorOpenWide")}
+                  </button>
+                  <button
+                    @click=${() =>
+                      set({
+                        door_hinge_flip: item.door_hinge_flip ? null : true,
+                      })}
+                  >
+                    ${localize("edit3d.doorFlipHinge")}
+                  </button>
+                  <button
+                    @click=${() =>
+                      set({
+                        door_swing_flip: item.door_swing_flip ? null : true,
+                      })}
+                  >
+                    ${localize("edit3d.doorFlipSwing")}
+                  </button>
+                </div>`
+            : nothing
+        }
         ${
           entry?.id.startsWith("sidio_crate")
             ? html`<label class="row">

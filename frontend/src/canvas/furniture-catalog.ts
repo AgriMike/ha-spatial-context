@@ -473,6 +473,16 @@ const KITCHEN: Row[] = [
     "box",
     { h3d: 2.4, y3d: 0 },
   ],
+  // 18" x 12" white tiles, black grout, laid in a half offset: a shower's
+  // walls (as tall as set), or a backsplash.
+  [
+    "backsplash_tile_18x12_white",
+    'Wall tile 18"x12" (white, black grout)',
+    240,
+    2,
+    "box",
+    { h3d: 2.0, y3d: 0, tile: "#f3f2ee", tileSize: "18x12" },
+  ],
   [
     "backsplash_hex_tile_white",
     "Backsplash, small hex tile (white, dark grout)",
@@ -1129,6 +1139,24 @@ const BATHROOM: Row[] = [
   ["shower_122", "Shower 122×91", 122, 91, "shower"],
   ["shower_152", "Shower 152×81", 152, 81, "shower"],
   ["shower_neo_angle", "Neo-angle shower", 100, 100, "neoAngleShower"],
+  // Frameless glass: a fixed panel (as wide and tall as set) and a door
+  // hinged beside it (opened, hinged and swung as a door).
+  [
+    "shower_glass_panel",
+    "Shower glass panel (frameless)",
+    90,
+    2,
+    "box",
+    { h3d: 1.95, y3d: 0 },
+  ],
+  [
+    "shower_glass_door",
+    "Shower glass door (frameless, hinged)",
+    70,
+    2,
+    "box",
+    { h3d: 1.95, y3d: 0 },
+  ],
   ["shower_walk_in", "Walk-in shower", 150, 100, "shower", { walkIn: true }],
   ["shower_tub_combo", "Tub/shower combo", 152, 76, "bathtub"],
   ["shower_bench", "Shower bench", 60, 30, "bench", { slats: 3 }],

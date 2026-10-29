@@ -180,11 +180,18 @@ export interface Item3d {
     /** Which side a cabinet's door pulls are set on (absent: by each
      * door's free edge). */
     handleSide?: "left" | "right";
+    /** Its pulls edge pulls (absent: bars), and their length set by hand
+     * (metres); its fronts flat slabs (absent: shaker). */
+    edgePull?: { len: number | null };
+    slab?: boolean;
     /** A cabinet's doors in one tier or two (a top half, a bottom), and
      * its stone top left off (absent: its own). */
     doorTiers?: number;
     /** A crate with its lid off. */
     noLid?: boolean;
+    /** A glass shower door: how far open (radians), hinged on its right
+     * edge (else its left), swinging to its back (else its front). */
+    door?: { open: number; hingeRight: boolean; swingBack: boolean };
     noTop?: boolean;
     /** A wood finish worn instead of a plain colour. */
     finish?: "white_oak" | "maple" | "walnut" | "stained" | "black" | "white";

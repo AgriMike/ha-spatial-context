@@ -1316,6 +1316,44 @@ function shakerFront(
   m.box(w - 2 * s, s, t, x, y + h - s, z - t / 2, wood);
 }
 
+/** A cabinet front: shaker (a frame round a recessed panel), or a flat
+ * slab. */
+function cabinetFront(
+  m: Model,
+  slab: boolean,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  z: number,
+  wood: THREE.Material,
+  panel: THREE.Material,
+): void {
+  if (slab) m.box(w, h, 0.019, x, y, z - 0.0095, wood);
+  else shakerFront(m, x, y, w, h, z, wood, panel);
+}
+
+/** A matte black edge pull gripping a front's edge at height `y` (its
+ * top, or its bottom when `under`), centred at x: a thin plate lying on
+ * the edge, standing out past the face, its lip turned down (or up). */
+function edgePull(
+  m: Model,
+  x: number,
+  y: number,
+  z: number,
+  len: number,
+  under: boolean,
+): void {
+  const black = mat("#1c1c1c", 0.55, 0.3);
+  const t = 0.0025;
+  const out = 0.026;
+  const lip = 0.014;
+  // The plate: back over the front's edge, out past its face.
+  m.box(len, t, out + 0.012, x, under ? y - t : y, z + out / 2 - 0.006, black);
+  // The lip at its front edge.
+  m.box(len, lip, t, x, under ? y - lip : y + t - lip, z + out - t / 2, black);
+}
+
 /** A matte black bar pull on a front at `z`, centred at (x, y). */
 function barPull(
   m: Model,
@@ -1475,10 +1513,27 @@ const shaker: Builder = (m, o, tint, item) => {
     }
   }
   const pullLen = (w: number) => (w > 0.8 ? 0.305 : w > 0.45 ? 0.192 : 0.128);
+  const slab = !!item.model?.slab;
+  const edge = item.model?.edgePull;
+  /** An edge pull's length on a front `w` wide: as set, else most of a
+   * narrow one's width, up to 30 cm. */
+  const edgeLen = (w: number) =>
+    Math.min(w - 0.02, edge?.len ?? Math.min(0.3, Math.max(0.1, w * 0.4)));
   let y = y0 + faceH;
   for (const h of list) {
-    shakerFront(m, 0, y - h + gap / 2, W - gap, h - gap, face, wood, panel);
-    barPull(m, 0, y - Math.min(h / 2, 0.075), face, false, pullLen(W));
+    cabinetFront(
+      m,
+      slab,
+      0,
+      y - h + gap / 2,
+      W - gap,
+      h - gap,
+      face,
+      wood,
+      panel,
+    );
+    if (edge) edgePull(m, 0, y - gap / 2, face, edgeLen(W - gap), false);
+    else barPull(m, 0, y - Math.min(h / 2, 0.075), face, false, pullLen(W));
     y -= h;
   }
   const doorH = y - y0;
@@ -1503,12 +1558,22 @@ const shaker: Builder = (m, o, tint, item) => {
       const len = th > 0.6 ? 0.192 : 0.128;
       for (let k = 0; k < doors; k++) {
         const x = -W / 2 + dw * (k + 0.5);
-        shakerFront(m, x, ty + gap / 2, dw - gap, th - gap, face, wood, panel);
+        cabinetFront(
+          m,
+          slab,
+          x,
+          ty + gap / 2,
+          dw - gap,
+          th - gap,
+          face,
+          wood,
+          panel,
+        );
         // The pull by the door's free edge: the pair's middle, else its
         // right (or all on the side set, as seen from the front however
         // it's mirrored); high on a base, low on a wall cabinet.
         const side = item.model?.handleSide;
-        const edge = side
+        const freeSide = side
           ? (side === "right" ? 1 : -1) * (m.flip ? -1 : 1)
           : doors === 1
             ? 1
@@ -1524,7 +1589,20 @@ const shaker: Builder = (m, o, tint, item) => {
             : type === "tall" || lower
               ? ty + Math.min(th - 0.07 - len / 2, 1.05)
               : ty + th - 0.07 - len / 2;
-        barPull(m, x + edge * (dw / 2 - 0.045), py, face, true, len);
+        if (edge) {
+          // On its top edge by its free side (a wall cabinet's, or an
+          // upper tier's, on its bottom edge).
+          const el = edgeLen(dw - gap);
+          const under = type === "wall" || upper;
+          edgePull(
+            m,
+            x + freeSide * (dw / 2 - gap / 2 - el / 2 - 0.02),
+            under ? ty + gap / 2 : ty + th - gap / 2,
+            face,
+            el,
+            under,
+          );
+        } else barPull(m, x + freeSide * (dw / 2 - 0.045), py, face, true, len);
       }
       ty += th;
     });
@@ -2108,6 +2186,63 @@ function hexTileTexture(tile: string): THREE.Texture {
   return tex;
 }
 
+/** Large rectangular tiles' texture: 18" x 12" (45.7 by 30.5 cm) laid
+ * long side across in a half offset, their colour a hair varied, a thin
+ * black grout between; one repeat `RECT_TILE` metres across and up. */
+const RECT_TILE: [number, number] = [2 * 0.4572, 2 * 0.3048];
+const RECT_TEXTURES = new Map<string, THREE.Texture>();
+function rectTileTexture(tile: string): THREE.Texture {
+  const known = RECT_TEXTURES.get(tile);
+  if (known) return known;
+  const [br, bg, bb] = [1, 3, 5].map((i) => parseInt(tile.slice(i, i + 2), 16));
+  const cv = document.createElement("canvas");
+  cv.width = 1024;
+  cv.height = Math.round((1024 * RECT_TILE[1]) / RECT_TILE[0]);
+  const ctx = cv.getContext("2d");
+  if (ctx) {
+    const { width: w, height: h } = cv;
+    ctx.fillStyle = "#151515";
+    ctx.fillRect(0, 0, w, h);
+    // 3 mm of grout, half each side of a tile's edge.
+    const g = Math.max(2, (0.003 * w) / RECT_TILE[0]);
+    const tw = w / 2;
+    const th = h / 2;
+    let seed = 13;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let row = 0; row < 2; row++)
+      for (let col = -1; col < 2; col++) {
+        const x = col * tw + (row % 2 ? tw / 2 : 0);
+        const y = row * th;
+        const k = 0.985 + 0.015 * rnd();
+        const c = (v: number | undefined) =>
+          Math.min(255, Math.round((v ?? 240) * k));
+        ctx.fillStyle = `rgb(${c(br)},${c(bg)},${c(bb)})`;
+        ctx.fillRect(x + g / 2, y + g / 2, tw - g, th - g);
+      }
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  RECT_TEXTURES.set(tile, tex);
+  return tex;
+}
+
+const RECT_MATS = new Map<string, THREE.MeshStandardMaterial>();
+/** Large rectangular tiles in a colour, black grout. */
+function rectTileMaterial(tile: string): THREE.MeshStandardMaterial {
+  let m = RECT_MATS.get(tile);
+  if (!m) {
+    m = new THREE.MeshStandardMaterial({
+      map: rectTileTexture(tile),
+      roughness: 0.3,
+    });
+    RECT_MATS.set(tile, m);
+  }
+  return m;
+}
+
 const TILE_MATS = new Map<string, THREE.MeshStandardMaterial>();
 /** The tile in a colour, its grout the same dark grey whatever it is. */
 function tileMaterial(tile: string): THREE.MeshStandardMaterial {
@@ -2164,7 +2299,12 @@ const backsplash: Builder = (m, o, tint, item) => {
   const t = Math.min(D, 0.012);
   const grout = mat("#3b3b3c", 0.8);
   const own = typeof o["tile"] === "string" ? o["tile"] : HEX_GREY;
-  const tile = tileMaterial((tint ?? own).toLowerCase());
+  // Large rectangles (18" x 12"), else small hexagons.
+  const rect = o["tileSize"] === "18x12";
+  const tile = rect
+    ? rectTileMaterial((tint ?? own).toLowerCase())
+    : tileMaterial((tint ?? own).toLowerCase());
+  const repeat = rect ? RECT_TILE : HEX_TILE;
   for (const [x0, x1, y0, y1] of panelPieces(W, H, item.model?.gaps)) {
     const w = x1 - x0;
     const h = y1 - y0;
@@ -2175,8 +2315,8 @@ const backsplash: Builder = (m, o, tint, item) => {
     for (let i = 0; i < uv.count; i++)
       uv.setXY(
         i,
-        (x0 + W / 2 + uv.getX(i) * w) / HEX_TILE[0],
-        (y0 + uv.getY(i) * h) / HEX_TILE[1],
+        (x0 + W / 2 + uv.getX(i) * w) / repeat[0],
+        (y0 + uv.getY(i) * h) / repeat[1],
       );
     g.translate((x0 + x1) / 2, y0 + h / 2, -D / 2 + t + 0.0005);
     m.add(g, tile);
@@ -4954,6 +5094,65 @@ const knollGeneration: Builder = (m, o, tint, item) => {
     }
 };
 
+/** Shower glass: clear, faintly green at its edges. */
+const SHOWER_GLASS = () => mat("#d5e6e6", 0.05, 0, { opacity: 0.22 });
+const SHOWER_GLASS_T = 0.01;
+
+/** A frameless shower glass panel (its glass along x, at the item's
+ * middle): 10 mm clear glass as wide and tall as the item, in a slim
+ * channel along its foot, a clamp on the wall at its left end. A colour
+ * picked is the hardware's (matte black unless set). */
+const showerGlassPanel: Builder = (m, _o, tint) => {
+  const { W, H } = m;
+  const hw = mat(tint ?? "#1c1c1c", tint ? 0.4 : 0.6, tint ? 0.6 : 0);
+  m.box(W, H - 0.01, SHOWER_GLASS_T, 0, 0.01, 0, SHOWER_GLASS());
+  // The channel it stands in, a clamp at its wall end (its left).
+  m.box(W, 0.025, 0.022, 0, 0, 0, hw);
+  for (const y of [0.4, H - 0.4])
+    m.box(0.02, 0.05, 0.03, -W / 2 + 0.01, y, 0, hw);
+};
+
+/** A frameless glass shower door (its glass along x when closed): 10 mm
+ * clear glass on two hinges at its left edge (its right when flipped),
+ * open `door.open` toward its front (its back when flipped), a long
+ * pull through the glass by its other edge. A colour picked is the
+ * hardware's (matte black unless set). */
+const showerGlassDoor: Builder = (m, _o, tint, item) => {
+  const { W, H } = m;
+  const hw = mat(tint ?? "#1c1c1c", tint ? 0.4 : 0.6, tint ? 0.6 : 0);
+  const door = item.model?.door;
+  const right = !!door?.hingeRight;
+  const s = right ? 1 : -1;
+  const hx = (s * W) / 2;
+  // The leaf, closed, its edge 3 mm off the hinge line.
+  const leaf = new Model(W, m.D, H, false);
+  const lw = W - 0.006;
+  leaf.box(lw, H - 0.012, SHOWER_GLASS_T, 0, 0.012, 0, SHOWER_GLASS());
+  for (const y of [0.25, H - 0.3])
+    leaf.box(0.06, 0.06, 0.028, hx - s * 0.03, y, 0, hw);
+  // The pull: a bar on each face, on standoffs through the glass.
+  const px = -s * (lw / 2 - 0.07);
+  for (const z of [-1, 1]) {
+    leaf.cyl(0.009, 0.009, 0.45, px, 0.85, z * 0.032, hw, 12);
+    for (const y of [0.9, 1.25])
+      leaf.cyl(0.006, 0.006, 0.026, px, y, z * 0.018, hw, 10, "z");
+  }
+  // Turned on its hinges: its free edge toward the front (+z), or back.
+  const open = door?.open ?? 0;
+  const a = (right ? 1 : -1) * (door?.swingBack ? -1 : 1) * open;
+  for (const [mt, list] of (
+    leaf as unknown as {
+      parts: Map<THREE.Material, THREE.BufferGeometry[]>;
+    }
+  ).parts)
+    for (const g of list) {
+      g.translate(-hx, 0, 0);
+      g.rotateY(a);
+      g.translate(hx, 0, 0);
+      m.add(g, mt);
+    }
+};
+
 /** Book spines' colours (cloth and paper, muted). */
 const BOOK_COLORS = [
   "#2f3e4e",
@@ -5228,6 +5427,8 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^slat_wall/, slatWall],
   [/^espresso_philips_baristina/, baristina],
   [/^countertop_custom/, customCounter],
+  [/^shower_glass_panel/, showerGlassPanel],
+  [/^shower_glass_door/, showerGlassDoor],
   [/^office_chair_knoll_generation/, knollGeneration],
   [/^sidio_crate/, sidioCrate],
   [/^monitor_samsung_viewfinity/, viewfinity],

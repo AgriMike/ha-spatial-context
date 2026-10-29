@@ -340,12 +340,24 @@ export interface FurnitureItem {
   /** Which side a cabinet's door pulls are on (each door hinged on the
    * other); unset = by the doors' free edges (a pair's in the middle). */
   handle_side?: "left" | "right" | null;
+  /** A cabinet's pulls: bars (unset) or matte black edge pulls gripping
+   * its fronts' top edges (a wall cabinet's bottom), and how long, cm
+   * (unset: from the front's width). */
+  handle_style?: "bar" | "edge" | null;
+  handle_cm?: number | null;
+  /** A cabinet's fronts: shaker (unset) or flat slabs. */
+  front_style?: "shaker" | "slab" | null;
   /** A cabinet's doors in one tier or two (a top half and a bottom), and
    * whether a base cabinet has its stone top (false: none); unset = its
    * own. */
   door_tiers?: number | null;
   /** A crate shown with its lid off. */
   no_lid?: boolean | null;
+  /** A glass shower door: how far it stands open, degrees (absent:
+   * closed), and its hinges and swing put on the other edge and side. */
+  door_open_deg?: number | null;
+  door_hinge_flip?: boolean | null;
+  door_swing_flip?: boolean | null;
   countertop?: boolean | null;
   /** A wood finish worn instead of a plain colour (a floating shelf; a
    * bookshelf's or slat wall's wood). */
