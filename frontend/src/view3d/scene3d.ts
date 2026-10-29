@@ -1274,10 +1274,11 @@ function buildFloor(
       };
     });
   /** A flight's side shared with a flight climbing beside it (a split
-   * level's up flight beside its down one): the wall between them stands
-   * a cap's height over that flight's nosings, as [z, level] along this
-   * side (see Item3d's stairs.sideTops). */
-  const STAIR_CAP_M = 0.15;
+   * level's up flight beside its down one): the wall between them is a
+   * half wall sloped with this flight, a rail's height over its nosings,
+   * open above (that flight keeps its own railing); as [z, level] along
+   * this side (see Item3d's stairs.sideTops). */
+  const STAIR_CAP_M = 0.9;
   const sideTop = (si: number, side: 0 | 1): [number, number][] | null => {
     const st = stairs[si]!;
     const seg = st.sides[side]!;
@@ -1288,35 +1289,11 @@ function buildFloor(
         o.sides.some((os) => alongShare(seg, os, 0.3) >= 0.4),
     );
     if (!o) return null;
-    // Each flight's frame: its middle and the way to its front.
-    const frame = (f: typeof st) => {
-      const c = f.P(0, 0);
-      const fw = f.P(0, 1);
-      return { c, u: [fw[0] - c[0], fw[1] - c[1]] as Vec2 };
-    };
-    const me = frame(st);
-    const it = frame(o);
-    const lz = (fr: typeof me, p: Vec2) =>
-      (p[0] - fr.c[0]) * fr.u[0] + (p[1] - fr.c[1]) * fr.u[1];
-    // Its nosing line's level over a spot (flat past its ends).
-    const levelAt = (p: Vec2) => {
-      const t = Math.max(0, Math.min(1, (lz(it, p) + o.d / 2) / o.d));
-      return o.back + (o.front - o.back) * t + STAIR_CAP_M;
-    };
-    const [a, b] = seg;
-    const at = (z: number): Vec2 => {
-      const t = (z + st.d / 2) / st.d;
-      return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-    };
-    // Along this side: its ends, and that flight's ends where they fall.
-    const zs = new Set([-st.d / 2, st.d / 2]);
-    for (const e of [-o.d / 2, o.d / 2]) {
-      const z = lz(me, o.P(0, e));
-      if (z > -st.d / 2 && z < st.d / 2) zs.add(z);
-    }
-    return [...zs]
-      .sort((p, q) => p - q)
-      .map((z): [number, number] => [z, levelAt(at(z))]);
+    // Its nosing line, back (-d/2) to front, a rail's height up.
+    return [-st.d / 2, st.d / 2].map((z): [number, number] => [
+      z,
+      st.back + ((st.front - st.back) * (z + st.d / 2)) / st.d + STAIR_CAP_M,
+    ]);
   };
   /** How much of segment [a, b] (metres) runs within `reach` of [p, q]. */
   const alongShare = (
@@ -4311,8 +4288,7 @@ function buildFloor(
 
   // Baseboards round each room, along its walls: stained like the doors
   // (or as set), as tall and as proud as their casing unless set; not
-  // across a doorway (its casing), nor behind anything standing against
-  // the wall (they stop at its sides).
+  // across a doorway (its casing).
   const baseWalls = layout.walls.flatMap((w) => {
     const t = wallThicknessCm(w) / 100;
     if (t <= RAIL_THICKNESS_M) return [];
@@ -4385,46 +4361,6 @@ function buildFloor(
           const off = Math.abs((p[0] - f.a[0]) * vz - (p[1] - f.a[1]) * vx);
           return s > 0 && s < fl && off < t / 2 + 0.05;
         });
-      // Something standing against it there (its footprint over the
-      // board, low enough to meet it).
-      const blockedAt = (q: Vec2) =>
-        items.some((it) => {
-          const draw = it.model?.draw ?? "";
-          const kind = it.model?.kind ?? "";
-          if (
-            draw === "floatingShelf" ||
-            /^tv_|_tv$|^tv\d|mirror/.test(kind) ||
-            /^shaker_|cabinet|^counter|^island|^bookshelf_open|^backsplash_|^slat_wall/.test(
-              kind,
-            ) ||
-            [
-              "cabinet",
-              "drawers",
-              "counter",
-              "island",
-              "sink",
-              "vanity",
-            ].includes(draw) ||
-            it.counter ||
-            it.site ||
-            it.grounded ||
-            it.height < 0.03 ||
-            it.y0 > level + bh ||
-            it.y0 + it.height < level
-          )
-            return false;
-          const dx = q[0] - it.x;
-          const dz = q[1] - it.z;
-          const c = Math.cos(it.angle);
-          const sn = Math.sin(it.angle);
-          const lx = dx * c - dz * sn;
-          const lz = dx * sn + dz * c;
-          const pad = bt / 2 + 0.005;
-          return (
-            Math.abs(lx) < it.width / 2 + pad &&
-            Math.abs(lz) < it.depth / 2 + pad
-          );
-        });
       const step = 0.02;
       const count = Math.max(1, Math.round(len / step));
       const board = (s0: number, s1: number, off: number) => {
@@ -4441,18 +4377,12 @@ function buildFloor(
         });
       };
       // Each sample: a wall there (and which), or not, and whether the
-      // board stops (a doorway, something in front).
+      // board stops (a doorway).
       const samples = Array.from({ length: count + 1 }, (_, i) => {
         const s = (len * i) / count;
         const p: Vec2 = [a[0] + u[0] * s, a[1] + u[1] * s];
         const w = wallAt(p);
-        const ok =
-          w !== null &&
-          !openAt(p, w.t) &&
-          !blockedAt([
-            p[0] + n[0] * (w.t / 2 + bt / 2),
-            p[1] + n[1] * (w.t / 2 + bt / 2),
-          ]);
+        const ok = w !== null && !openAt(p, w.t);
         return { s, w, ok };
       });
       // Where a wall's end falls along this edge.

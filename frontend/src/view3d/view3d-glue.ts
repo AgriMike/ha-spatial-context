@@ -932,9 +932,9 @@ function stairsModel(
     st.rails.forEach((on, i) => {
       const x = (i === 0 ? -1 : 1) * (W / 2 + 0.05);
       // A straight wall down each side from the floor to the flight's
-      // foot (between it and a flight beside it, too), its top a hair
-      // under the floor so the two never fight; where a flight climbs
-      // beside it, the wall between them rises over that one's nosings.
+      // foot, its top a hair under the floor so the two never fight;
+      // where a flight climbs beside it, a half wall between them sloped
+      // with this one, capped in wood.
       const tops = st.sideTops?.[i];
       if (tops && tops.length >= 2) {
         const low = Math.min(st.front, st.back);
@@ -942,7 +942,7 @@ function stairsModel(
         shape.moveTo(tops[0]![0], 0);
         shape.lineTo(tops[tops.length - 1]![0], 0);
         for (const [z, level] of [...tops].reverse())
-          shape.lineTo(z, Math.max(rise - 0.004, level - low));
+          shape.lineTo(z, level - low);
         const g = new THREE.ExtrudeGeometry(shape, {
           depth: 0.1,
           bevelEnabled: false,
@@ -951,6 +951,24 @@ function stairsModel(
         g.rotateY(-Math.PI / 2);
         const mesh = add(g, paint, 0);
         mesh.position.x = x + 0.05;
+        // Its wood cap.
+        for (let k = 1; k < tops.length; k++) {
+          const [za, la] = tops[k - 1]!;
+          const [zb, lb] = tops[k]!;
+          const ya = la - low;
+          const yb = lb - low;
+          if (zb - za < 0.01) continue;
+          const cap = box(
+            0.14,
+            0.03,
+            Math.hypot(zb - za, yb - ya) + 0.01,
+            x,
+            (ya + yb) / 2 + 0.015,
+            (za + zb) / 2,
+            wood,
+          );
+          cap.rotation.x = -Math.atan2(yb - ya, zb - za);
+        }
       } else box(0.1, rise - 0.004, D, x, (rise - 0.004) / 2, 0, paint);
       if (!on) return;
       const top = rise + 0.95;
