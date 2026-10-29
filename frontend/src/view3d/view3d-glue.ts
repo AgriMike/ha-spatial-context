@@ -2986,8 +2986,16 @@ function createView3d(options: View3dOptions): View3dHandle {
       .flatMap((f) => f.items)
       .filter((i) => i.light || i.light2)
       .sort((a, b) => level(b) - level(a));
+    // (An open bookshelf's strips light only its cubbies, drawn in its
+    // model: no light of its own shining out through its sides.)
     const lit = byLevel
-      .filter((i) => i.light && !i.light.beam && !i.light2)
+      .filter(
+        (i) =>
+          i.light &&
+          !i.light.beam &&
+          !i.light2 &&
+          !/^bookshelf_open/.test(i.model?.kind ?? ""),
+      )
       .slice(0, MAX_POINT_LIGHTS);
     let budget = MAX_OUTDOOR_LIGHTS;
     for (const i of byLevel) {

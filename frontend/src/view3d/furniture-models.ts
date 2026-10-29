@@ -4507,6 +4507,23 @@ const openBookshelf: Builder = (m, o, tint, item) => {
       const k = r * cols + c;
       const x = colX(c);
       const edges = set?.edges?.[k] ?? "";
+      // Lit, its strips wash its inside: a faint glow over its back and
+      // its four sides (none of it leaving the cubby).
+      if (lit && edges) {
+        const wash = mat(lit.color, 0.9, 0, {
+          glow: lit.color,
+          glowLevel: 0.25 + 0.35 * lit.level,
+          opacity: 0.2,
+        });
+        const zb = -D / 2 + back + 0.001;
+        const deep = sz - zb;
+        const zm = zb + deep / 2;
+        m.box(cw, rh, 0.001, x, y0, zb, wash);
+        m.box(cw, 0.001, deep, x, y0 + 0.0005, zm, wash);
+        m.box(cw, 0.001, deep, x, y0 + rh - 0.0015, zm, wash);
+        for (const s of [-1, 1])
+          m.box(0.001, rh, deep, x + s * (cw / 2 - 0.0005), y0, zm, wash);
+      }
       if (edges.includes("t"))
         m.box(cw - 0.01, 0.004, 0.012, x, y0 + rh - 0.004, sz, strip);
       if (edges.includes("b")) m.box(cw - 0.01, 0.004, 0.012, x, y0, sz, strip);
