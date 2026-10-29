@@ -513,6 +513,7 @@ const ITEM_FINISH_KEYS = [
   "fullness",
   "leaf_spread_deg",
   "opening_gap_cm",
+  "tile_turned",
   "model_id",
   "model_name",
   "lift_cm",

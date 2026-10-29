@@ -217,7 +217,7 @@ function itemShape(
   if (kind === STAIRS_KIND) return "stairs";
   if (entry && OUTDOOR_MODELLED.has(entry.category)) return "block";
   if (/stand|pedestal|basket/.test(kind)) return "block";
-  if (/shower(?!_bench|_glass)/.test(kind)) return "shower";
+  if (/shower(?!_bench|_glass|_valve|_head)/.test(kind)) return "shower";
   if (/tree|olive/.test(kind) && entry?.category === "outdoor") return "tree";
   // Houseplants are modelled species by species (outdoor-models.ts).
   if (entry && (HOUSEPLANT_DRAWS.has(entry.draw) || entry.id === "bonsai"))
@@ -4084,6 +4084,7 @@ function buildFloor(
               ...(item.front_style === "slab" ? { slab: true } : {}),
               ...(item.door_tiers ? { doorTiers: item.door_tiers } : {}),
               ...(item.no_lid ? { noLid: true } : {}),
+              ...(item.tile_turned ? { tileTurned: true } : {}),
               ...(entry.id.startsWith("shower_glass_door")
                 ? {
                     door: {
@@ -4397,13 +4398,37 @@ function buildFloor(
           color,
         });
       };
+      /** A tile (or slat) wall hung down over the board here: it's
+       * behind that. */
+      const tiledAt = (q: Vec2) =>
+        items.some((it) => {
+          const kind = it.model?.kind ?? "";
+          if (!/^(backsplash_|slat_wall)/.test(kind)) return false;
+          if (it.y0 > level + bh || it.y0 + it.height < level) return false;
+          const dx = q[0] - it.x;
+          const dz = q[1] - it.z;
+          const c = Math.cos(it.angle);
+          const sn = Math.sin(it.angle);
+          const lx = dx * c - dz * sn;
+          const lz = dx * sn + dz * c;
+          return (
+            Math.abs(lx) < it.width / 2 + 0.005 &&
+            Math.abs(lz) < it.depth / 2 + bt + 0.02
+          );
+        });
       // Each sample: a wall there (and which), or not, and whether the
-      // board stops (a doorway).
+      // board stops (a doorway, a tile wall over it).
       const samples = Array.from({ length: count + 1 }, (_, i) => {
         const s = (len * i) / count;
         const p: Vec2 = [a[0] + u[0] * s, a[1] + u[1] * s];
         const w = wallAt(p);
-        const ok = w !== null && !openAt(p, w.t);
+        const ok =
+          w !== null &&
+          !openAt(p, w.t) &&
+          !tiledAt([
+            p[0] + n[0] * (w.t / 2 + bt / 2),
+            p[1] + n[1] * (w.t / 2 + bt / 2),
+          ]);
         return { s, w, ok };
       });
       // Where a wall's end falls along this edge.

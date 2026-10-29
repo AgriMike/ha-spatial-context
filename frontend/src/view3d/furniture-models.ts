@@ -2282,6 +2282,208 @@ function rectTileMaterial(tile: string): THREE.MeshStandardMaterial {
   return m;
 }
 
+/** River pebbles' texture: grey stones, rounded, some long, some round,
+ * each its own shade with a soft highlight and a few pale veins, set in
+ * dark grout; one seamless repeat `PEBBLE_TILE` metres square (a 12"
+ * sheet). */
+const PEBBLE_TILE = 0.3;
+let pebbleMat: THREE.MeshStandardMaterial | null = null;
+function pebbleMaterial(): THREE.MeshStandardMaterial {
+  if (pebbleMat) return pebbleMat;
+  const N = 1024;
+  const cv = document.createElement("canvas");
+  cv.width = N;
+  cv.height = N;
+  const ctx = cv.getContext("2d");
+  if (ctx) {
+    ctx.fillStyle = "#1c1d1e";
+    ctx.fillRect(0, 0, N, N);
+    let seed = 41;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    // A stone a cell (about 4 cm), jittered; drawn again a repeat round.
+    const cells = 6;
+    const c = N / cells;
+    const greys: [number, number, number][] = [
+      [96, 101, 104],
+      [110, 116, 119],
+      [84, 89, 92],
+      [124, 129, 131],
+      [72, 77, 80],
+      [138, 141, 141],
+    ];
+    for (let i = 0; i < cells; i++)
+      for (let j = 0; j < cells; j++) {
+        // Rows a half cell offset, every stone nudged off the grid.
+        const cx = (i + 0.5 + (j % 2) * 0.5 + (rnd() - 0.5) * 0.45) * c;
+        const cy = (j + 0.5 + (rnd() - 0.5) * 0.4) * c;
+        const long = 0.6 + rnd() * 0.42;
+        const rx = (c / 2) * (0.92 + rnd() * 0.26) * (long > 0.9 ? 1 : 1.15);
+        const ry = rx * long;
+        const a = rnd() * Math.PI;
+        const [r, g, b] = greys[Math.floor(rnd() * greys.length)]!;
+        const veins = Math.floor(rnd() * 3);
+        const vein = Array.from({ length: veins }, () => [
+          rnd() * 2 - 1,
+          rnd() * 2 - 1,
+          rnd() * Math.PI,
+        ]);
+        for (const dx of [-N, 0, N])
+          for (const dy of [-N, 0, N]) {
+            const x = cx + dx;
+            const y = cy + dy;
+            if (x < -c || x > N + c || y < -c || y > N + c) continue;
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(a);
+            ctx.beginPath();
+            ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+            ctx.clip();
+            // Its body, lit from the top left, darker to its edge.
+            const grad = ctx.createRadialGradient(
+              -rx * 0.3,
+              -ry * 0.35,
+              rx * 0.1,
+              0,
+              0,
+              rx * 1.05,
+            );
+            grad.addColorStop(0, `rgb(${r + 30},${g + 30},${b + 30})`);
+            grad.addColorStop(0.6, `rgb(${r},${g},${b})`);
+            grad.addColorStop(1, `rgb(${r - 28},${g - 28},${b - 28})`);
+            ctx.fillStyle = grad;
+            ctx.fillRect(-rx, -ry, rx * 2, ry * 2);
+            ctx.strokeStyle = "rgba(225,228,226,0.28)";
+            ctx.lineWidth = 1.2;
+            for (const [vx, vy, va] of vein) {
+              ctx.beginPath();
+              ctx.moveTo(
+                vx! * rx - Math.cos(va!) * rx,
+                vy! * ry - Math.sin(va!) * ry,
+              );
+              ctx.lineTo(
+                vx! * rx + Math.cos(va!) * rx,
+                vy! * ry + Math.sin(va!) * ry,
+              );
+              ctx.stroke();
+            }
+            ctx.restore();
+          }
+      }
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  pebbleMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.55 });
+  return pebbleMat;
+}
+
+/** A pebble floor tile: a thin slab on the floor, its top grey river
+ * pebbles in dark grout at their real size however big it's drawn. */
+const pebbleFloor: Builder = (m) => {
+  const { W, D, H } = m;
+  const g = new THREE.BoxGeometry(W, Math.min(H, 0.02), D);
+  g.translate(0, Math.min(H, 0.02) / 2, 0);
+  planarUv(g, PEBBLE_TILE);
+  m.add(g, pebbleMaterial());
+};
+
+/** A rectangular vessel sink: white ceramic (or a colour picked), thin
+ * walls with softened edges round a flat-bottomed basin, a drain toward
+ * its back. */
+const vesselSink: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const china = mat(tint ?? "#f4f4f1", 0.3);
+  const t = 0.012;
+  m.soft(W, 0.018, D, 0, 0, 0, china, 0.008);
+  for (const s of [-1, 1]) {
+    m.soft(W, H, t, 0, 0, s * (D / 2 - t / 2), china, 0.005);
+    m.soft(t, H, D, s * (W / 2 - t / 2), 0, 0, china, 0.005);
+  }
+  m.cyl(0.02, 0.02, 0.002, 0, 0.018, -D * 0.18, mat("#9a9da0", 0.3, 0.7), 20);
+  m.cyl(0.012, 0.012, 0.0025, 0, 0.018, -D * 0.18, mat("#2a2a2a", 0.6), 16);
+};
+
+/** A tall single-lever bathroom faucet (front at +z), matte black (or a
+ * colour picked): a round foot, a slim body up from it, the spout out
+ * level to the front, its mouth turned down, a lever off its side. */
+const bathFaucet: Builder = (m, _o, tint) => {
+  const { D, H } = m;
+  const black = mat(tint ?? "#1b1b1b", tint ? 0.4 : 0.6, tint ? 0.6 : 0);
+  const z0 = -D / 2 + 0.03;
+  m.cyl(0.028, 0.03, 0.012, 0, 0, z0, black, 28);
+  m.cyl(0.017, 0.018, H - 0.03, 0, 0.012, z0, black, 24);
+  // The spout, out from the top.
+  const reach = D - 0.05;
+  m.cyl(0.012, 0.012, reach, 0, H - 0.03, z0 + reach / 2, black, 20, "z");
+  m.cyl(0.012, 0.012, 0.025, 0, H - 0.055, z0 + reach - 0.004, black, 20);
+  // The lever: up and back off its right side.
+  m.cyl(0.01, 0.01, 0.02, 0.022, H - 0.09, z0, black, 16, "x");
+  const g = new THREE.BoxGeometry(0.008, 0.075, 0.012);
+  g.translate(0, 0.0375, 0);
+  g.rotateX(-0.35);
+  g.translate(0.032, H - 0.09, z0);
+  m.add(g, black);
+};
+
+/** A shower valve's trim (its back at -z, on the wall): a round matte
+ * black plate, its lever off a hub in the middle. A colour picked is its
+ * finish. */
+const showerValve: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const black = mat(tint ?? "#1b1b1b", tint ? 0.4 : 0.6, tint ? 0.6 : 0);
+  const back = -D / 2;
+  const r = Math.min(W, H) / 2;
+  m.cyl(r, r, 0.012, 0, H / 2, back + 0.006, black, 36, "z");
+  // The hub and lever a little glossier, so they read against the plate.
+  const lever = mat(tint ?? "#262626", 0.38, 0.35);
+  m.cyl(0.022, 0.026, 0.035, 0, H / 2, back + 0.03, lever, 24, "z");
+  // The lever: out to the right, tipped a little down.
+  const g = new THREE.BoxGeometry(r * 1.3, 0.014, 0.014);
+  g.translate(r * 0.62, 0, 0);
+  g.rotateZ(-0.12);
+  g.translate(0, H / 2, back + 0.042);
+  m.add(g, lever);
+};
+
+/** A rain shower head on a wall arm (its back at -z, on the wall): a
+ * flange, the arm out level, a short drop, and a thin round head at the
+ * front, matte black (or a colour picked). */
+const showerHead: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const black = mat(tint ?? "#1b1b1b", tint ? 0.4 : 0.6, tint ? 0.6 : 0);
+  const back = -D / 2;
+  const r = Math.min(W, D * 0.9) / 2;
+  const armY = H - 0.02;
+  const zHead = D / 2 - r;
+  m.cyl(0.03, 0.03, 0.012, 0, armY, back + 0.006, black, 24, "z");
+  m.cyl(
+    0.011,
+    0.011,
+    zHead - back,
+    0,
+    armY,
+    (back + zHead) / 2,
+    black,
+    16,
+    "z",
+  );
+  m.cyl(0.011, 0.011, 0.05, 0, armY - 0.05, zHead, black, 16);
+  m.cyl(r, r, 0.012, 0, armY - 0.062, zHead, black, 40);
+  // Its face: a slightly paler disc of nozzles.
+  m.cyl(
+    r * 0.9,
+    r * 0.9,
+    0.001,
+    0,
+    armY - 0.063,
+    zHead,
+    mat("#2a2a2a", 0.8),
+    40,
+  );
+};
+
 const TILE_MATS = new Map<string, THREE.MeshStandardMaterial>();
 /** The tile in a colour, its grout the same dark grey whatever it is. */
 function tileMaterial(tile: string): THREE.MeshStandardMaterial {
@@ -2344,6 +2546,8 @@ const backsplash: Builder = (m, o, tint, item) => {
     ? rectTileMaterial((tint ?? own).toLowerCase())
     : tileMaterial((tint ?? own).toLowerCase());
   const repeat = rect ? RECT_TILE : HEX_TILE;
+  // Turned a quarter round: the texture's along runs up the wall.
+  const turned = !!item.model?.tileTurned;
   for (const [x0, x1, y0, y1] of panelPieces(W, H, item.model?.gaps)) {
     const w = x1 - x0;
     const h = y1 - y0;
@@ -2351,12 +2555,12 @@ const backsplash: Builder = (m, o, tint, item) => {
     // Its tiles laid from the panel's corner, so the pieces line up.
     const g = new THREE.PlaneGeometry(w, h);
     const uv = g.getAttribute("uv") as THREE.BufferAttribute;
-    for (let i = 0; i < uv.count; i++)
-      uv.setXY(
-        i,
-        (x0 + W / 2 + uv.getX(i) * w) / repeat[0],
-        (y0 + uv.getY(i) * h) / repeat[1],
-      );
+    for (let i = 0; i < uv.count; i++) {
+      const across = x0 + W / 2 + uv.getX(i) * w;
+      const up = y0 + uv.getY(i) * h;
+      if (turned) uv.setXY(i, up / repeat[0], across / repeat[1]);
+      else uv.setXY(i, across / repeat[0], up / repeat[1]);
+    }
     g.translate((x0 + x1) / 2, y0 + h / 2, -D / 2 + t + 0.0005);
     m.add(g, tile);
   }
@@ -5467,6 +5671,11 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^espresso_philips_baristina/, baristina],
   [/^countertop_custom/, customCounter],
   [/^shower_glass_panel/, showerGlassPanel],
+  [/^floor_tile_pebble/, pebbleFloor],
+  [/^shower_valve_black/, showerValve],
+  [/^bath_sink_vessel_rect/, vesselSink],
+  [/^bath_faucet_black/, bathFaucet],
+  [/^shower_head_black/, showerHead],
   [/^shower_glass_door/, showerGlassDoor],
   [/^office_chair_knoll_generation/, knollGeneration],
   [/^sidio_crate/, sidioCrate],

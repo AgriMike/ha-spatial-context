@@ -5357,6 +5357,23 @@ export class Floorplan3dView extends LitElement {
             : nothing
         }
         ${
+          entry?.opts["tileSize"]
+            ? html`<label class="row">
+                <span>${localize("edit3d.tileTurned")}</span>
+                <input
+                  type="checkbox"
+                  .checked=${!!item.tile_turned}
+                  @change=${(e: Event) =>
+                    set({
+                      tile_turned: (e.target as HTMLInputElement).checked
+                        ? true
+                        : null,
+                    })}
+                />
+              </label>`
+            : nothing
+        }
+        ${
           entry?.id.startsWith("sidio_crate")
             ? html`<label class="row">
                 <span>${localize("edit3d.crateLid")}</span>

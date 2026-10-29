@@ -1139,6 +1139,52 @@ const BATHROOM: Row[] = [
   ["shower_122", "Shower 122×91", 122, 91, "shower"],
   ["shower_152", "Shower 152×81", 152, 81, "shower"],
   ["shower_neo_angle", "Neo-angle shower", 100, 100, "neoAngleShower"],
+  // Grey river pebbles set in dark grout, laid on the floor (a shower's),
+  // as big as drawn.
+  // Matte black shower trim, hung on the wall (its back against it): a
+  // valve's round plate and lever, a rain head on an arm out from it.
+  // A rectangular vessel sink and a tall single-lever faucet, set on a
+  // vanity's top (86 cm) unless moved.
+  [
+    "bath_sink_vessel_rect",
+    "Bathroom sink, rectangular vessel (white)",
+    50,
+    36,
+    "box",
+    { h3d: 0.12, y3d: 0.86 },
+  ],
+  [
+    "bath_faucet_black",
+    "Bathroom faucet, tall single lever (matte black)",
+    6,
+    18,
+    "box",
+    { h3d: 0.3, y3d: 0.86 },
+  ],
+  [
+    "shower_valve_black",
+    "Shower valve trim (matte black)",
+    18,
+    8,
+    "box",
+    { h3d: 0.18, y3d: 1.0 },
+  ],
+  [
+    "shower_head_black",
+    "Rain shower head on wall arm (matte black)",
+    25,
+    45,
+    "box",
+    { h3d: 0.12, y3d: 1.98 },
+  ],
+  [
+    "floor_tile_pebble",
+    "Pebble floor tile (grey, dark grout)",
+    90,
+    90,
+    "box",
+    { h3d: 0.012, y3d: 0 },
+  ],
   // Frameless glass: a fixed panel (as wide and tall as set) and a door
   // hinged beside it (opened, hinged and swung as a door).
   [

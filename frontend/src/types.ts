@@ -399,6 +399,8 @@ export interface FurnitureItem {
   /** How far a backsplash's tile stops short of a window or door in the
    * wall behind it, centimetres (absent: right up to its casing). */
   opening_gap_cm?: number | null;
+  /** A tile wall's tiles turned a quarter round (their long side up). */
+  tile_turned?: boolean | null;
   /** How wide a climbing plant's leaves fan round its front, degrees
    * (90 fills a corner); unset = its own. */
   leaf_spread_deg?: number | null;
