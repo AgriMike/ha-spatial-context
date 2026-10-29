@@ -413,6 +413,8 @@ _FURNITURE_SCHEMA = {
     # ...and laid from its right end (its grout lines meeting a corner).
     vol.Optional("tile_from_right"): vol.Any(None, bool),
     # A towel bar's folded towel: shown, how far it hangs (cm), its colour.
+    # A bathroom sink set on the counter (unset) or under it, the top cut.
+    vol.Optional("sink_mount"): vol.Any(None, vol.In(["vessel", "under"])),
     vol.Optional("towel"): vol.Any(None, bool),
     vol.Optional("towel_cm"): vol.Any(
         None, vol.All(vol.Coerce(float), vol.Range(min=5, max=200))

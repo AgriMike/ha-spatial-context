@@ -1183,6 +1183,9 @@ const BATHROOM: Row[] = [
     "box",
     { h3d: 0.8, y3d: 1.1 },
   ],
+  // A rug of a picture you upload (a photo of one), flat on the floor, as
+  // big as set (5' by 7'6" unless sized).
+  ["rug_picture", "Rug (your picture)", 152, 229, "box", { h3d: 0.01, y3d: 0 }],
   [
     "towel_bar_black",
     "Towel bar (matte black)",

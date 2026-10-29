@@ -159,6 +159,10 @@ export interface Item3d {
   /** Drawn as an extruded block with its 2D drawing on top ("block"), or
    * modelled: a potted plant, a tree, a lamp. */
   shape: "block" | "plant" | "tree" | "lamp" | "shower" | "stairs";
+  /** A plant's leaves cut off at the faces of walls it reaches through:
+   * each [nx, nz, c], kept where nx * x + nz * z + c >= 0 (the floor's
+   * frame, metres). */
+  clip?: [number, number, number][];
   /** A staircase: the floor levels (metres above the floor's level) at its
    * front (local +z) and back ends, and whether its left (local -x) and
    * right sides get a railing. `railEnds` (per side, metres from its low
@@ -247,6 +251,9 @@ export interface Item3d {
     tileTurned?: boolean;
     /** ...and laid from its right end. */
     tileFromRight?: boolean;
+    /** A sink set under the counter (its top cut round it), its height
+     * found from the counter unless set by hand. */
+    underCounter?: { auto: boolean };
     /** A print's uploaded picture (View3dOptions.fetchImage). */
     image?: string;
     /** A towel bar's folded towel: how far it hangs (metres), its

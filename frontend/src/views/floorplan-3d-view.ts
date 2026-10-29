@@ -5434,7 +5434,20 @@ export class Floorplan3dView extends LitElement {
               </label>`
             : nothing
         }
-        ${entry?.id.startsWith("metal_print") ? this._renderPrintImage(item) : nothing}
+        ${entry && /^(metal_print|rug_picture)/.test(entry.id) ? this._renderPrintImage(item) : nothing}
+        ${
+          entry?.id.startsWith("bath_sink")
+            ? this._select<"vessel" | "under">(
+                localize("edit3d.sinkMount"),
+                item.sink_mount ?? "vessel",
+                [
+                  ["vessel", localize("edit3d.sinkVessel")],
+                  ["under", localize("edit3d.sinkUnder")],
+                ],
+                (v) => set({ sink_mount: v === "vessel" ? null : v }),
+              )
+            : nothing
+        }
         ${
           entry?.id.startsWith("towel_bar")
             ? html`<label class="row">

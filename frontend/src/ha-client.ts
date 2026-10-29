@@ -554,6 +554,7 @@ const ITEM_FINISH_KEYS = [
   "opening_gap_cm",
   "tile_turned",
   "tile_from_right",
+  "sink_mount",
   "towel",
   "towel_cm",
   "towel_color",

@@ -2175,6 +2175,8 @@ function createView3d(options: View3dOptions): View3dHandle {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  // Plants cut off at the walls they reach through (see Item3d.clip).
+  renderer.localClippingEnabled = true;
   // Rolls off highlights (a lamp-lit floor in full sun) instead of
   // clipping them to white.
   renderer.toneMapping = THREE.NeutralToneMapping;
@@ -2594,6 +2596,32 @@ function createView3d(options: View3dOptions): View3dHandle {
     return g;
   }
 
+  /** A plant's leaves cut off at the walls it reaches through: its
+   * materials its own copies, clipped there (walls stand in the floor's
+   * frame, which only ever moves up and down, so the planes hold). */
+  function clipped<T extends THREE.Object3D>(obj: T, item: Item3d): T {
+    const planes = (item.clip ?? []).map(
+      ([nx, nz, c]) => new THREE.Plane(new THREE.Vector3(nx, 0, nz), c),
+    );
+    obj.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const one = (m: THREE.Material) => {
+        const own = m.userData["clipOwn"] ? m : m.clone();
+        own.userData["clipOwn"] = true;
+        own.clippingPlanes = planes.length ? planes : null;
+        own.clipShadows = true;
+        return own;
+      };
+      if (!planes.length && !mesh.userData["clipped"]) return;
+      mesh.userData["clipped"] = planes.length > 0;
+      mesh.material = Array.isArray(mesh.material)
+        ? mesh.material.map(one)
+        : one(mesh.material);
+    });
+    return obj;
+  }
+
   function buildItemObject(item: Item3d, baseY: number): THREE.Object3D {
     // On the ground: the terrain's height (or the flat ground's), in the
     // item's floor's frame.
@@ -2630,6 +2658,7 @@ function createView3d(options: View3dOptions): View3dHandle {
                 : withPrints(outdoorModel(item) ?? furnitureModel(item)),
           );
     if (furniture) {
+      clipped(furniture, item);
       furniture.name = item.name;
       furniture.position.set(item.x, itemY(item, baseY), item.z);
       furniture.rotation.y = item.angle;
@@ -2638,7 +2667,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       return furniture;
     }
     if (item.shape !== "block") {
-      const model = modelItem(item);
+      const model = clipped(modelItem(item), item);
       model.name = item.name;
       model.position.set(item.x, itemY(item, baseY), item.z);
       model.rotation.y = item.angle;

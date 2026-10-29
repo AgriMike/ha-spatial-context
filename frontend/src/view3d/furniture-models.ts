@@ -2574,6 +2574,24 @@ const metalPrint: Builder = (m, _o, _tint, item) => {
   m.add(g, face);
 };
 
+/** A rug of an uploaded picture: a thin pile flat on the floor, the
+ * picture across its top, its top edge toward the rug's back (pale grey
+ * until it's chosen; see view3d-glue's prints). */
+const pictureRug: Builder = (m, _o, tint, item) => {
+  const { W, D, H } = m;
+  const t = Math.min(H, 0.012);
+  m.soft(W, t, D, 0, 0, 0, mat(tint ?? "#cfd2d4", 0.97), 0.004);
+  const face = new THREE.MeshStandardMaterial({
+    color: item.model?.image ? "#ffffff" : "#c3c7ca",
+    roughness: 0.95,
+  });
+  if (item.model?.image) face.userData["printImage"] = item.model.image;
+  const g = new THREE.PlaneGeometry(W - 0.004, D - 0.004);
+  g.rotateX(-Math.PI / 2);
+  g.translate(0, t + 0.0006, 0);
+  m.add(g, face);
+};
+
 /** A towel bar (its back at -z, on the wall), matte black (or a colour
  * picked): a square bar between two blocky posts out from the wall, flat
  * on top, as wide as the item; and, if set, a bath towel folded in thirds
@@ -5410,6 +5428,30 @@ const customCounter: Builder = (m, _o, tint, item) => {
     return;
   }
   const shape = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(x, -z)));
+  // Undermount sinks' openings cut through it: a rounded rectangle each.
+  for (const c of item.model?.cuts ?? []) {
+    const r = Math.min(c.r, c.w / 2 - 0.001, c.d / 2 - 0.001);
+    const corner: [number, number, number][] = [
+      [c.w / 2 - r, c.d / 2 - r, 0],
+      [-c.w / 2 + r, c.d / 2 - r, Math.PI / 2],
+      [-c.w / 2 + r, -c.d / 2 + r, Math.PI],
+      [c.w / 2 - r, -c.d / 2 + r, (3 * Math.PI) / 2],
+    ];
+    const ring: THREE.Vector2[] = [];
+    const cos = Math.cos(c.a);
+    const sin = Math.sin(c.a);
+    for (const [cx, cz, start] of corner)
+      for (let i = 0; i <= 4; i++) {
+        const t = start + (i / 4) * (Math.PI / 2);
+        const lx = cx + Math.cos(t) * r;
+        const lz = cz + Math.sin(t) * r;
+        // Turned with the sink, at its place; z up the shape's y.
+        const x = c.x + lx * cos + lz * sin;
+        const z = c.z - lx * sin + lz * cos;
+        ring.push(new THREE.Vector2(x, -z));
+      }
+    shape.holes.push(new THREE.Path(ring));
+  }
   const g = new THREE.ExtrudeGeometry(shape, {
     depth: H,
     bevelEnabled: false,
@@ -5874,6 +5916,7 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^shower_valve_black/, showerValve],
   [/^towel_bar_black/, towelBar],
   [/^metal_print/, metalPrint],
+  [/^rug_picture/, pictureRug],
   [/^shower_niche/, showerNiche],
   [/^bath_sink_vessel_rect/, vesselSink],
   [/^bath_faucet_black/, bathFaucet],

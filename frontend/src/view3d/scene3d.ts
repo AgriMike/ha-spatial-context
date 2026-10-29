@@ -1295,7 +1295,8 @@ function buildFloor(
       z,
       st.back + ((st.front - st.back) * (z + st.d / 2)) / st.d + STAIR_CAP_M,
     ];
-    const [lowCut, highCut] = railEnds(si, side);
+    // (Along its own line: its middle 5 cm out past the flight's side.)
+    const [lowCut, highCut] = railEnds(si, side, -0.05);
     const low = st.front < st.back ? st.d / 2 : -st.d / 2;
     const toward = Math.sign(-low);
     const zs = [low + toward * lowCut, -low - toward * highCut].sort(
@@ -1360,12 +1361,17 @@ function buildFloor(
    * one standing on a floor above, like the landing's half wall carrying
    * on from it): metres from its low and high ends at which it stops,
    * 0 where it ends free. */
-  const railEnds = (si: number, side: 0 | 1): [number, number] => {
+  const railEnds = (
+    si: number,
+    side: 0 | 1,
+    inward = 0.05,
+  ): [number, number] => {
     const st = stairs[si]!;
     const f = st.item;
     const d = f.depth_cm / 100;
     const [back, front] = st.sides[side]!;
-    // The railing's line, 5 cm in from the side (as drawn), low end first.
+    // The railing's line, 5 cm in from the side (as drawn; else as set,
+    // out past it if negative), low end first.
     const cx = f.x * m;
     const cz = f.y * m;
     const inset = (p: Vec2): Vec2 => {
@@ -1374,7 +1380,7 @@ function buildFloor(
       const k = Math.hypot(mx - cx, mz - cz);
       return k < 1e-6
         ? p
-        : [p[0] - ((mx - cx) / k) * 0.05, p[1] - ((mz - cz) / k) * 0.05];
+        : [p[0] - ((mx - cx) / k) * inward, p[1] - ((mz - cz) / k) * inward];
     };
     const low = st.front < st.back ? front : back;
     const high = low === front ? back : front;
@@ -4095,6 +4101,9 @@ function buildFloor(
               ...(item.tile_turned ? { tileTurned: true } : {}),
               ...(item.tile_from_right ? { tileFromRight: true } : {}),
               ...(item.image_id ? { image: item.image_id } : {}),
+              ...(item.sink_mount === "under"
+                ? { underCounter: { auto: item.elevation_cm == null } }
+                : {}),
               ...(item.towel
                 ? {
                     towel: {
@@ -4218,17 +4227,46 @@ function buildFloor(
 
   // An undermount sink's opening cut in the stone top it sits under (a
   // shaker cabinet's, a kitchen island's), so its bowl shows through.
+  // A counter's top: a cabinet's stone (3 cm), or a custom countertop's
+  // own thickness.
+  const COUNTER_TOPS =
+    /^shaker_(base|drawer|sink)|^island_shaker|^countertop_custom/;
+  const topThickness = (c: Item3d) =>
+    /^countertop_custom/.test(c.model?.kind ?? "") ? c.height : 0.03;
+  const under = (sink: Item3d, c: Item3d) => {
+    const dx = sink.x - c.x;
+    const dz = sink.z - c.z;
+    const cos = Math.cos(c.angle);
+    const sin = Math.sin(c.angle);
+    return (
+      Math.abs(dx * cos - dz * sin) < c.width / 2 &&
+      Math.abs(dx * sin + dz * cos) < c.depth / 2
+    );
+  };
   for (const sink of items) {
-    const rim = sink.model?.opts["undermount"];
-    if (typeof rim !== "number") continue;
+    // A bathroom sink set under a counter: its rim just under the top it
+    // stands under (unless its height's set by hand).
+    const set = sink.model?.underCounter;
+    if (set?.auto) {
+      const c = items.find(
+        (o) =>
+          o !== sink &&
+          COUNTER_TOPS.test(o.model?.kind ?? "") &&
+          under(sink, o),
+      );
+      if (c) sink.y0 = c.y0 + c.height - topThickness(c) - sink.height;
+    }
+    const own = sink.model?.opts["undermount"];
+    const rim = typeof own === "number" ? own : set ? 1.2 : null;
+    if (rim === null) continue;
     const top = sink.y0 + sink.height;
     const reach = Math.hypot(sink.width, sink.depth) / 2;
     for (const c of items) {
       if (
         c === sink ||
         !c.model ||
-        !/^shaker_(base|drawer|sink)|^island_shaker/.test(c.model.kind) ||
-        Math.abs(c.y0 + c.height - top) > 0.08
+        !COUNTER_TOPS.test(c.model.kind) ||
+        Math.abs(c.y0 + c.height - top) > Math.max(0.08, topThickness(c) + 0.03)
       )
         continue;
       // The sink's centre and turn in the cabinet's frame.
@@ -4327,6 +4365,7 @@ function buildFloor(
   }
 
   cutWallsForNiches(walls, items);
+  clipPlantsAtWalls(walls, items);
 
   // Baseboards round each room, along its walls: stained like the doors
   // (or as set), as tall and as proud as their casing unless set; not
@@ -4649,6 +4688,53 @@ function stopRoundNiches(items: Item3d[]): void {
       if (y1 <= 0 || y0 >= sp.height) continue;
       (sp.model.gaps ??= []).push({ x0, x1, y0, y1 });
     }
+  }
+}
+
+/** A plant (a houseplant in its pot, a shrub or a tree) whose leaves
+ * reach through a wall: cut off at that wall's face on its own side, so
+ * none shows in the room behind. */
+function clipPlantsAtWalls(walls: Box3d[], items: Item3d[]): void {
+  for (const it of items) {
+    const plant =
+      it.shape === "plant" ||
+      it.shape === "tree" ||
+      (!!it.model && (HOUSEPLANT_DRAWS.has(it.model.draw) || !!it.model.plant));
+    if (!plant) continue;
+    // How far its leaves reach: past its footprint, a spread plant more.
+    const reach = (Math.max(it.width, it.depth) / 2) * 1.8 + 0.1;
+    const planes: [number, number, number][] = [];
+    for (const b of walls) {
+      if (b.ref?.kind !== "wall") continue;
+      if (b.y1 < it.y0 || b.y0 > it.y0 + it.height + 0.5) continue;
+      const ux = Math.cos(b.angle);
+      const uz = -Math.sin(b.angle);
+      const nx = Math.sin(b.angle);
+      const nz = Math.cos(b.angle);
+      const along = (it.x - b.x) * ux + (it.z - b.z) * uz;
+      const perp = (it.x - b.x) * nx + (it.z - b.z) * nz;
+      if (Math.abs(along) > b.length / 2 + reach * 0.5) continue;
+      // Its middle inside the wall: no side to keep.
+      if (Math.abs(perp) < b.depth / 2) continue;
+      if (Math.abs(perp) > b.depth / 2 + reach) continue;
+      const s = Math.sign(perp);
+      const plane: [number, number, number] = [
+        s * nx,
+        s * nz,
+        -s * (b.x * nx + b.z * nz) - b.depth / 2,
+      ];
+      // One plane a face (a wall's boxes share it).
+      if (
+        !planes.some(
+          (p) =>
+            Math.abs(p[0] - plane[0]) < 1e-3 &&
+            Math.abs(p[1] - plane[1]) < 1e-3 &&
+            Math.abs(p[2] - plane[2]) < 0.005,
+        )
+      )
+        planes.push(plane);
+    }
+    if (planes.length) it.clip = planes.slice(0, 6);
   }
 }
 

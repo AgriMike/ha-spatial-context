@@ -405,6 +405,9 @@ export interface FurnitureItem {
   tile_from_right?: boolean | null;
   /** A towel bar's folded towel: shown, how far it hangs (cm, unset:
    * 55), its colour (unset: white). */
+  /** A bathroom sink set on the counter (unset: a vessel) or under it,
+   * the counter's top cut round its bowl. */
+  sink_mount?: "vessel" | "under" | null;
   towel?: boolean | null;
   towel_cm?: number | null;
   towel_color?: string | null;
