@@ -39,6 +39,13 @@ export interface Room {
   /** Its ceiling under the drawn roof: vaulted up the roof's underside
    * (unset: vaulted), or flat at its walls' height. */
   ceiling?: "vaulted" | "flat" | null;
+  /** Its baseboards: stained like the doors (unset), white, a colour
+   * (`baseboard_color`), or none; their height and thickness,
+   * centimetres (unset: as the doors' casing, 8 and 1.5). */
+  baseboard?: "stained" | "white" | "paint" | "none" | null;
+  baseboard_color?: string | null;
+  baseboard_cm?: number | null;
+  baseboard_thick_cm?: number | null;
   /** What this room's live light shading follows, besides its own
    * `area_id`: other HA areas (an open-plan space spanning two), other
    * rooms on this floor (whose lights it shows too), and specific light

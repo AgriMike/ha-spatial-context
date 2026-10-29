@@ -5478,6 +5478,70 @@ export class Floorplan3dView extends LitElement {
         (v) => set({ ceiling: v }),
       )}
       <div class="divider"></div>
+      ${this._select<"white" | "paint" | "none">(
+        localize("edit3d.baseboard"),
+        room.baseboard === "stained" ? null : (room.baseboard ?? null),
+        [
+          ["", localize("edit3d.baseboardStained")],
+          ["white", localize("edit3d.baseboardWhite")],
+          ["paint", localize("edit3d.baseboardPaint")],
+          ["none", localize("edit3d.baseboardNone")],
+        ],
+        (v) => set({ baseboard: v }),
+      )}
+      ${
+        room.baseboard === "paint"
+          ? this._color(
+              localize("edit3d.baseboardColor"),
+              room.baseboard_color,
+              (v) => set({ baseboard_color: v }),
+            )
+          : nothing
+      }
+      ${
+        room.baseboard !== "none"
+          ? html`${this._num(
+              localize("edit3d.baseboardHeight"),
+              room.baseboard_cm ?? null,
+              (v) =>
+                set({
+                  baseboard_cm: v == null ? null : Math.max(1, Math.min(60, v)),
+                }),
+              { unit: "cm", min: 1, max: 60, step: 0.5, placeholder: "8" },
+            )}
+            ${this._num(
+              localize("edit3d.baseboardThick"),
+              room.baseboard_thick_cm ?? null,
+              (v) =>
+                set({
+                  baseboard_thick_cm:
+                    v == null ? null : Math.max(0.3, Math.min(10, v)),
+                }),
+              { unit: "cm", min: 0.3, max: 10, step: 0.1, placeholder: "1.5" },
+            )}`
+          : nothing
+      }
+      <div class="buttons">
+        <button
+          @click=${() =>
+            this._edit({
+              rooms: layout.rooms.map((r) =>
+                r.outdoor
+                  ? r
+                  : {
+                      ...r,
+                      baseboard: room.baseboard ?? null,
+                      baseboard_color: room.baseboard_color ?? null,
+                      baseboard_cm: room.baseboard_cm ?? null,
+                      baseboard_thick_cm: room.baseboard_thick_cm ?? null,
+                    },
+              ),
+            })}
+        >
+          ${localize("edit3d.baseboardAll")}
+        </button>
+      </div>
+      <div class="divider"></div>
       ${this._num(localize("edit3d.floorLevel"), (room.floor_offset_m ?? 0) * 100, (v) => set({ floor_offset_m: v ? v / 100 : null }), { unit: "cm", step: 1 })}
       <span class="hint">${localize("edit3d.roomHint")}</span>`;
   }

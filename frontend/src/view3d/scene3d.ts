@@ -4267,6 +4267,150 @@ function buildFloor(
     walls.splice(k, 1, ...parts);
   }
 
+  // Baseboards round each room, along its walls: stained like the doors
+  // (or as set), as tall and as proud as their casing unless set; not
+  // across a doorway (its casing), nor behind anything standing against
+  // the wall (they stop at its sides).
+  const baseWalls = layout.walls.flatMap((w) => {
+    const t = wallThicknessCm(w) / 100;
+    if (t <= RAIL_THICKNESS_M) return [];
+    return w.points.slice(1).map((q, k) => {
+      const p = w.points[k]!;
+      return {
+        a: [p[0] * m, p[1] * m] as Vec2,
+        b: [q[0] * m, q[1] * m] as Vec2,
+        t,
+      };
+    });
+  });
+  for (const room of layout.rooms) {
+    if (room.outdoor || room.points.length < 3 || room.baseboard === "none")
+      continue;
+    const bh = (room.baseboard_cm ?? 8) / 100;
+    const bt = (room.baseboard_thick_cm ?? 1.5) / 100;
+    const color =
+      room.baseboard === "white"
+        ? dark
+          ? TRIM_WHITE_DARK
+          : TRIM_WHITE
+        : room.baseboard === "paint"
+          ? (room.baseboard_color ?? TRIM_WHITE)
+          : dark
+            ? DOOR_INSIDE_DARK
+            : DOOR_INSIDE;
+    const level = room.floor_offset_m ?? 0;
+    const pts = room.points.map(([x, y]): Vec2 => [x * m, y * m]);
+    pts.forEach((a, k) => {
+      const b = pts[(k + 1) % pts.length]!;
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (len < 0.05) return;
+      const u: Vec2 = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+      let n: Vec2 = [-u[1], u[0]];
+      const mid: Vec2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      if (
+        !pointInPolygon(
+          (mid[0] + n[0] * 0.05) / m,
+          (mid[1] + n[1] * 0.05) / m,
+          room.points,
+        )
+      )
+        n = [-n[0], -n[1]];
+      // The wall along it at a spot (its thickness), else none.
+      const wallAt = (p: Vec2): number | null => {
+        for (const w of baseWalls) {
+          const wl = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
+          if (wl < 0.01) continue;
+          const vx = (w.b[0] - w.a[0]) / wl;
+          const vz = (w.b[1] - w.a[1]) / wl;
+          if (Math.abs(u[0] * vz - u[1] * vx) > 0.09) continue;
+          if (
+            pointToSegmentDistance(p[0], p[1], w.a[0], w.a[1], w.b[0], w.b[1]) <
+            w.t / 2 + 0.05
+          )
+            return w.t;
+        }
+        return null;
+      };
+      // A doorway (its casing) or a window down to it, on this wall.
+      const openAt = (p: Vec2, t: number) =>
+        openingFaces.some((f) => {
+          if (f.y0 > level + bh) return false;
+          const fl = Math.hypot(f.b[0] - f.a[0], f.b[1] - f.a[1]);
+          if (fl < 0.01) return false;
+          const vx = (f.b[0] - f.a[0]) / fl;
+          const vz = (f.b[1] - f.a[1]) / fl;
+          if (Math.abs(u[0] * vz - u[1] * vx) > 0.09) return false;
+          const s = (p[0] - f.a[0]) * vx + (p[1] - f.a[1]) * vz;
+          const off = Math.abs((p[0] - f.a[0]) * vz - (p[1] - f.a[1]) * vx);
+          return s > 0 && s < fl && off < t / 2 + 0.05;
+        });
+      // Something standing against it there (its footprint over the
+      // board, low enough to meet it).
+      const blockedAt = (q: Vec2) =>
+        items.some((it) => {
+          if (
+            it.site ||
+            it.grounded ||
+            it.height < 0.03 ||
+            it.y0 > level + bh ||
+            it.y0 + it.height < level
+          )
+            return false;
+          const dx = q[0] - it.x;
+          const dz = q[1] - it.z;
+          const c = Math.cos(it.angle);
+          const sn = Math.sin(it.angle);
+          const lx = dx * c - dz * sn;
+          const lz = dx * sn + dz * c;
+          const pad = bt / 2 + 0.005;
+          return (
+            Math.abs(lx) < it.width / 2 + pad &&
+            Math.abs(lz) < it.depth / 2 + pad
+          );
+        });
+      const step = 0.02;
+      const count = Math.max(1, Math.round(len / step));
+      let start: number | null = null;
+      let thick = 0;
+      const flush = (s0: number, s1: number) => {
+        if (s1 - s0 < 0.03) return;
+        const off = thick / 2 + bt / 2 - 0.001;
+        const cx = a[0] + u[0] * ((s0 + s1) / 2) + n[0] * off;
+        const cz = a[1] + u[1] * ((s0 + s1) / 2) + n[1] * off;
+        walls.push({
+          x: cx,
+          z: cz,
+          y0: level,
+          y1: level + bh,
+          length: s1 - s0,
+          depth: bt,
+          angle: Math.atan2(-u[1], u[0]),
+          color,
+        });
+      };
+      for (let i = 0; i <= count; i++) {
+        const s = (len * i) / count;
+        const p: Vec2 = [a[0] + u[0] * s, a[1] + u[1] * s];
+        const t = wallAt(p);
+        const ok =
+          t !== null &&
+          !openAt(p, t) &&
+          !blockedAt([
+            p[0] + n[0] * (t / 2 + bt / 2),
+            p[1] + n[1] * (t / 2 + bt / 2),
+          ]);
+        if (ok && start === null) {
+          start = s;
+          thick = t!;
+        } else if (ok) thick = Math.max(thick, t!);
+        if ((!ok || i === count) && start !== null) {
+          flush(start, ok ? s : s - len / count / 2);
+          start = null;
+        }
+      }
+    });
+  }
+
   const floor: Floor3d = {
     floorId: input.floorId,
     name: input.name,

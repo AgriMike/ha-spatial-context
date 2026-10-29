@@ -113,6 +113,20 @@ _ROOM_SCHEMA = {
     vol.Optional("wall_color"): vol.Any(vol.Match(r"^#[0-9a-fA-F]{6}$"), None),
     # Its ceiling under the roof: vaulted (unset) or flat.
     vol.Optional("ceiling"): vol.Any(None, vol.In(["vaulted", "flat"])),
+    # Its baseboards: stained like the doors (unset), white, a colour, or
+    # none; their height and thickness, cm.
+    vol.Optional("baseboard"): vol.Any(
+        None, vol.In(["stained", "white", "paint", "none"])
+    ),
+    vol.Optional("baseboard_color"): vol.Any(
+        None, vol.Match(r"^#[0-9a-fA-F]{6}$")
+    ),
+    vol.Optional("baseboard_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=1, max=60))
+    ),
+    vol.Optional("baseboard_thick_cm"): vol.Any(
+        None, vol.All(vol.Coerce(float), vol.Range(min=0.3, max=10))
+    ),
 }
 
 _PIN_SCHEMA = {

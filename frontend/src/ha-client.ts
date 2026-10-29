@@ -473,6 +473,10 @@ const ROOM_FINISH_KEYS = [
   "wall_finish",
   "wall_color",
   "ceiling",
+  "baseboard",
+  "baseboard_color",
+  "baseboard_cm",
+  "baseboard_thick_cm",
 ] as const;
 const ITEM_FINISH_KEYS = [
   "height_cm",

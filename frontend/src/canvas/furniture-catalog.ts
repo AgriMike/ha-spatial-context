@@ -776,6 +776,15 @@ const KITCHEN: Row[] = [
   ["toaster_oven", "Toaster oven", 45, 35, "appliance", { window: true }],
   ["coffee_maker", "Coffee maker", 25, 25, "appliance", { jug: true }],
   ["espresso_machine", "Espresso machine", 35, 40, "appliance", { dial: true }],
+  // Philips Baristina BAR300/60: 7.09" wide, 14.96" deep, 13.58" tall.
+  [
+    "espresso_philips_baristina",
+    "Philips Baristina espresso machine (black)",
+    18,
+    38,
+    "appliance",
+    { h3d: 0.345 },
+  ],
   ["stand_mixer", "Stand mixer", 35, 25, "appliance", { bowl: true }],
   ["kettle", "Kettle", 22, 18, "puck"],
   ["blender", "Blender", 18, 18, "puck"],

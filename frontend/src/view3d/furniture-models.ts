@@ -4367,6 +4367,63 @@ const slatWall: Builder = (m, _o, tint, item) => {
   }
 };
 
+/** Philips's Baristina (front at +z): a ribbed dark tower on a foot, a
+ * rounded head over it running the full depth with the grinder in it, a
+ * clear bean hopper on top, the chrome brew head under the head's front
+ * with its black handle, and a drip tray at the front. A colour picked is
+ * its body's (a white one). */
+const baristina: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const k = H / 0.345;
+  const body = mat(tint ?? "#3c3e41", 0.55);
+  const head = mat(tint ? shade(tint, 1.06) : "#4a4c50", 0.5);
+  const rib = mat(tint ? shade(tint, 0.85) : "#2c2e30", 0.6);
+  const black = mat("#181818", 0.45);
+  const chrome = mat("#c8cbcf", 0.25, 0.8);
+  const front = D / 2;
+  // The foot, and the drip tray standing on it at the front.
+  m.soft(W, 0.022 * k, D, 0, 0, 0, black, 0.006);
+  m.soft(W * 0.86, 0.03 * k, 0.1, 0, 0.022 * k, front - 0.06, black, 0.006);
+  // The tower: ribbed down its front.
+  const towerD = D * 0.56;
+  const tz = -D / 2 + towerD / 2;
+  const y0 = 0.022 * k;
+  const y1 = 0.205 * k;
+  m.box(W - 0.004, y1 - y0, towerD, 0, y0, tz, body);
+  for (let x = -W / 2 + 0.008; x < W / 2 - 0.006; x += 0.0085)
+    m.box(0.0035, y1 - y0 - 0.01, 0.003, x, y0 + 0.005, tz + towerD / 2, rib);
+  // The head: rounded, the full depth, a chrome band under it.
+  m.box(W - 0.006, 0.006 * k, D - 0.01, 0, y1 - 0.004 * k, 0, chrome);
+  m.soft(W, 0.105 * k, D, 0, y1, 0, head, 0.018);
+  // The brew head under its front, and the portafilter's black handle.
+  m.cyl(0.03, 0.03, 0.045 * k, 0, y1 - 0.045 * k, front - 0.085, chrome, 24);
+  m.sphere(0.02, 0, y1 - 0.03 * k, front - 0.035, black, 1, 0.8, 1.2);
+  m.cyl(0.006, 0.006, 0.03 * k, 0, y1 - 0.075 * k, front - 0.085, chrome, 12);
+  // The bean hopper: clear, beans in it.
+  const hy = y1 + 0.105 * k;
+  const hh = H - hy;
+  m.soft(
+    W * 0.86,
+    hh * 0.7,
+    D * 0.42,
+    0,
+    hy,
+    -D * 0.12,
+    mat("#3b2416", 0.9),
+    0.01,
+  );
+  m.soft(
+    W * 0.9,
+    hh,
+    D * 0.46,
+    0,
+    hy,
+    -D * 0.12,
+    mat("#e3ecef", 0.05, 0, { opacity: 0.3 }),
+    0.012,
+  );
+};
+
 /** Book spines' colours (cloth and paper, muted). */
 const BOOK_COLORS = [
   "#2f3e4e",
@@ -4645,6 +4702,7 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^backsplash_/, backsplash],
   [/^bookshelf_open/, openBookshelf],
   [/^slat_wall/, slatWall],
+  [/^espresso_philips_baristina/, baristina],
   [/^sink_delta_everest/, everestSink],
   [/^faucet_delta_nicoli/, nicoliFaucet],
   [/^sink_rack_/, sinkRack],
