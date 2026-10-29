@@ -247,6 +247,8 @@ export interface Item3d {
     tileTurned?: boolean;
     /** ...and laid from its right end. */
     tileFromRight?: boolean;
+    /** A print's uploaded picture (View3dOptions.fetchImage). */
+    image?: string;
     /** A towel bar's folded towel: how far it hangs (metres), its
      * colour. */
     towel?: { len: number; color: string | null };
@@ -488,6 +490,8 @@ export interface View3dOptions {
   fetchScan(id: string): Promise<ArrayBuffer>;
   /** An item's uploaded model's GLB bytes. */
   fetchModel?(id: string): Promise<ArrayBuffer>;
+  /** A print's uploaded picture. */
+  fetchImage?(id: string): Promise<Blob>;
   /** A scan was dragged (or snapped) to a new pose. `final` is true when
    * the drag ends — the moment to save. */
   onScanMove?(id: string, pose: ScanPose, final: boolean): void;

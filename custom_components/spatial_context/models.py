@@ -122,6 +122,104 @@ class ModelFileView(HomeAssistantView):
         )
 
 
+# A print's picture: a photo or artwork, a few megabytes at most.
+MAX_IMAGE_BYTES = 25 * 1024 * 1024
+
+_IMAGE_TYPES = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+
+
+def images_dir(hass: HomeAssistant) -> Path:
+    return Path(hass.config.path(".storage", DOMAIN, "images"))
+
+
+def _image_ext(data: bytes) -> str | None:
+    """A picture's type from its first bytes: JPEG, PNG or WebP."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+class ImageUploadView(HomeAssistantView):
+    """POST a picture for an item (a print), multipart, field "file"."""
+
+    url = "/api/spatial_context/image_upload"
+    name = "api:spatial_context:image_upload"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        hass: HomeAssistant = request.app["hass"]
+        reader = await request.multipart()
+        field = await reader.next()
+        while field is not None and getattr(field, "name", None) != "file":
+            field = await reader.next()
+        if field is None or not isinstance(field, BodyPartReader):
+            return self.json_message("No file", 400)
+        filename = field.filename or "image"
+        buf = bytearray()
+        while chunk := await field.read_chunk(1024 * 1024):
+            buf.extend(chunk)
+            if len(buf) > MAX_IMAGE_BYTES:
+                return self.json_message("Picture is too large", 413)
+        data = bytes(buf)
+        ext = _image_ext(data)
+        if ext is None:
+            return self.json_message("Not a JPEG, PNG or WebP picture", 415)
+        image_id = uuid.uuid4().hex
+        path = images_dir(hass) / f"{image_id}.{ext}"
+
+        def _write() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+
+        await hass.async_add_executor_job(_write)
+        return self.json(
+            {
+                "id": image_id,
+                "name": Path(filename).stem[:120] or "Picture",
+                "size": len(data),
+            }
+        )
+
+
+class ImageFileView(HomeAssistantView):
+    """GET a picture back."""
+
+    url = "/api/spatial_context/image/{image_id}"
+    name = "api:spatial_context:image"
+    requires_auth = True
+
+    async def get(self, request: web.Request, image_id: str) -> web.StreamResponse:
+        if not _ID_RE.match(image_id):
+            return self.json_message("Bad picture id", 400)
+        hass: HomeAssistant = request.app["hass"]
+        folder = images_dir(hass)
+
+        def _find() -> tuple[Path, str] | None:
+            for ext, kind in _IMAGE_TYPES.items():
+                path = folder / f"{image_id}.{ext}"
+                if path.is_file():
+                    return path, kind
+            return None
+
+        found = await hass.async_add_executor_job(_find)
+        if found is None:
+            return self.json_message("Picture not found", 404)
+        path, kind = found
+        return web.FileResponse(
+            path,
+            headers={
+                "Content-Type": kind,
+                "Cache-Control": "private, max-age=31536000, immutable",
+            },
+        )
+
+
 def async_register_model_views(hass: HomeAssistant) -> None:
     hass.http.register_view(ModelUploadView())
     hass.http.register_view(ModelFileView())
+    hass.http.register_view(ImageUploadView())
+    hass.http.register_view(ImageFileView())

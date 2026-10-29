@@ -428,6 +428,9 @@ _FURNITURE_SCHEMA = {
     # A real 3D model worn instead of the drawing (see models.py): its
     # file's id and a label (its title and credit).
     vol.Optional("model_id"): vol.Any(None, vol.Match(r"^[0-9a-f]{32}$")),
+    # A print's uploaded picture (see models.py) and its file's name.
+    vol.Optional("image_id"): vol.Any(None, vol.Match(r"^[0-9a-f]{32}$")),
+    vol.Optional("image_name"): vol.Any(None, vol.All(str, vol.Length(max=200))),
     vol.Optional("model_name"): vol.Any(None, vol.All(str, vol.Length(max=400))),
     # A vehicle model's lift and how much bigger its tyres are, both cm.
     vol.Optional("lift_cm"): vol.Any(

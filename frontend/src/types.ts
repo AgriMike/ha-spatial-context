@@ -415,6 +415,9 @@ export interface FurnitureItem {
    * (an uploaded .glb, see models.py): its file's id, and a label (its
    * title and credit). */
   model_id?: string | null;
+  /** A print's uploaded picture (see models.py) and its file's name. */
+  image_id?: string | null;
+  image_name?: string | null;
   model_name?: string | null;
   /** A vehicle model's lift (its body raised off its wheels) and how much
    * bigger across its tyres are, centimetres; unset = as modelled. */

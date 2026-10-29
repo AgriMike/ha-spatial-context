@@ -7,6 +7,8 @@ import {
   HaClient,
   fetchScan,
   fetchModel,
+  fetchImage,
+  uploadImage,
   uploadModel,
   groundGridUnsaved,
   layoutFinishesUnsaved,
@@ -954,6 +956,10 @@ export class Floorplan3dView extends LitElement {
         fetchModel: (id) =>
           this.hass
             ? fetchModel(this.hass, id)
+            : Promise.reject(new Error("offline")),
+        fetchImage: (id) =>
+          this.hass
+            ? fetchImage(this.hass, id)
             : Promise.reject(new Error("offline")),
         onScanMove: this._onScanMove,
         onEditPointer: (e) => this._onEditPointer(e),
@@ -3899,6 +3905,61 @@ export class Floorplan3dView extends LitElement {
   @state() private _modelBusy = false;
   @state() private _modelError: string | null = null;
 
+  /** A print's picture: upload one (JPEG, PNG or WebP), take it off. */
+  private _renderPrintImage(item: FurnitureItem) {
+    const L = (k: string) => localize(`edit3d.${k}`);
+    const patch = (p: Partial<FurnitureItem>) => {
+      if (this.layout) this._edit(patchItem(this.layout, item.id, p));
+    };
+    const pick = () => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/jpeg,image/png,image/webp";
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (!file || !this.hass) return;
+        this._modelBusy = true;
+        this._modelError = null;
+        try {
+          const up = await uploadImage(this.hass, file);
+          patch({ image_id: up.id, image_name: up.name.slice(0, 200) });
+        } catch (err) {
+          this._modelError = err instanceof Error ? err.message : String(err);
+        } finally {
+          this._modelBusy = false;
+        }
+      };
+      input.click();
+    };
+    return html`<div class="row">
+        <span>${L("printImage")}</span>
+        <span class="model-name" title=${item.image_name ?? ""}
+          >${
+            this._modelBusy
+              ? L("modelUploading")
+              : item.image_id
+                ? (item.image_name ?? L("printImageSet"))
+                : L("modelNone")
+          }</span
+        >
+      </div>
+      <div class="buttons">
+        <button ?disabled=${this._modelBusy} @click=${pick}>
+          ${L("printUpload")}
+        </button>
+        ${
+          item.image_id
+            ? html`<button
+                @click=${() => patch({ image_id: null, image_name: null })}
+              >
+                ${L("modelRemove")}
+              </button>`
+            : nothing
+        }
+      </div>
+      ${this._modelError ? html`<span class="hint">${this._modelError}</span>` : nothing}`;
+  }
+
   /** A real 3D model the item wears instead of its drawing: upload one
    * (.glb), see whose it is, take it off. */
   private _renderItemModel(item: FurnitureItem) {
@@ -5373,6 +5434,7 @@ export class Floorplan3dView extends LitElement {
               </label>`
             : nothing
         }
+        ${entry?.id.startsWith("metal_print") ? this._renderPrintImage(item) : nothing}
         ${
           entry?.id.startsWith("towel_bar")
             ? html`<label class="row">

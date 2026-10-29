@@ -2456,6 +2456,52 @@ function createView3d(options: View3dOptions): View3dHandle {
     return p;
   }
 
+  /** Uploaded pictures (prints), each loaded once by id. */
+  const printTextures = new Map<string, Promise<THREE.Texture>>();
+  function loadPrint(id: string): Promise<THREE.Texture> {
+    let p = printTextures.get(id);
+    if (!p) {
+      p = (
+        options.fetchImage
+          ? options.fetchImage(id)
+          : Promise.reject(new Error("No picture source"))
+      )
+        .then((blob) => textureLoader.loadAsync(URL.createObjectURL(blob)))
+        .then((tex) => {
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.anisotropy = Math.min(
+            8,
+            renderer.capabilities.getMaxAnisotropy(),
+          );
+          return tex;
+        });
+      p.catch(() => printTextures.delete(id));
+      printTextures.set(id, p);
+    }
+    return p;
+  }
+  /** A model's print faces given their pictures once loaded. */
+  function withPrints<T extends THREE.Object3D | null>(obj: T): T {
+    obj?.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      const m = mesh.material as THREE.MeshStandardMaterial | undefined;
+      const id = m?.userData?.["printImage"];
+      if (!mesh.isMesh || typeof id !== "string") return;
+      loadPrint(id)
+        .then((tex) => {
+          if (destroyed) return;
+          // On the material it wears now (an indoor copy may have
+          // replaced the one it was built with).
+          const now = mesh.material as THREE.MeshStandardMaterial;
+          now.map = tex;
+          now.needsUpdate = true;
+          invalidate();
+        })
+        .catch(() => {});
+    });
+    return obj;
+  }
+
   /** An item wearing an uploaded model: its own drawing until the model
    * has loaded, then the model, its long side turned along the item's
    * depth, scaled evenly to fit within its width and depth and
@@ -2581,7 +2627,7 @@ function createView3d(options: View3dOptions): View3dHandle {
               ? glbItem(item, item.glb)
               : item.counter
                 ? counterModel(item.footprint, item.height, item.tint ?? null)
-                : (outdoorModel(item) ?? furnitureModel(item)),
+                : withPrints(outdoorModel(item) ?? furnitureModel(item)),
           );
     if (furniture) {
       furniture.name = item.name;

@@ -2550,6 +2550,30 @@ const showerNiche: Builder = (m, _o, tint) => {
     m.box(b, H, t, sx * (W / 2 + b / 2), 0, front + t / 2, trim);
 };
 
+/** A metal print (its back at -z, on the wall): a thin aluminium panel
+ * held 1 cm off the wall on a hidden block, no frame, the picture
+ * uploaded for it across its face (pale grey until it's chosen; see
+ * view3d-glue's prints). */
+const metalPrint: Builder = (m, _o, _tint, item) => {
+  const { W, D, H } = m;
+  const t = 0.0025;
+  const back = -D / 2;
+  // The block behind it, set in from its edges.
+  m.box(W * 0.6, H * 0.6, 0.01, 0, H * 0.2, back + 0.005, mat("#202020", 0.8));
+  // The panel's edges, bare aluminium.
+  m.box(W, H, t, 0, 0, back + 0.01 + t / 2, mat("#c9cccf", 0.35, 0.6));
+  // Its face: the picture.
+  const face = new THREE.MeshStandardMaterial({
+    color: item.model?.image ? "#ffffff" : "#b9bdc1",
+    roughness: 0.32,
+    metalness: 0.05,
+  });
+  if (item.model?.image) face.userData["printImage"] = item.model.image;
+  const g = new THREE.PlaneGeometry(W, H);
+  g.translate(0, H / 2, back + 0.01 + t + 0.0004);
+  m.add(g, face);
+};
+
 /** A towel bar (its back at -z, on the wall), matte black (or a colour
  * picked): a square bar between two blocky posts out from the wall, flat
  * on top, as wide as the item; and, if set, a bath towel folded in thirds
@@ -5849,6 +5873,7 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^floor_tile_pebble/, pebbleFloor],
   [/^shower_valve_black/, showerValve],
   [/^towel_bar_black/, towelBar],
+  [/^metal_print/, metalPrint],
   [/^shower_niche/, showerNiche],
   [/^bath_sink_vessel_rect/, vesselSink],
   [/^bath_faucet_black/, bathFaucet],

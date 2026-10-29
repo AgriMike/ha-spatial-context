@@ -1173,6 +1173,16 @@ const BATHROOM: Row[] = [
   ],
   // A square bar on blocky posts, as wide as set, 1.2 m up unless moved;
   // a folded towel over it if set (its drop and colour too).
+  // A metal print: a picture you upload, on a thin aluminium panel held
+  // 1 cm off the wall, no frame; as big as set (60 by 80 cm unless sized).
+  [
+    "metal_print",
+    "Metal print (your picture)",
+    60,
+    1.5,
+    "box",
+    { h3d: 0.8, y3d: 1.1 },
+  ],
   [
     "towel_bar_black",
     "Towel bar (matte black)",

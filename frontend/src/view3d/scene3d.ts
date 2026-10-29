@@ -4094,6 +4094,7 @@ function buildFloor(
               ...(item.no_lid ? { noLid: true } : {}),
               ...(item.tile_turned ? { tileTurned: true } : {}),
               ...(item.tile_from_right ? { tileFromRight: true } : {}),
+              ...(item.image_id ? { image: item.image_id } : {}),
               ...(item.towel
                 ? {
                     towel: {

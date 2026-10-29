@@ -422,6 +422,45 @@ export async function uploadModel(
   return (await response.json()) as UploadedModel;
 }
 
+/** Uploads a picture (a print's) to the integration's own storage. */
+export async function uploadImage(
+  hass: HomeAssistant,
+  file: File,
+): Promise<{ id: string; name: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await hass.fetchWithAuth(
+    "/api/spatial_context/image_upload",
+    { method: "POST", body: formData },
+  );
+  if (!response.ok) {
+    const detail = await response
+      .json()
+      .then((d: { message?: string }) => d.message)
+      .catch(() => null);
+    throw new Error(
+      detail ??
+        (response.status === 404
+          ? "Restart Home Assistant to finish installing picture uploads"
+          : `Upload failed: ${response.status} ${response.statusText}`),
+    );
+  }
+  return (await response.json()) as { id: string; name: string };
+}
+
+/** An uploaded picture's file. */
+export async function fetchImage(
+  hass: HomeAssistant,
+  imageId: string,
+): Promise<Blob> {
+  const response = await hass.fetchWithAuth(
+    `/api/spatial_context/image/${encodeURIComponent(imageId)}`,
+  );
+  if (!response.ok)
+    throw new Error(`Couldn't load the picture (${response.status})`);
+  return response.blob();
+}
+
 /** An item model's file, as bytes for GLTFLoader. */
 export async function fetchModel(
   hass: HomeAssistant,
@@ -519,6 +558,8 @@ const ITEM_FINISH_KEYS = [
   "towel_cm",
   "towel_color",
   "model_id",
+  "image_id",
+  "image_name",
   "model_name",
   "lift_cm",
   "tire_cm",
