@@ -4316,18 +4316,17 @@ function buildFloor(
       )
         n = [-n[0], -n[1]];
       // The wall along it at a spot (its thickness), else none.
-      const wallAt = (p: Vec2): number | null => {
+      const wallAt = (p: Vec2): (typeof baseWalls)[number] | null => {
         for (const w of baseWalls) {
           const wl = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
           if (wl < 0.01) continue;
           const vx = (w.b[0] - w.a[0]) / wl;
           const vz = (w.b[1] - w.a[1]) / wl;
           if (Math.abs(u[0] * vz - u[1] * vx) > 0.09) continue;
-          if (
-            pointToSegmentDistance(p[0], p[1], w.a[0], w.a[1], w.b[0], w.b[1]) <
-            w.t / 2 + 0.05
-          )
-            return w.t;
+          const along = (p[0] - w.a[0]) * vx + (p[1] - w.a[1]) * vz;
+          const off = Math.abs((p[0] - w.a[0]) * vz - (p[1] - w.a[1]) * vx);
+          if (along > -0.005 && along < wl + 0.005 && off < w.t / 2 + 0.05)
+            return w;
         }
         return null;
       };
@@ -4348,7 +4347,23 @@ function buildFloor(
       // board, low enough to meet it).
       const blockedAt = (q: Vec2) =>
         items.some((it) => {
+          const draw = it.model?.draw ?? "";
+          const kind = it.model?.kind ?? "";
           if (
+            draw === "floatingShelf" ||
+            /^tv_|_tv$|^tv\d|mirror/.test(kind) ||
+            /^shaker_|cabinet|^counter|^island|^bookshelf_open|^backsplash_|^slat_wall/.test(
+              kind,
+            ) ||
+            [
+              "cabinet",
+              "drawers",
+              "counter",
+              "island",
+              "sink",
+              "vanity",
+            ].includes(draw) ||
+            it.counter ||
             it.site ||
             it.grounded ||
             it.height < 0.03 ||
@@ -4370,16 +4385,11 @@ function buildFloor(
         });
       const step = 0.02;
       const count = Math.max(1, Math.round(len / step));
-      let start: number | null = null;
-      let thick = 0;
-      const flush = (s0: number, s1: number) => {
-        if (s1 - s0 < 0.03) return;
-        const off = thick / 2 + bt / 2 - 0.001;
-        const cx = a[0] + u[0] * ((s0 + s1) / 2) + n[0] * off;
-        const cz = a[1] + u[1] * ((s0 + s1) / 2) + n[1] * off;
+      const board = (s0: number, s1: number, off: number) => {
+        if (s1 - s0 < 0.01) return;
         walls.push({
-          x: cx,
-          z: cz,
+          x: a[0] + u[0] * ((s0 + s1) / 2) + n[0] * off,
+          z: a[1] + u[1] * ((s0 + s1) / 2) + n[1] * off,
           y0: level,
           y1: level + bh,
           length: s1 - s0,
@@ -4388,25 +4398,105 @@ function buildFloor(
           color,
         });
       };
-      for (let i = 0; i <= count; i++) {
+      // Each sample: a wall there (and which), or not, and whether the
+      // board stops (a doorway, something in front).
+      const samples = Array.from({ length: count + 1 }, (_, i) => {
         const s = (len * i) / count;
         const p: Vec2 = [a[0] + u[0] * s, a[1] + u[1] * s];
-        const t = wallAt(p);
+        const w = wallAt(p);
         const ok =
-          t !== null &&
-          !openAt(p, t) &&
+          w !== null &&
+          !openAt(p, w.t) &&
           !blockedAt([
-            p[0] + n[0] * (t / 2 + bt / 2),
-            p[1] + n[1] * (t / 2 + bt / 2),
+            p[0] + n[0] * (w.t / 2 + bt / 2),
+            p[1] + n[1] * (w.t / 2 + bt / 2),
           ]);
-        if (ok && start === null) {
-          start = s;
-          thick = t!;
-        } else if (ok) thick = Math.max(thick, t!);
-        if ((!ok || i === count) && start !== null) {
-          flush(start, ok ? s : s - len / count / 2);
-          start = null;
+        return { s, w, ok };
+      });
+      // Where a wall's end falls along this edge.
+      const endOf = (w: (typeof baseWalls)[number], hi: boolean) => {
+        const sa = (w.a[0] - a[0]) * u[0] + (w.a[1] - a[1]) * u[1];
+        const sb = (w.b[0] - a[0]) * u[0] + (w.b[1] - a[1]) * u[1];
+        return hi ? Math.max(sa, sb) : Math.min(sa, sb);
+      };
+      const ret = (sEnd: number, t: number) =>
+        // Across the wall's end face, wrapping both sides' boards.
+        walls.push({
+          x: a[0] + u[0] * sEnd,
+          z: a[1] + u[1] * sEnd,
+          y0: level,
+          y1: level + bh,
+          length: t + 2 * bt,
+          depth: bt,
+          angle: Math.atan2(-n[1], n[0]),
+          color,
+        });
+      /** A run's end where its wall stops (`hi`: its far end): the wall's
+       * end, carried round an outside corner (another wall turning away
+       * from the room there) to meet that wall's board, else with a return
+       * across the end (a free end); where it doesn't end near, as it is. */
+      const wallEnd = (
+        w: (typeof baseWalls)[number],
+        hi: boolean,
+        sRun: number,
+        t: number,
+      ): number => {
+        const sEnd = endOf(w, hi);
+        if (Math.abs(sEnd - sRun) > 0.08) return sRun + (hi ? 1 : -1) * 0.01;
+        const sa = (w.a[0] - a[0]) * u[0] + (w.a[1] - a[1]) * u[1];
+        const E = Math.abs(sa - sEnd) < 1e-6 ? w.a : w.b;
+        let away = 0;
+        let into = false;
+        for (const o of baseWalls) {
+          if (o === w) continue;
+          const ol = Math.hypot(o.b[0] - o.a[0], o.b[1] - o.a[1]);
+          if (ol < 0.01) continue;
+          const vx = (o.b[0] - o.a[0]) / ol;
+          const vz = (o.b[1] - o.a[1]) / ol;
+          if (Math.abs(u[0] * vz - u[1] * vx) < 0.5) continue;
+          if (
+            pointToSegmentDistance(E[0], E[1], o.a[0], o.a[1], o.b[0], o.b[1]) >
+            o.t / 2 + t / 2 + 0.02
+          )
+            continue;
+          // Which way it runs from here: its far end.
+          const da = Math.hypot(o.a[0] - E[0], o.a[1] - E[1]);
+          const db = Math.hypot(o.b[0] - E[0], o.b[1] - E[1]);
+          const far = da > db ? o.a : o.b;
+          const fl = Math.max(da, db) || 1;
+          const dot = ((far[0] - E[0]) * n[0] + (far[1] - E[1]) * n[1]) / fl;
+          if (dot > 0.3) into = true;
+          else if (dot < -0.3) away = Math.max(away, o.t);
         }
+        const out = hi ? 1 : -1;
+        if (into) return sEnd;
+        if (away > 0) return sEnd + out * (away / 2 + bt);
+        ret(sEnd + out * (bt / 2), t);
+        return sEnd + out * bt;
+      };
+      let i0: number | null = null;
+      for (let i = 0; i <= count + 1; i++) {
+        const sm = samples[i];
+        if (sm?.ok) {
+          if (i0 === null) i0 = i;
+          continue;
+        }
+        if (i0 === null) continue;
+        const first = samples[i0]!;
+        const last = samples[i - 1]!;
+        const t = Math.max(first.w!.t, last.w!.t);
+        let s0 = first.s;
+        let s1 = last.s;
+        // Each end: where its wall ends (at the room's corner, or short of
+        // it), round the corner if another wall turns away from the room
+        // there, to the wall turning into it, else a return across the
+        // wall's end; cut short at a doorway or what's in front.
+        const at0 = i0 === 0 || samples[i0 - 1]!.w === null;
+        const at1 = i === count + 1 || sm!.w === null;
+        s0 = at0 ? wallEnd(first.w!, false, s0, t) : s0 - step / 2;
+        s1 = at1 ? wallEnd(last.w!, true, s1, t) : s1 + step / 2;
+        board(s0, s1, t / 2 + bt / 2 - 0.001);
+        i0 = null;
       }
     });
   }
