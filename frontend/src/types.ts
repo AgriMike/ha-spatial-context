@@ -401,6 +401,8 @@ export interface FurnitureItem {
   opening_gap_cm?: number | null;
   /** A tile wall's tiles turned a quarter round (their long side up). */
   tile_turned?: boolean | null;
+  /** A tile wall's tiles laid from its right end (else its left). */
+  tile_from_right?: boolean | null;
   /** How wide a climbing plant's leaves fan round its front, degrees
    * (90 fills a corner); unset = its own. */
   leaf_spread_deg?: number | null;

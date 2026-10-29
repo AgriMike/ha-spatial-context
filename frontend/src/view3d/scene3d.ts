@@ -217,7 +217,7 @@ function itemShape(
   if (kind === STAIRS_KIND) return "stairs";
   if (entry && OUTDOOR_MODELLED.has(entry.category)) return "block";
   if (/stand|pedestal|basket/.test(kind)) return "block";
-  if (/shower(?!_bench|_glass|_valve|_head)/.test(kind)) return "shower";
+  if (/shower(?!_bench|_glass|_valve|_head|_niche)/.test(kind)) return "shower";
   if (/tree|olive/.test(kind) && entry?.category === "outdoor") return "tree";
   // Houseplants are modelled species by species (outdoor-models.ts).
   if (entry && (HOUSEPLANT_DRAWS.has(entry.draw) || entry.id === "bonsai"))
@@ -4093,6 +4093,7 @@ function buildFloor(
               ...(item.door_tiers ? { doorTiers: item.door_tiers } : {}),
               ...(item.no_lid ? { noLid: true } : {}),
               ...(item.tile_turned ? { tileTurned: true } : {}),
+              ...(item.tile_from_right ? { tileFromRight: true } : {}),
               ...(entry.id.startsWith("shower_glass_door")
                 ? {
                     door: {
@@ -4315,6 +4316,8 @@ function buildFloor(
     }
     walls.splice(k, 1, ...parts);
   }
+
+  cutWallsForNiches(walls, items);
 
   // Baseboards round each room, along its walls: stained like the doors
   // (or as set), as tall and as proud as their casing unless set; not
@@ -4604,6 +4607,85 @@ function stopRoundOpenings(
       if (x1 <= -sp.width / 2 || x0 >= sp.width / 2) continue;
       if (y1 <= 0 || y0 >= sp.height) continue;
       (sp.model.gaps ??= []).push({ x0, x1, y0, y1 });
+    }
+  }
+}
+
+/** A shower niche: recessed `NICHE_DEPTH_M` behind its front (flush with
+ * the tile wall it's set in). */
+const NICHE_DEPTH_M = 0.254;
+const isNiche = (it: Item3d) => /^shower_niche/.test(it.model?.kind ?? "");
+
+/** A tile (or slat) wall stops round a niche set in it. */
+function stopRoundNiches(items: Item3d[]): void {
+  const niches = items.filter(isNiche);
+  if (!niches.length) return;
+  for (const sp of items) {
+    if (!sp.model || !/^(backsplash_|slat_wall)/.test(sp.model.kind)) continue;
+    const ux = Math.cos(sp.angle);
+    const uz = -Math.sin(sp.angle);
+    for (const n of niches) {
+      if (Math.abs(Math.sin(n.angle - sp.angle)) > 0.1) continue;
+      // Its middle within the tile's thickness or so of the tile's.
+      const out =
+        (n.x - sp.x) * Math.sin(sp.angle) + (n.z - sp.z) * Math.cos(sp.angle);
+      if (Math.abs(out) > sp.depth / 2 + n.depth / 2 + 0.03) continue;
+      const c = (n.x - sp.x) * ux + (n.z - sp.z) * uz;
+      let x0 = c - n.width / 2;
+      let x1 = c + n.width / 2;
+      if (sp.model.flip) [x0, x1] = [-x1, -x0];
+      const y0 = n.y0 - sp.y0;
+      const y1 = y0 + n.height;
+      if (x1 <= -sp.width / 2 || x0 >= sp.width / 2) continue;
+      if (y1 <= 0 || y0 >= sp.height) continue;
+      (sp.model.gaps ??= []).push({ x0, x1, y0, y1 });
+    }
+  }
+}
+
+/** The walls behind a niche cut round it (its back closes the hole, out
+ * the far side where the wall is thinner than it's deep). */
+function cutWallsForNiches(walls: Box3d[], items: Item3d[]): void {
+  for (const n of items.filter(isNiche)) {
+    const sn = Math.sin(n.angle);
+    const cs = Math.cos(n.angle);
+    // Its front's middle.
+    const fx = n.x + sn * (n.depth / 2);
+    const fz = n.z + cs * (n.depth / 2);
+    for (let k = walls.length - 1; k >= 0; k--) {
+      const b = walls[k]!;
+      if (b.ref?.kind !== "wall") continue;
+      if (Math.abs(Math.sin(b.angle - n.angle)) > 0.1) continue;
+      // The wall behind it: its middle behind the niche's front, within
+      // the niche's depth.
+      const behind = -((b.x - fx) * sn + (b.z - fz) * cs);
+      if (behind < 0 || behind > b.depth / 2 + NICHE_DEPTH_M + 0.02) continue;
+      const bu: Vec2 = [Math.cos(b.angle), -Math.sin(b.angle)];
+      const c = (n.x - b.x) * bu[0] + (n.z - b.z) * bu[1];
+      const s0 = Math.max(-b.length / 2, c - n.width / 2);
+      const s1 = Math.min(b.length / 2, c + n.width / 2);
+      const y0 = Math.max(b.y0, n.y0);
+      const y1 = Math.min(b.y1, n.y0 + n.height);
+      if (s1 - s0 < 0.005 || y1 - y0 < 0.005) continue;
+      const piece = (a0: number, a1: number, h0: number, h1: number): Box3d => {
+        const mid = (a0 + a1) / 2;
+        return {
+          ...b,
+          x: b.x + bu[0] * mid,
+          z: b.z + bu[1] * mid,
+          length: a1 - a0,
+          y0: h0,
+          y1: h1,
+        };
+      };
+      const parts: Box3d[] = [];
+      if (s0 - -b.length / 2 > 0.002)
+        parts.push(piece(-b.length / 2, s0, b.y0, b.y1));
+      if (b.length / 2 - s1 > 0.002)
+        parts.push(piece(s1, b.length / 2, b.y0, b.y1));
+      if (y0 - b.y0 > 0.002) parts.push(piece(s0, s1, b.y0, y0));
+      if (b.y1 - y1 > 0.002) parts.push(piece(s0, s1, y1, b.y1));
+      walls.splice(k, 1, ...parts);
     }
   }
 }
@@ -4948,6 +5030,7 @@ export function buildScene(input: SceneInput): Scene3d {
       })),
     );
     stopRoundOpenings(f.items, input.floors[i]!.layout.furniture, faces);
+    stopRoundNiches(f.items);
   });
   let sun: Scene3d["sun"] = null;
   if (pos.elevation > 0) {

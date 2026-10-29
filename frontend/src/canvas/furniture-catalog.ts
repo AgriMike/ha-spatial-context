@@ -1161,6 +1161,16 @@ const BATHROOM: Row[] = [
     "box",
     { h3d: 0.3, y3d: 0.86 },
   ],
+  // A niche set in a tile wall: 24" by 12" unless sized, 10" deep, its
+  // back and shelf in white hex tile, its sides plain white.
+  [
+    "shower_niche",
+    "Shower niche (white hex back and shelf)",
+    61,
+    2,
+    "box",
+    { h3d: 0.305, y3d: 1.2 },
+  ],
   [
     "shower_valve_black",
     "Shower valve trim (matte black)",

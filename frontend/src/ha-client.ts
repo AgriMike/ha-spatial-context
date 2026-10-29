@@ -514,6 +514,7 @@ const ITEM_FINISH_KEYS = [
   "leaf_spread_deg",
   "opening_gap_cm",
   "tile_turned",
+  "tile_from_right",
   "model_id",
   "model_name",
   "lift_cm",

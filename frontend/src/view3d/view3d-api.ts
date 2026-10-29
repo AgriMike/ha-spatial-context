@@ -245,6 +245,8 @@ export interface Item3d {
     gaps?: { x0: number; x1: number; y0: number; y1: number }[];
     /** A tile wall's tiles turned a quarter round. */
     tileTurned?: boolean;
+    /** ...and laid from its right end. */
+    tileFromRight?: boolean;
   };
   /** A site feature (see site-models.ts): a surface laid on the ground
    * (concrete, asphalt, pavers, lawn, a planting bed…) or a fence, wall

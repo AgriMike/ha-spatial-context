@@ -2499,6 +2499,48 @@ const bathFaucet: Builder = (m, _o, tint) => {
   m.add(g, black);
 };
 
+/** A shower niche set in a tile wall (its front, at +z, flush with the
+ * tile; recessed 10" behind it): its back and the shelf it stands on in
+ * white hex tile, its sides and top plain white, closed round the back
+ * (out the far side of a wall thinner than it's deep). */
+const showerNiche: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const R = 0.254;
+  const s = 0.012;
+  const front = D / 2;
+  const back = front - R;
+  const white = mat(tint ?? "#f2f1ec", 0.4);
+  // The box: sides, top, bottom and back, their inner faces its own.
+  for (const sx of [-1, 1])
+    m.box(
+      s,
+      H + 2 * s,
+      R + s,
+      sx * (W / 2 + s / 2),
+      -s,
+      front - (R + s) / 2,
+      white,
+    );
+  m.box(W, s, R + s, 0, H, front - (R + s) / 2, white);
+  m.box(W, s, R + s, 0, -s, front - (R + s) / 2, white);
+  m.box(W, H, s, 0, 0, back - s / 2, white);
+  // The hex tile on its back and its shelf, laid at real size.
+  const tile = tileMaterial("#f2f1ec");
+  const g = new THREE.PlaneGeometry(W, H);
+  const uv = g.getAttribute("uv") as THREE.BufferAttribute;
+  for (let i = 0; i < uv.count; i++)
+    uv.setXY(i, (uv.getX(i) * W) / HEX_TILE[0], (uv.getY(i) * H) / HEX_TILE[1]);
+  g.translate(0, H / 2, back + 0.0008);
+  m.add(g, tile);
+  const f = new THREE.PlaneGeometry(W, R);
+  const fu = f.getAttribute("uv") as THREE.BufferAttribute;
+  for (let i = 0; i < fu.count; i++)
+    fu.setXY(i, (fu.getX(i) * W) / HEX_TILE[0], (fu.getY(i) * R) / HEX_TILE[1]);
+  f.rotateX(-Math.PI / 2);
+  f.translate(0, 0.0008, front - R / 2);
+  m.add(f, tile);
+};
+
 /** A shower valve's trim (its back at -z, on the wall): a round matte
  * black plate, its lever off a hub in the middle. A colour picked is its
  * finish. */
@@ -2620,6 +2662,8 @@ const backsplash: Builder = (m, o, tint, item) => {
   const repeat = rect ? RECT_TILE : HEX_TILE;
   // Turned a quarter round: the texture's along runs up the wall.
   const turned = !!item.model?.tileTurned;
+  // Laid from its right end: the pattern mirrored, its edge there.
+  const fromRight = !!item.model?.tileFromRight;
   for (const [x0, x1, y0, y1] of panelPieces(W, H, item.model?.gaps)) {
     const w = x1 - x0;
     const h = y1 - y0;
@@ -2628,7 +2672,8 @@ const backsplash: Builder = (m, o, tint, item) => {
     const g = new THREE.PlaneGeometry(w, h);
     const uv = g.getAttribute("uv") as THREE.BufferAttribute;
     for (let i = 0; i < uv.count; i++) {
-      const across = x0 + W / 2 + uv.getX(i) * w;
+      const left = x0 + W / 2 + uv.getX(i) * w;
+      const across = fromRight ? W - left : left;
       const up = y0 + uv.getY(i) * h;
       if (turned) uv.setXY(i, up / repeat[0], across / repeat[1]);
       else uv.setXY(i, across / repeat[0], up / repeat[1]);
@@ -5745,6 +5790,7 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^shower_glass_panel/, showerGlassPanel],
   [/^floor_tile_pebble/, pebbleFloor],
   [/^shower_valve_black/, showerValve],
+  [/^shower_niche/, showerNiche],
   [/^bath_sink_vessel_rect/, vesselSink],
   [/^bath_faucet_black/, bathFaucet],
   [/^shower_head_black/, showerHead],

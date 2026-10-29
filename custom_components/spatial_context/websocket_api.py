@@ -410,6 +410,8 @@ _FURNITURE_SCHEMA = {
     # How far a backsplash's tile stops short of a window or door, cm.
     # A tile wall's tiles turned a quarter round (long side up).
     vol.Optional("tile_turned"): vol.Any(None, bool),
+    # ...and laid from its right end (its grout lines meeting a corner).
+    vol.Optional("tile_from_right"): vol.Any(None, bool),
     vol.Optional("opening_gap_cm"): vol.Any(
         None, vol.All(vol.Coerce(float), vol.Range(min=0, max=50))
     ),
