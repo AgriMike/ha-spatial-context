@@ -4424,6 +4424,194 @@ const baristina: Builder = (m, _o, tint) => {
   );
 };
 
+/** A box (as Model.box, standing on y) turned `a` about its upright. */
+function turnedBox(
+  m: Model,
+  w: number,
+  h: number,
+  d: number,
+  x: number,
+  y: number,
+  z: number,
+  a: number,
+  mt: THREE.Material,
+): void {
+  const g = new THREE.BoxGeometry(w, h, d);
+  g.rotateY(a);
+  g.translate(x, y + h / 2, z);
+  m.add(g, mt);
+}
+
+/** Samsung's ViewFinity S6 34" (front at +z): an ultrawide panel curved
+ * at 1000R in a thin black bezel, on a height-adjustable neck and a flat
+ * base. */
+const viewfinity: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const back = mat(tint ?? "#2b2c2f", 0.5);
+  const bezel = mat("#151515", 0.4);
+  const screen = mat(C.screen, 0.08, 0.2);
+  const stand = mat(tint ? shade(tint, 1.2) : "#46484c", 0.45, 0.3);
+  const R = 1.0;
+  const panelW = Math.min(W, 0.81);
+  const ph = Math.min(H * 0.66, 0.365);
+  const py = Math.max(0.06, H - ph - 0.06);
+  const half = Math.asin(Math.min(0.95, panelW / 2 / R));
+  // The panel's middle a little back from the item's middle; the curve's
+  // centre out in front of it.
+  const zMid = -D / 2 + 0.09;
+  const zc = zMid + R;
+  const n = 18;
+  for (let i = 0; i < n; i++) {
+    const t = -half + ((i + 0.5) * 2 * half) / n;
+    const seg = 2 * R * Math.sin(half / n) + 0.002;
+    const x = R * Math.sin(t);
+    const z = zc - R * Math.cos(t);
+    // Its back, the bezel round the glass, the glass.
+    turnedBox(
+      m,
+      seg,
+      ph,
+      0.012,
+      x - Math.sin(t) * 0.009,
+      py,
+      z - Math.cos(t) * 0.009,
+      -t,
+      back,
+    );
+    turnedBox(m, seg, ph, 0.006, x, py, z, -t, bezel);
+    turnedBox(
+      m,
+      seg,
+      ph - 0.016,
+      0.002,
+      x + Math.sin(t) * 0.004,
+      py + 0.01,
+      z + Math.cos(t) * 0.004,
+      -t,
+      screen,
+    );
+  }
+  // A thin chin under the glass, the neck behind, the base.
+  m.box(0.07, 0.11, 0.035, 0, py + ph * 0.25, zMid - 0.04, back);
+  m.box(0.05, py + ph * 0.45, 0.03, 0, 0.012, zMid - 0.065, stand);
+  m.soft(0.26, 0.014, 0.19, 0, 0, zMid - 0.0, stand, 0.006);
+};
+
+/** Dell's XPS 16 (front at +z): a platinum aluminium base, its keyboard
+ * deck with dark keys edge to edge and a glass touchpad, the lid open a
+ * little past upright with its screen in a thin black bezel. */
+const dellXps: Builder = (m, _o, tint) => {
+  const { W, D } = m;
+  const al = mat(tint ?? "#c9cacc", 0.35, 0.6);
+  const keys = mat("#1f2023", 0.5);
+  const pad = mat("#b7b9bc", 0.15, 0.4);
+  const base = 0.0185;
+  const bd = D * 0.98;
+  m.soft(W, base, bd, 0, 0, D / 2 - bd / 2, al, 0.004);
+  // The keyboard toward the hinge, the touchpad in front of it.
+  m.box(W * 0.94, 0.0015, bd * 0.38, 0, base, D / 2 - bd * 0.62, keys);
+  m.box(W * 0.42, 0.0008, bd * 0.36, 0, base, D / 2 - bd * 0.2, pad);
+  // The lid, hinged at the base's back, open 110°.
+  const lid = new Model(W, D, 0.25, false);
+  const lw = W;
+  const lh = bd * 1.0;
+  lid.box(lw, lh, 0.007, 0, 0, 0, al);
+  lid.box(lw - 0.012, lh - 0.012, 0.001, 0, 0.006, 0.004, mat("#121212", 0.3));
+  lid.box(
+    lw - 0.022,
+    lh - 0.03,
+    0.001,
+    0,
+    0.012,
+    0.0048,
+    mat(C.screen, 0.08, 0.2),
+  );
+  const ang = (20 * Math.PI) / 180;
+  for (const [mt, list] of (
+    lid as unknown as {
+      parts: Map<THREE.Material, THREE.BufferGeometry[]>;
+    }
+  ).parts)
+    for (const g of list) {
+      g.rotateX(-ang);
+      g.translate(0, base, -D / 2 + bd * 0.02);
+      m.add(g, mt);
+    }
+};
+
+/** Logitech's MX Keys S (front at +z): a low graphite slab sloping up to
+ * the back, its rows of dished keys. */
+const mxKeys: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const body = mat(tint ?? "#3b3d40", 0.55);
+  const key = mat(tint ? shade(tint, 0.7) : "#25262a", 0.6);
+  const t = Math.min(H, 0.021);
+  // The slab, a little taller at the back.
+  m.soft(W, t * 0.7, D, 0, 0, 0, body, 0.004);
+  m.soft(W, t, D * 0.4, 0, 0, -D * 0.3, body, 0.004);
+  // Its keys: six rows, the bottom one with the space bar.
+  const rows = 6;
+  const kw = 0.0175;
+  const gap = 0.0015;
+  const left = -W / 2 + 0.012;
+  const usable = W * 0.76;
+  for (let r = 0; r < rows; r++) {
+    const z = D / 2 - 0.012 - r * ((D - 0.024) / rows) - 0.008;
+    const y = t * 0.7 + (t * 0.3 * r) / rows;
+    if (r === 0) {
+      m.box(0.11, 0.003, kw * 0.9, left + usable * 0.4, y, z, key);
+      for (const x of [
+        left + 0.015,
+        left + 0.04,
+        left + 0.065,
+        left + usable * 0.62,
+        left + usable * 0.75,
+      ])
+        m.box(kw, 0.003, kw * 0.9, x, y, z, key);
+      continue;
+    }
+    for (let x = left + kw / 2; x < left + usable; x += kw + gap)
+      m.box(kw, 0.003, kw * 0.9, x, y, z, key);
+    // The number pad to the right.
+    for (let x = left + usable + 0.02; x < W / 2 - 0.01; x += kw + gap)
+      m.box(kw, 0.003, kw * 0.9, x, y, z, key);
+  }
+};
+
+/** Logitech's MX Master 3S (front at +z): a sculpted graphite body, a
+ * wide thumb rest on its left, the metal scroll wheel. */
+const mxMaster: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const body = mat(tint ?? "#3a3c3f", 0.6);
+  const top = mat(tint ? shade(tint, 0.85) : "#2e3033", 0.45);
+  m.sphere(0.5, 0.004, 0, 0, body, W * 0.95, H * 1.9, D * 0.98);
+  // Its belly flat on the desk: a slab under it.
+  m.soft(W * 0.86, H * 0.3, D * 0.9, 0.004, 0, 0, body, 0.012);
+  // The thumb rest, the buttons' top, the wheel.
+  m.sphere(
+    0.5,
+    -W * 0.38,
+    H * 0.18,
+    -D * 0.05,
+    body,
+    W * 0.35,
+    H * 0.5,
+    D * 0.55,
+  );
+  m.sphere(0.5, 0.004, H * 0.45, D * 0.18, top, W * 0.75, H * 0.8, D * 0.5);
+  m.cyl(
+    0.011,
+    0.011,
+    0.008,
+    0.004,
+    H * 0.92,
+    D * 0.25,
+    mat("#9a9da2", 0.3, 0.8),
+    18,
+    "x",
+  );
+};
+
 /** Book spines' colours (cloth and paper, muted). */
 const BOOK_COLORS = [
   "#2f3e4e",
@@ -4703,6 +4891,10 @@ const BY_KIND: [RegExp, Builder][] = [
   [/^bookshelf_open/, openBookshelf],
   [/^slat_wall/, slatWall],
   [/^espresso_philips_baristina/, baristina],
+  [/^monitor_samsung_viewfinity/, viewfinity],
+  [/^laptop_dell_xps/, dellXps],
+  [/^keyboard_logitech_mx_keys/, mxKeys],
+  [/^mouse_logitech_mx_master/, mxMaster],
   [/^sink_delta_everest/, everestSink],
   [/^faucet_delta_nicoli/, nicoliFaucet],
   [/^sink_rack_/, sinkRack],
