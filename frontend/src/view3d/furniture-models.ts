@@ -1158,14 +1158,90 @@ function oakGrainTexture(): THREE.Texture {
   return oakTexture;
 }
 
+/** Maple's grain: a near-white board, its figure faint, in loops (nested
+ * cathedral arches along the board) with a few soft streaks between,
+ * seamless both ways at the same repeat as oak's. */
+let mapleTexture: THREE.Texture | null = null;
+function mapleGrainTexture(): THREE.Texture {
+  if (mapleTexture) return mapleTexture;
+  const cv = document.createElement("canvas");
+  cv.width = 1024;
+  cv.height = 256;
+  const ctx = cv.getContext("2d");
+  if (ctx) {
+    const { width: w, height: h } = cv;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+    let seed = 29;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    // Drawn again a repeat round each way, so it wraps.
+    const wrapped = (draw: (dx: number, dy: number) => void) => {
+      for (const dx of [-w, 0, w]) for (const dy of [-h, 0, h]) draw(dx, dy);
+    };
+    // Soft streaks along it.
+    for (let k = 0; k < 22; k++) {
+      const y0 = rnd() * h;
+      const amp = 2 + rnd() * 5;
+      const per = w / (1 + Math.floor(rnd() * 2));
+      const ph = rnd() * Math.PI * 2;
+      ctx.strokeStyle = `rgba(150,118,80,${0.015 + rnd() * 0.025})`;
+      ctx.lineWidth = 0.6 + rnd() * 1.4;
+      wrapped((dx, dy) => {
+        if (dx) return;
+        ctx.beginPath();
+        for (let x = 0; x <= w; x += 8) {
+          const y = y0 + dy + amp * Math.sin((x / per) * Math.PI * 2 + ph);
+          if (x) ctx.lineTo(x, y);
+          else ctx.moveTo(x, y);
+        }
+        ctx.stroke();
+      });
+    }
+    // The loops: nested arches, each a little wavy, pointing along it.
+    for (let k = 0; k < 7; k++) {
+      const cx = rnd() * w;
+      const cy = rnd() * h;
+      const len = 160 + rnd() * 260;
+      const wide = 10 + rnd() * 22;
+      const dir = rnd() < 0.5 ? -1 : 1;
+      const rings = 4 + Math.floor(rnd() * 4);
+      const wob = rnd() * Math.PI * 2;
+      for (let r = 1; r <= rings; r++) {
+        const f = r / rings;
+        ctx.strokeStyle = `rgba(150,118,80,${0.025 + rnd() * 0.035})`;
+        ctx.lineWidth = 0.8 + rnd() * 1.2;
+        wrapped((dx, dy) => {
+          ctx.beginPath();
+          // Round its tip and back out along both sides, opening wider.
+          for (let i = 0; i <= 48; i++) {
+            const t = (i / 48) * 2 - 1;
+            const x = cx + dx + dir * len * f * (1 - t * t);
+            const y =
+              cy + dy + t * wide * f * 1.6 + 2.5 * Math.sin(t * 5 + wob + r);
+            if (i) ctx.lineTo(x, y);
+            else ctx.moveTo(x, y);
+          }
+          ctx.stroke();
+        });
+      }
+    }
+  }
+  mapleTexture = new THREE.CanvasTexture(cv);
+  mapleTexture.colorSpace = THREE.SRGBColorSpace;
+  mapleTexture.wrapS = THREE.RepeatWrapping;
+  mapleTexture.wrapT = THREE.RepeatWrapping;
+  mapleTexture.anisotropy = 4;
+  return mapleTexture;
+}
+
 const OAK_MATS = new Map<string, THREE.MeshStandardMaterial>();
-/** White oak, grained (a colour picked tints it). */
+/** White oak, grained (a colour picked tints it); maple its own grain. */
 function oakMaterial(tint: string | null = null): THREE.MeshStandardMaterial {
   const key = tint ?? WHITE_OAK;
   let m = OAK_MATS.get(key);
   if (!m) {
     m = new THREE.MeshStandardMaterial({
-      map: oakGrainTexture(),
+      map: key === MAPLE ? mapleGrainTexture() : oakGrainTexture(),
       color: key,
       roughness: 0.6,
     });
@@ -4768,7 +4844,7 @@ const customCounter: Builder = (m, _o, tint, item) => {
  * with gaps between) wider at the shoulders, leaning back, curved round
  * the sitter, bulging at the lumbar, on a spine up from the seat. A
  * colour picked is its frame's and back's. */
-const knollGeneration: Builder = (m, _o, tint) => {
+const knollAtSize: Builder = (m, _o, tint) => {
   const { W, D, H } = m;
   const shell = mat(tint ?? "#dcd8cf", 0.55);
   const back = mat(tint ? shade(tint, 1.04) : "#e6e1d6", 0.65);
@@ -4858,6 +4934,24 @@ const knollGeneration: Builder = (m, _o, tint) => {
     0,
     shell,
   );
+};
+
+/** Knoll's Generation chair at the item's size: built at its own (68 by
+ * 64 cm, a metre tall) and scaled to fit, so resizing it (or its scale)
+ * grows or shrinks the whole chair. */
+const knollGeneration: Builder = (m, o, tint, item) => {
+  const own = new Model(0.68, 0.64, 1.0, false);
+  knollAtSize(own, o, tint, item);
+  const k: [number, number, number] = [m.W / own.W, m.H / own.H, m.D / own.D];
+  for (const [mt, list] of (
+    own as unknown as {
+      parts: Map<THREE.Material, THREE.BufferGeometry[]>;
+    }
+  ).parts)
+    for (const g of list) {
+      g.scale(...k);
+      m.add(g, mt);
+    }
 };
 
 /** Book spines' colours (cloth and paper, muted). */

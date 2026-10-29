@@ -684,6 +684,7 @@
     "name": "Name",
     "width": "Width",
     "depth": "Depth",
+    "scale": "Scale",
     "height": "Height",
     "elevation": "Above floor",
     "floor": "Floor",

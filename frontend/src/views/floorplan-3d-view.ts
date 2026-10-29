@@ -5157,6 +5157,39 @@ export class Floorplan3dView extends LitElement {
     }`;
   }
 
+  /** An item's scale against its catalog size: setting it sizes its
+   * width, depth and height together (its height only where it has one of
+   * its own or set by hand). */
+  private _renderScale(
+    item: FurnitureItem,
+    entry: CatalogItem,
+    set: (patch: Partial<FurnitureItem>) => void,
+  ) {
+    const now = item.width_cm / entry.w;
+    const h3d = entry.opts["h3d"];
+    const tall =
+      typeof h3d === "number"
+        ? h3d * 100
+        : item.height_cm != null
+          ? item.height_cm / now
+          : null;
+    const cm = (v: number) => Math.round(v * 10) / 10;
+    return this._num(
+      localize("edit3d.scale"),
+      Math.round(now * 100),
+      (v) => {
+        if (!v || v <= 0) return;
+        const k = v / 100;
+        set({
+          width_cm: cm(entry.w * k),
+          depth_cm: cm(entry.d * k),
+          ...(tall != null ? { height_cm: cm(tall * k) } : {}),
+        });
+      },
+      { unit: "%", min: 10, step: 5 },
+    );
+  }
+
   private _renderSelection(layout: FloorLayout) {
     const sel = this._sel;
     if (!sel)
@@ -5192,6 +5225,7 @@ export class Floorplan3dView extends LitElement {
         ${this._renderBeam(item, entry, set)}
         ${this._num(localize("edit3d.width"), item.width_cm, (v) => v && v > 0 && set({ width_cm: v }), { unit: "cm", min: 1 })}
         ${this._num(localize("edit3d.depth"), item.depth_cm, (v) => v && v > 0 && set({ depth_cm: v }), { unit: "cm", min: 1 })}
+        ${entry && entry.w > 0 && entry.d > 0 ? this._renderScale(item, entry, set) : nothing}
         ${this._num(localize(entry?.id === CUSTOM_COUNTER_KIND ? "edit3d.thickness" : "edit3d.height"), item.height_cm ?? null, (v) => set({ height_cm: v && v > 0 ? v : null }), { unit: "cm", placeholder: entry?.id === CUSTOM_COUNTER_KIND ? "4" : localize("edit3d.auto") })}
         ${this._num(localize("edit3d.elevation"), item.elevation_cm ?? null, (v) => set({ elevation_cm: v }), { unit: "cm", placeholder: localize("edit3d.auto") })}
         ${this._renderItemFloor(item)}
