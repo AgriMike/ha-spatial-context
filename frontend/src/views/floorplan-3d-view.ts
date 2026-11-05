@@ -47,7 +47,12 @@ import {
   type FurnitureCategory,
 } from "../canvas/furniture-catalog";
 import { pointInPolygon } from "../canvas/geometry";
-import { defaultCornerPct, shapeCornerCount } from "../canvas/furniture-draw";
+import {
+  defaultCornerPct,
+  globeLayout,
+  itemDrawOpts,
+  shapeCornerCount,
+} from "../canvas/furniture-draw";
 import "./search-select";
 import type { SearchOption } from "./search-select";
 import {
@@ -56,6 +61,7 @@ import {
   wallThicknessCm,
 } from "../canvas/materials";
 import {
+  CEILING_LIGHT,
   DOOR_WIDTH_CM,
   NEW_WALL_CM,
   WINDOW_WIDTH_CM,
@@ -63,11 +69,13 @@ import {
   addOpening,
   addOutlineItem,
   addWall,
+  alignLight,
   deleteItem,
   deleteOpening,
   deleteWall,
   duplicateItem,
   fitOutline,
+  gridItems,
   insertCorner,
   moveCorners,
   moveSegment,
@@ -108,6 +116,7 @@ import {
   catalogItem3d,
   stripLights,
   stripPattern,
+  stripShine,
   metersPerUnit,
   stackFloors,
   type FloorInput,
@@ -267,6 +276,66 @@ type EditDrag =
 
 /** The most grid points an area shows at once. */
 const GRADE_AREA_MAX = 900;
+
+/** A floor shown alone, with the flights that come down onto it from
+ * the floor above (a split-level entry's stairs down to the basement,
+ * their foot set on this floor: see FurnitureItem.elevation_cm): copies
+ * of them at its own height, turned so their top end is still the one
+ * up there. */
+function withFlightsFromAbove<
+  F extends {
+    floorId: string;
+    layout: FloorLayout;
+    baseY: number;
+    wallHeight: number;
+  },
+>(shown: F, context: F[]): F {
+  const above = context
+    .filter((f) => f.baseY > shown.baseY + 0.75 * shown.wallHeight)
+    .sort((a, b) => a.baseY - b.baseY)[0];
+  if (!above) return shown;
+  const drop = (above.baseY - shown.baseY) * 100;
+  const mAbove = metersPerUnit(above.layout.scale);
+  const mHere = metersPerUnit(shown.layout.scale);
+  const levelAt = (x: number, y: number): number =>
+    above.layout.rooms.find(
+      (r) => r.points.length >= 3 && pointInPolygon(x, y, r.points),
+    )?.floor_offset_m ?? 0;
+  const copies: FurnitureItem[] = [];
+  for (const f of above.layout.furniture) {
+    if (f.kind !== "stairs_straight" || f.elevation_cm == null || !f.height_cm)
+      continue;
+    if (Math.abs(f.elevation_cm + drop) > 30) continue;
+    // Which end is its top up there (as scene3d's stairs decide it).
+    const a = (-f.rotation_deg * Math.PI) / 180;
+    const reach = f.depth_cm / 200 + 0.3;
+    const end = (k: number) =>
+      levelAt(
+        f.x + (k * reach * Math.sin(a)) / mAbove,
+        f.y + (k * reach * Math.cos(a)) / mAbove,
+      );
+    const high = (f.elevation_cm + f.height_cm) / 100;
+    const frontHigh = Math.abs(end(1) - high) <= Math.abs(end(-1) - high);
+    copies.push({
+      ...f,
+      id: `${f.id}:from-above`,
+      x: (f.x * mAbove) / mHere,
+      y: (f.y * mAbove) / mHere,
+      // Down here both its ends stand on this floor: its top end is
+      // told apart by being its front.
+      rotation_deg: frontHigh ? f.rotation_deg : (f.rotation_deg + 180) % 360,
+      elevation_cm: f.elevation_cm + drop,
+    });
+  }
+  if (!copies.length) return shown;
+  return {
+    ...shown,
+    layout: {
+      ...shown.layout,
+      furniture: [...shown.layout.furniture, ...copies],
+    },
+  };
+}
 
 /** Where the lazily loaded three.js module is served (see rollup's
  * view3dModule and frontend.py's static path). */
@@ -618,6 +687,17 @@ export class Floorplan3dView extends LitElement {
       }
       .divider {
         border-top: 1px solid var(--sc-divider);
+      }
+      .row.globe input[type="number"] {
+        width: 56px;
+      }
+      .group-title {
+        margin-top: 4px;
+        padding-top: 8px;
+        border-top: 1px solid var(--sc-divider);
+        font-size: var(--sc-fs-small);
+        font-weight: 500;
+        color: var(--sc-fg-secondary);
       }
       .sides {
         display: flex;
@@ -1205,7 +1285,11 @@ export class Floorplan3dView extends LitElement {
     const context = stackFloors(inputs);
     this._floorBases = new Map(context.map((f) => [f.floorId, f.baseY]));
     const shownIds = this._shownFloorIds;
-    const floors = context.filter((f) => shownIds.includes(f.floorId));
+    const floors = context
+      .filter((f) => shownIds.includes(f.floorId))
+      .map((f, _i, all) =>
+        all.length === 1 ? withFlightsFromAbove(f, context) : f,
+      );
     if (!floors.length) return;
     const ground = this._ground;
     const date = this._date;
@@ -3293,11 +3377,21 @@ export class Floorplan3dView extends LitElement {
                 Math.round(raw[1] / grid) * grid,
               ]
             : raw;
+        // A ceiling light lines up with the others (rows of recessed
+        // lights), the guides showing how; never flat against a wall.
+        const ceilingLight = CEILING_LIGHT.test(item.kind);
+        this._guides = [];
+        if (ceilingLight && !e.shift) {
+          const lined = alignLight(layout, item.id, raw, drag.at, reach);
+          drag.at = lined.p;
+          this._guides = lined.guides;
+        }
         // Flat against a wall it comes near (into a corner against two),
         // the walls outlined (Shift: free).
-        const flat = e.shift
-          ? null
-          : this._itemWallSnap(item, drag.at, item.rotation_deg);
+        const flat =
+          e.shift || ceilingLight
+            ? null
+            : this._itemWallSnap(item, drag.at, item.rotation_deg);
         drag.rot = flat?.rot ?? item.rotation_deg;
         if (flat) drag.at = flat.at;
         this._facePaths = flat?.paths ?? [];
@@ -3402,6 +3496,7 @@ export class Floorplan3dView extends LitElement {
       } else if (drag.kind === "item") {
         const item = layout.furniture.find((f) => f.id === drag.id);
         this._facePaths = [];
+        this._guides = [];
         if (
           item &&
           (item.x !== drag.at[0] ||
@@ -4427,6 +4522,115 @@ export class Floorplan3dView extends LitElement {
     );
   }
 
+  /** The opening whose two-cover switch was turned on by hand (it stays
+   * on, with no right cover picked yet, until another is selected). */
+  @state() private _splitCoverFor: string | null = null;
+
+  /** The covers hung in an opening (blinds, shades, a garage door's
+   * opener): one, or a left and a right half as seen from inside looking
+   * out. A sliding door or slider window has both from the start. */
+  private _renderOpeningCovers(
+    o: Opening,
+    set: (patch: Partial<Opening>) => void,
+  ) {
+    const sliding =
+      !o.garage &&
+      (o.type === "door"
+        ? o.door_style === "sliding"
+        : o.window_type === "slider");
+    const two =
+      sliding ||
+      o.cover_right_entity_id != null ||
+      this._splitCoverFor === o.id;
+    const options = this._coverOptions();
+    const picker = (
+      label: string,
+      field: "cover_entity_id" | "cover_right_entity_id",
+    ) => {
+      const id = o[field] ?? null;
+      const st = id ? this.hass?.states[id] : undefined;
+      const pos = st?.attributes["current_position"];
+      return html`<label class="row link">
+          <span>${label}</span>
+          <search-select
+            .options=${options}
+            .value=${id}
+            .noneLabel=${localize("canvas.opening.noCover")}
+            placeholder=${localize("furniture.searchEntity")}
+            @value-changed=${(e: CustomEvent<{ value: string | null }>) =>
+              set({ [field]: e.detail.value })}
+          ></search-select>
+        </label>
+        ${
+          id
+            ? html`<span class="hint"
+                >${
+                  st
+                    ? typeof pos === "number"
+                      ? localize("canvas.opening.coverOpen", { pct: pos })
+                      : st.state
+                    : localize("edit3d.unavailable")
+                }</span
+              >`
+            : nothing
+        }`;
+    };
+    return html`<div class="group-title">${localize("edit3d.covers")}</div>
+      ${picker(
+        two
+          ? localize("canvas.opening.coverLeft")
+          : localize("canvas.opening.cover"),
+        "cover_entity_id",
+      )}
+      ${two ? picker(localize("canvas.opening.coverRight"), "cover_right_entity_id") : nothing}
+      ${
+        sliding
+          ? nothing
+          : html`<label class="row">
+              <span>${localize("canvas.opening.twoCovers")}</span>
+              <input
+                type="checkbox"
+                .checked=${two}
+                @change=${(e: Event) => {
+                  const on = (e.target as HTMLInputElement).checked;
+                  this._splitCoverFor = on ? o.id : null;
+                  if (!on && o.cover_right_entity_id != null)
+                    set({ cover_right_entity_id: null });
+                }}
+              />
+            </label>`
+      }
+      ${
+        two && (o.cover_entity_id || o.cover_right_entity_id)
+          ? html`<div class="buttons">
+              <button
+                @click=${() =>
+                  set({
+                    cover_entity_id: o.cover_right_entity_id ?? null,
+                    cover_right_entity_id: o.cover_entity_id ?? null,
+                  })}
+              >
+                ${localize("canvas.opening.swapCovers")}
+              </button>
+            </div>`
+          : nothing
+      }`;
+  }
+
+  /** Every cover entity, by name. */
+  private _coverOptions(): SearchOption[] {
+    const hass = this.hass;
+    if (!hass) return [];
+    return Object.keys(hass.states)
+      .filter((id) => id.startsWith("cover."))
+      .map((id) => ({
+        value: id,
+        label: String(hass.states[id]?.attributes["friendly_name"] ?? id),
+        secondary: id,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }
+
   /** An opening's look in 3D: a door's style, a window's type, grid and
    * shutters, a garage door's style, and the paint on them. */
   private _renderOpeningLook(
@@ -5257,6 +5461,262 @@ export class Floorplan3dView extends LitElement {
     }`;
   }
 
+  /** The rows and columns asked for a room's grid of lights. */
+  @state() private _gridRows = 2;
+  @state() private _gridCols = 3;
+
+  /** A light fixture's own settings: which way a strip shines; a globe
+   * pendant's globes (how many, each one's drop and size) and metal; a
+   * vanity light's bulbs, shades and metal; a recessed light's room laid
+   * out in even rows. */
+  private _renderFixture(
+    layout: FloorLayout,
+    item: FurnitureItem,
+    entry: CatalogItem,
+    set: (patch: Partial<FurnitureItem>) => void,
+  ) {
+    const L = (k: string, vars?: Record<string, string | number>) =>
+      localize(`edit3d.${k}`, vars);
+    type Metal = "brass" | "nickel" | "chrome" | "black";
+    const metalPick = (fallback: Metal) =>
+      this._select<Metal>(
+        L("metal"),
+        item.metal_finish ??
+          (typeof entry.opts["metal"] === "string"
+            ? (entry.opts["metal"] as Metal)
+            : fallback),
+        [
+          ["brass", L("metalBrass")],
+          ["nickel", L("metalNickel")],
+          ["chrome", L("metalChrome")],
+          ["black", L("metalBlack")],
+        ],
+        (v) => set({ metal_finish: v }),
+      );
+    if (item.kind === "stairs_straight")
+      return this._renderStairsDown(item, set);
+    const shine = stripShine(item, entry);
+    if (shine)
+      return this._select<"up" | "down" | "front" | "back">(
+        L("shine"),
+        shine,
+        [
+          ["up", L("shineUp")],
+          ["down", L("shineDown")],
+          ["front", L("shineFront")],
+          ["back", L("shineBack")],
+        ],
+        (v) => set({ shine: v }),
+      );
+    if (entry.draw === "globeDrops") {
+      const now = globeLayout(
+        item.width_cm,
+        item.depth_cm,
+        itemDrawOpts(entry.opts, item),
+      );
+      const drops = now.map((g) => g.drop);
+      const sizes = now.map((g) => g.size);
+      const count = (n: number) => {
+        const k = Math.max(1, Math.min(12, Math.round(n)));
+        const grow = (list: number[]) =>
+          Array.from(
+            { length: k },
+            (_, i) => list[i] ?? list[i % list.length] ?? 25,
+          );
+        set({
+          globes: k,
+          globe_drops_cm: grow(drops),
+          globe_sizes_cm: grow(sizes),
+        });
+      };
+      const one = (i: number, field: "drop" | "size", v: number) => {
+        if (!(v > 0)) return;
+        const list = [...(field === "drop" ? drops : sizes)];
+        list[i] = field === "drop" ? Math.min(600, v) : Math.min(100, v);
+        set(
+          field === "drop"
+            ? { globes: now.length, globe_drops_cm: list }
+            : { globes: now.length, globe_sizes_cm: list },
+        );
+      };
+      return html`${this._num(
+          L("globes"),
+          now.length,
+          (v) => {
+            if (v) count(v);
+          },
+          { min: 1, max: 12 },
+        )}
+        ${now.map(
+          (g, i) =>
+            html`<div class="row globe">
+              <span>${L("globeN", { n: i + 1 })}</span>
+              <input
+                type="number"
+                min="2"
+                step="1"
+                title=${L("globeDrop")}
+                .value=${String(Math.round(g.drop))}
+                @change=${(e: Event) =>
+                  one(i, "drop", Number((e.target as HTMLInputElement).value))}
+              />
+              <span class="unit">${L("dropCm")}</span>
+              <input
+                type="number"
+                min="5"
+                step="1"
+                title=${L("globeSize")}
+                .value=${String(Math.round(g.size))}
+                @change=${(e: Event) =>
+                  one(i, "size", Number((e.target as HTMLInputElement).value))}
+              />
+              <span class="unit">${L("sizeCm")}</span>
+            </div>`,
+        )}
+        <span class="hint">${L("globeHint")}</span>
+        ${metalPick("brass")}`;
+    }
+    if (entry.draw === "vanityBar") {
+      type Shade = "globe" | "cylinder" | "bell" | "cone";
+      const style: Shade =
+        item.shade_style ??
+        (typeof entry.opts["shade"] === "string"
+          ? (entry.opts["shade"] as Shade)
+          : "cylinder");
+      const up = item.shade_up ?? (style === "globe" || style === "cylinder");
+      const bulbs = item.bulbs ?? Number(entry.opts["bulbs"] ?? 3);
+      return html`${this._num(
+        L("bulbs"),
+        bulbs,
+        (v) => {
+          if (v) set({ bulbs: Math.max(1, Math.min(8, Math.round(v))) });
+        },
+        { min: 1, max: 8 },
+      )}
+      ${this._select<Shade>(
+        L("shade"),
+        style,
+        [
+          ["globe", L("shadeGlobe")],
+          ["cylinder", L("shadeCylinder")],
+          ["bell", L("shadeBell")],
+          ["cone", L("shadeCone")],
+        ],
+        (v) => set({ shade_style: v }),
+      )}
+      ${this._select<"up" | "down">(
+        L("shadesOpen"),
+        up ? "up" : "down",
+        [
+          ["up", L("shineUp")],
+          ["down", L("shineDown")],
+        ],
+        (v) => set({ shade_up: v === "up" }),
+      )}
+      ${metalPick("black")}`;
+    }
+    if (/recessed|wafer/.test(item.kind)) {
+      const room = this._roomAt([item.x, item.y]);
+      if (!room) return nothing;
+      const clamp = (e: Event) =>
+        Math.max(
+          1,
+          Math.min(
+            12,
+            Math.round(Number((e.target as HTMLInputElement).value) || 1),
+          ),
+        );
+      return html`<div class="group-title">${L("lightGrid")}</div>
+        <div class="row globe">
+          <span>${L("gridRowsCols")}</span>
+          <input
+            type="number"
+            min="1"
+            max="12"
+            .value=${String(this._gridRows)}
+            @change=${(e: Event) => (this._gridRows = clamp(e))}
+          />
+          <span class="unit">×</span>
+          <input
+            type="number"
+            min="1"
+            max="12"
+            .value=${String(this._gridCols)}
+            @change=${(e: Event) => (this._gridCols = clamp(e))}
+          />
+        </div>
+        <span class="hint">${L("lightGridHint", { room: room.name })}</span>
+        <div class="buttons">
+          <button
+            @click=${() =>
+              this._edit(
+                gridItems(
+                  layout,
+                  item.id,
+                  room,
+                  this._gridRows,
+                  this._gridCols,
+                ),
+              )}
+          >
+            ${L("lightGridApply")}
+          </button>
+        </div>`;
+    }
+    return nothing;
+  }
+
+  /** A flight running down to the floor below from this one (a split
+   * level's entry down to the basement): its foot on that floor and its
+   * rise to its lower end here, set by hand (see scene3d's stairs) —
+   * the plan alone can't tell a flight down under this floor from one
+   * up onto it. */
+  private _renderStairsDown(
+    item: FurnitureItem,
+    set: (patch: Partial<FurnitureItem>) => void,
+  ) {
+    const layout = this.layout;
+    if (!layout || !this.floorId) return nothing;
+    const base = this._floorBases.get(this.floorId) ?? 0;
+    const below = [...this._floorBases.values()]
+      .filter((b) => b < base - 1.5)
+      .sort((a, b) => b - a)[0];
+    if (below === undefined) return nothing;
+    // Its ends' floors here: the lower one is its top.
+    const a = (-item.rotation_deg * Math.PI) / 180;
+    const m = metersPerUnit(layout.scale);
+    const d = item.depth_cm / 100;
+    const levelAt = (lz: number) => {
+      const x = item.x + (lz * Math.sin(a)) / m;
+      const y = item.y + (lz * Math.cos(a)) / m;
+      return this._roomAt([x, y])?.floor_offset_m ?? 0;
+    };
+    const top = Math.min(levelAt(d / 2 + 0.3), levelAt(-d / 2 - 0.3));
+    const foot = below - base;
+    const on =
+      item.elevation_cm != null &&
+      item.height_cm != null &&
+      item.elevation_cm < 0 &&
+      Math.abs(item.elevation_cm / 100 - foot) < 0.05;
+    return html`<label class="row">
+        <span>${localize("edit3d.stairsDown")}</span>
+        <input
+          type="checkbox"
+          .checked=${on}
+          @change=${(e: Event) =>
+            set(
+              (e.target as HTMLInputElement).checked
+                ? {
+                    elevation_cm: Math.round(foot * 100),
+                    height_cm: Math.max(10, Math.round((top - foot) * 100)),
+                  }
+                : { elevation_cm: null, height_cm: null },
+            )}
+        />
+      </label>
+      <span class="hint">${localize("edit3d.stairsDownHint")}</span>`;
+  }
+
   /** A drawn item's corner rounding (a custom countertop's): all at
    * once, then each corner (up to eight), 0 % square to 100 % as round as
    * the shorter side allows. */
@@ -5370,6 +5830,7 @@ export class Floorplan3dView extends LitElement {
           entry?.opts["twin"] ? localize("edit3d.upLight") : undefined,
         )}
         ${this._renderBeam(item, entry, set)}
+        ${entry ? this._renderFixture(layout, item, entry, set) : nothing}
         ${this._num(localize("edit3d.width"), item.width_cm, (v) => v && v > 0 && set({ width_cm: v }), { unit: "cm", min: 1 })}
         ${this._num(localize("edit3d.depth"), item.depth_cm, (v) => v && v > 0 && set({ depth_cm: v }), { unit: "cm", min: 1 })}
         ${entry && entry.w > 0 && entry.d > 0 ? this._renderScale(item, entry, set) : nothing}
@@ -5777,7 +6238,7 @@ export class Floorplan3dView extends LitElement {
                 />
               </label>`
         }
-        ${this._renderOpeningLook(o, set)}
+        ${this._renderOpeningCovers(o, set)} ${this._renderOpeningLook(o, set)}
         <span class="hint">${localize("edit3d.openingDragHint")}</span>
         <div class="buttons">
           <button class="danger" @click=${() => this._deleteSelection()}>
@@ -6695,6 +7156,46 @@ export class Floorplan3dView extends LitElement {
             </span>
           </div>
           <label class="row">
+            <span>${localize("view3d.roofLightsKind")}</span>
+            <select
+              ?disabled=${!this.editable}
+              @change=${(e: Event) => {
+                const puck = (e.target as HTMLSelectElement).value === "puck";
+                patch(i, {
+                  kind: puck ? "puck" : "strip",
+                  spacing_in: puck ? 18 : 2,
+                });
+              }}
+            >
+              <option value="strip" ?selected=${strip.kind !== "puck"}>
+                ${localize("view3d.roofLightsStrip")}
+              </option>
+              <option value="puck" ?selected=${strip.kind === "puck"}>
+                ${localize("view3d.roofLightsPucks")}
+              </option>
+            </select>
+          </label>
+          ${
+            strip.kind === "puck"
+              ? html`<label class="row">
+                  <span>${localize("view3d.roofLightsInset")}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="60"
+                    step="1"
+                    ?disabled=${!this.editable}
+                    .value=${String(strip.inset_in ?? 8)}
+                    @change=${(e: Event) => {
+                      const v = Number((e.target as HTMLInputElement).value);
+                      if (v >= 0 && v <= 60) patch(i, { inset_in: v });
+                    }}
+                  />
+                  <span class="unit">in</span>
+                </label>`
+              : nothing
+          }
+          <label class="row">
             <span>${localize("view3d.roofLightsSpacing")}</span>
             <input
               type="number"
@@ -6702,7 +7203,7 @@ export class Floorplan3dView extends LitElement {
               max="48"
               step="0.5"
               ?disabled=${!this.editable}
-              .value=${String(strip.spacing_in ?? 2)}
+              .value=${String(strip.spacing_in ?? (strip.kind === "puck" ? 18 : 2))}
               @change=${(e: Event) => {
                 const v = Number((e.target as HTMLInputElement).value);
                 if (v >= 0.5 && v <= 48) patch(i, { spacing_in: v });

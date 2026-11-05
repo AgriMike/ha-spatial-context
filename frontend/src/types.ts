@@ -426,6 +426,21 @@ export interface FurnitureItem {
    * bigger across its tyres are, centimetres; unset = as modelled. */
   lift_cm?: number | null;
   tire_cm?: number | null;
+  /** Which way an LED strip's diffuser faces and throws its light: up,
+   * down, or out to its front or back side; unset = the strip's own. */
+  shine?: "up" | "down" | "front" | "back" | null;
+  /** A globe pendant's globes: how many, and per globe (in turn) how far
+   * it hangs below the ceiling to the top of its cap and how big across
+   * it is, centimetres; unset = its own. */
+  globes?: number | null;
+  globe_drops_cm?: number[] | null;
+  globe_sizes_cm?: number[] | null;
+  /** A vanity light's bulbs: how many, their shades' shape, which way
+   * the shades open, and the fixture's metal; unset = its own. */
+  bulbs?: number | null;
+  shade_style?: "globe" | "cylinder" | "bell" | "cone" | null;
+  shade_up?: boolean | null;
+  metal_finish?: "black" | "brass" | "nickel" | "chrome" | null;
 }
 
 /** A phone room scan (glTF/GLB) laid over a floor in the 3D view — see
@@ -517,6 +532,11 @@ export type CompassSide = "n" | "e" | "s" | "w";
 export interface RoofLightStrip {
   /** The light it shows (its colour, brightness, on or off). */
   entity_id: string | null;
+  /** LEDs along the fascia (absent), or puck lights set on the shingles
+   * `inset_in` up the roof from its edge (8 when absent), each aimed
+   * straight up. */
+  kind?: "strip" | "puck";
+  inset_in?: number;
   sides: CompassSide[];
   /** Inches between LEDs; 2 when absent. */
   spacing_in?: number;

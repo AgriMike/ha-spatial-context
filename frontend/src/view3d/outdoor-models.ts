@@ -69,7 +69,7 @@ const SHEET = new THREE.MeshStandardMaterial({
 
 /** A light's lens or diffuser: frosted while off, glowing in the light's
  * colour while on. */
-function lens(
+export function lens(
   item: Item3d,
   off = "#e9e6df",
   lit = item.light,
@@ -114,7 +114,7 @@ function glowMap(): THREE.Texture {
 
 /** A soft glow round a lit lens, `r` across from its middle: a sprite
  * facing the camera, added to the model when it's grouped. */
-function halo(
+export function halo(
   m: Model,
   item: Item3d,
   x: number,
@@ -130,7 +130,7 @@ function halo(
 }
 
 /** The model grouped, with its glows. */
-function finish(m: Model): THREE.Group {
+export function finish(m: Model): THREE.Group {
   const g = m.group();
   const glows = GLOWS.get(m);
   if (!glows) return g;
@@ -172,7 +172,7 @@ const METAL = {
 // --- geometry helpers -----------------------------------------------------------
 
 /** A cylinder (or cone, r1 at `to`) from one point to another. */
-function limb(
+export function limb(
   m: Model,
   from: V3,
   to: V3,

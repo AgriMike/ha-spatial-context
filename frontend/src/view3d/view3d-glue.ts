@@ -5,6 +5,7 @@ import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { counterModel, furnitureModel } from "./furniture-models";
 import { outdoorModel } from "./outdoor-models";
+import { indoorLightModel } from "./indoor-light-models";
 import { siteModel } from "./site-models";
 import { gradeAt } from "./ground-grid";
 import {
@@ -1141,6 +1142,152 @@ function modelItem(item: Item3d): THREE.Group {
   return g;
 }
 
+let beamFade: THREE.Texture | null = null;
+/** A beam's fade: solid at its foot, gone at its top. */
+function beamFadeMap(): THREE.Texture {
+  if (beamFade) return beamFade;
+  const cv = document.createElement("canvas");
+  cv.width = 4;
+  cv.height = 64;
+  const ctx = cv.getContext("2d");
+  if (ctx) {
+    const g = ctx.createLinearGradient(0, 0, 0, 64);
+    g.addColorStop(0, "rgba(255,255,255,0)");
+    g.addColorStop(0.55, "rgba(255,255,255,0.18)");
+    g.addColorStop(1, "rgba(255,255,255,1)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 4, 64);
+  }
+  beamFade = new THREE.CanvasTexture(cv);
+  return beamFade;
+}
+
+/** Puck lights set on the shingles: each a low dark puck lying on the
+ * roof, its lens glowing in its light's colour while on, a soft beam
+ * rising straight up from it. */
+function roofPucks(strip: RoofLights3d): THREE.Group {
+  const g = new THREE.Group();
+  g.name = strip.name;
+  const n = strip.points.length / 3;
+  const normals = strip.pucks ?? [];
+  const up = new THREE.Vector3(0, 1, 0);
+  const at = (k: number) =>
+    new THREE.Vector3(
+      strip.points[k * 3]!,
+      strip.points[k * 3 + 1]!,
+      strip.points[k * 3 + 2]!,
+    );
+  const normal = (k: number) =>
+    new THREE.Vector3(
+      normals[k * 3] ?? 0,
+      normals[k * 3 + 1] ?? 1,
+      normals[k * 3 + 2] ?? 0,
+    ).normalize();
+  const place = (
+    geom: THREE.BufferGeometry,
+    mat: THREE.Material,
+    pose: (k: number, o: THREE.Object3D) => void,
+  ) => {
+    const mesh = new THREE.InstancedMesh(geom, mat, n);
+    const o = new THREE.Object3D();
+    for (let k = 0; k < n; k++) {
+      o.position.set(0, 0, 0);
+      o.quaternion.identity();
+      pose(k, o);
+      o.updateMatrix();
+      mesh.setMatrixAt(k, o.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    return mesh;
+  };
+  const H = 0.018;
+  const body = new THREE.CylinderGeometry(0.034, 0.038, H, 20);
+  body.translate(0, H / 2, 0);
+  const pucks = place(
+    body,
+    new THREE.MeshStandardMaterial({ color: "#2b2b2d", roughness: 0.5 }),
+    (k, o) => {
+      o.position.copy(at(k));
+      o.quaternion.setFromUnitVectors(up, normal(k));
+    },
+  );
+  pucks.castShadow = true;
+  pucks.name = `${strip.name} pucks`;
+  g.add(pucks);
+  const lensGeom = new THREE.CylinderGeometry(0.025, 0.025, 0.002, 20);
+  lensGeom.translate(0, H + 0.001, 0);
+  const level = Math.max(0.15, Math.min(1, strip.level));
+  const color = strip.color ? new THREE.Color(strip.color) : null;
+  const lens = place(
+    lensGeom,
+    color
+      ? new THREE.MeshBasicMaterial({
+          color: color.clone().lerp(new THREE.Color("#ffffff"), 0.35),
+          toneMapped: false,
+        })
+      : new THREE.MeshStandardMaterial({ color: "#4a4a4c", roughness: 0.3 }),
+    (k, o) => {
+      o.position.copy(at(k));
+      o.quaternion.setFromUnitVectors(up, normal(k));
+    },
+  );
+  lens.name = `${strip.name} lenses`;
+  g.add(lens);
+  if (!color) return g;
+  // Each one's colour in turn (a scene's pattern), else the light's.
+  const colours = (strip.pattern?.length ? strip.pattern : [strip.color!]).map(
+    (c) => new THREE.Color(c),
+  );
+  // A faint glow rising off each (clear air shows no real beam).
+  const beamH = 0.5;
+  const beamGeom = new THREE.CylinderGeometry(0.11, 0.026, beamH, 20, 1, true);
+  beamGeom.translate(0, beamH / 2, 0);
+  const beams = place(
+    beamGeom,
+    new THREE.MeshBasicMaterial({
+      color: "#ffffff",
+      alphaMap: beamFadeMap(),
+      transparent: true,
+      opacity: 0.05 + 0.1 * level,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+    (k, o) => {
+      o.position.copy(at(k)).addScaledVector(normal(k), H);
+    },
+  );
+  const glow = place(
+    new THREE.SphereGeometry(0.045, 10, 8),
+    new THREE.MeshBasicMaterial({
+      color: "#ffffff",
+      transparent: true,
+      opacity: 0.18 + 0.2 * level,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+    (k, o) => {
+      o.position.copy(at(k)).addScaledVector(normal(k), H + 0.01);
+    },
+  );
+  for (let k = 0; k < n; k++) {
+    const c = colours[k % colours.length]!;
+    beams.setColorAt(k, c);
+    glow.setColorAt(k, c);
+    lens.setColorAt(k, c.clone().lerp(new THREE.Color("#ffffff"), 0.35));
+  }
+  for (const mesh of [beams, glow, lens])
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  beams.name = `${strip.name} beams`;
+  glow.name = `${strip.name} glow`;
+  beams.renderOrder = 2;
+  glow.renderOrder = 2;
+  g.add(beams, glow);
+  return g;
+}
+
 /** The roof's light strips: a bead per LED, glowing in its light's colour
  * while on (with a soft halo), else dark. */
 function buildRoofLights(strips: RoofLights3d[]): THREE.Group {
@@ -1165,6 +1312,10 @@ function buildRoofLights(strips: RoofLights3d[]): THREE.Group {
   };
   for (const strip of strips) {
     if (!strip.points.length) continue;
+    if (strip.pucks) {
+      group.add(roofPucks(strip));
+      continue;
+    }
     if (!strip.color) {
       const beads = instanced(
         new THREE.SphereGeometry(0.009, 8, 6),
@@ -2655,13 +2806,32 @@ function createView3d(options: View3dOptions): View3dHandle {
               ? glbItem(item, item.glb)
               : item.counter
                 ? counterModel(item.footprint, item.height, item.tint ?? null)
-                : withPrints(outdoorModel(item) ?? furnitureModel(item)),
+                : withPrints(
+                    outdoorModel(item) ??
+                      indoorLightModel(item) ??
+                      furnitureModel(item),
+                  ),
           );
     if (furniture) {
       clipped(furniture, item);
       furniture.name = item.name;
       furniture.position.set(item.x, itemY(item, baseY), item.z);
-      furniture.rotation.y = item.angle;
+      // (All of it: a kept model may still wear a tilt from before.)
+      furniture.rotation.set(0, item.angle, 0);
+      // Flat against a sloping ceiling: tilted onto it about its top
+      // (where it meets the ceiling).
+      if (item.ceilingSlope) {
+        const [gx, gz] = item.ceilingSlope;
+        const tilt = new THREE.Quaternion().setFromUnitVectors(
+          new THREE.Vector3(0, 1, 0),
+          new THREE.Vector3(-gx, 1, -gz).normalize(),
+        );
+        furniture.quaternion.premultiply(tilt);
+        const top = new THREE.Vector3(0, item.height, 0);
+        furniture.position.add(
+          top.clone().sub(top.clone().applyQuaternion(tilt)),
+        );
+      }
       furniture.userData["xz"] = [item.x, item.z];
       furniture.userData["itemId"] = item.id;
       return furniture;
@@ -3007,7 +3177,14 @@ function createView3d(options: View3dOptions): View3dHandle {
           2,
         );
         light.name = `${item.name} light`;
-        light.position.set(item.x, item.light.y, item.z);
+        // (Out toward its front or back: a vanity light's, a strip
+        // shining to one side.)
+        const fwd = item.light.forward ?? 0;
+        light.position.set(
+          item.x + Math.sin(item.angle) * fwd,
+          item.light.y,
+          item.z + Math.cos(item.angle) * fwd,
+        );
         // A room's light keeps to its storey: from under its lowest floor
         // up to the next floor's (see SC_POINT_BANDS).
         if (!item.grounded) {

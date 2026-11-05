@@ -1764,6 +1764,9 @@ const T: Record<string, Template> = {
     for (let x = pitch / 2; x < w; x += pitch)
       out.push(circ(x, d / 2, Math.max(0.6, Math.min(d * 0.28, 1.6))));
     if (flag(o, "cove")) out.push(line(0, -3, w, -3, true));
+    // Shining out to one side: a dashed line along that side.
+    if (o["shine"] === "front") out.push(line(0, d + 2, w, d + 2, true));
+    if (o["shine"] === "back") out.push(line(0, -2, w, -2, true));
     return out;
   },
   panelLight: (w, d, o) => {
@@ -1911,6 +1914,14 @@ const T: Record<string, Template> = {
       const y = d / 2 + fy * r * 0.95;
       out.push(line(w / 2, d / 2, x, y, true), circ(x, y, fr * r));
     }
+    return out;
+  },
+  /** Globes hung on their own cords from one canopy (see globeLayout):
+   * the canopy, each cord's run to its globe, each globe at its size. */
+  globeDrops: (w, d, o) => {
+    const out: Prim[] = [circ(w / 2, d / 2, Math.min(w, d) * 0.09)];
+    for (const g of globeLayout(w, d, o))
+      out.push(line(w / 2, d / 2, g.x, g.y, true), circ(g.x, g.y, g.size / 2));
     return out;
   },
   // A dome shade seen from above: the rim and the shade's ribs.
@@ -3018,6 +3029,86 @@ export function drawItem(
 ): Prim[] {
   const fn = T[template] ?? T["box"]!;
   return fn(w, d, template in T ? opts : { x: true });
+}
+
+/** A list of numbers kept in a drawing's options ("20,30,25"). */
+function numList(o: Opts, key: string): number[] {
+  const v = o[key];
+  if (typeof v === "number") return [v];
+  if (typeof v !== "string") return [];
+  return v
+    .split(",")
+    .map((t) => Number(t))
+    .filter((n) => Number.isFinite(n));
+}
+
+/** One globe of a globe pendant: its centre in plan (cm from the item's
+ * top-left corner, as its drawing has it), how big across (cm), and how
+ * far it hangs below the ceiling to the top of its cap (cm). */
+export interface GlobeSpot {
+  x: number;
+  y: number;
+  size: number;
+  drop: number;
+}
+
+/** A globe pendant's globes laid out under its canopy: one in the
+ * middle; else round a ring as wide as the fixture allows (from the top,
+ * clockwise), one more in the middle from six on. Their counts, sizes
+ * and drops come from the options `globes`, `sizes` and `drops` (each
+ * list repeating its last value; see itemDrawOpts). */
+export function globeLayout(w: number, d: number, o: Opts): GlobeSpot[] {
+  const n = Math.max(1, Math.min(12, Math.round(num(o, "globes", 3))));
+  const sizes = numList(o, "sizes");
+  const drops = numList(o, "drops");
+  const sizeOf = (k: number) =>
+    sizes[Math.min(k, sizes.length - 1)] ?? Math.min(w, d) * 0.4;
+  const dropOf = (k: number) =>
+    drops[Math.min(k, drops.length - 1)] ?? 45 + 20 * (k % 3);
+  const biggest = Math.max(...Array.from({ length: n }, (_, k) => sizeOf(k)));
+  const ring = Math.max(0, Math.min(w, d) / 2 - biggest / 2);
+  const middle = n === 1 || n >= 6;
+  const around = middle ? n - 1 : n;
+  return Array.from({ length: n }, (_, k) => {
+    const r = middle && k === n - 1 ? 0 : ring;
+    const a = -Math.PI / 2 + (k / Math.max(1, around)) * Math.PI * 2;
+    return {
+      x: w / 2 + Math.cos(a) * r * (w / Math.max(w, d)),
+      y: d / 2 + Math.sin(a) * r * (d / Math.max(w, d)),
+      size: Math.max(5, sizeOf(k)),
+      drop: Math.max(2, dropOf(k)),
+    };
+  });
+}
+
+/** An item's drawing options: its catalog item's, with what's set on the
+ * item itself (corner rounding, a globe pendant's globes, a vanity
+ * light's bulbs and shades, the side a strip shines to). */
+export function itemDrawOpts(
+  base: Opts,
+  item: {
+    corners?: number[] | null | undefined;
+    globes?: number | null | undefined;
+    globe_sizes_cm?: number[] | null | undefined;
+    globe_drops_cm?: number[] | null | undefined;
+    bulbs?: number | null | undefined;
+    shine?: string | null | undefined;
+    shade_style?: string | null | undefined;
+    shade_up?: boolean | null | undefined;
+    metal_finish?: string | null | undefined;
+  },
+): Opts {
+  const o: Opts = { ...base };
+  if (item.corners?.length) o["corners"] = item.corners.join(",");
+  if (item.globes) o["globes"] = item.globes;
+  if (item.globe_sizes_cm?.length) o["sizes"] = item.globe_sizes_cm.join(",");
+  if (item.globe_drops_cm?.length) o["drops"] = item.globe_drops_cm.join(",");
+  if (item.bulbs) o["bulbs"] = item.bulbs;
+  if (item.shine) o["shine"] = item.shine;
+  if (item.shade_style) o["shade"] = item.shade_style;
+  if (item.shade_up != null) o["shadeUp"] = item.shade_up;
+  if (item.metal_finish) o["metal"] = item.metal_finish;
+  return o;
 }
 
 /** The corner softening every drawn box gets (see renderPrims' rect):

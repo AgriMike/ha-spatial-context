@@ -60,6 +60,7 @@ import {
   DEFAULT_ROOM_FILL_OPACITY,
 } from "../canvas/floorplan-canvas";
 import {
+  centroid,
   distance,
   nearestPointOnPolyline,
   pointInPolygon,
@@ -85,7 +86,10 @@ import {
   cornerRadii,
   drawItem,
   freeformPrims,
+  globeLayout,
+  itemDrawOpts,
   roundedPolyPoints,
+  type GlobeSpot,
   FURNITURE_STYLES,
   renderPrims,
   shapeCornerFractions,
@@ -426,6 +430,69 @@ export function metersPerUnit(scale: Scale | null): number {
   return 1 / (unitsPerCm(scale) * 100);
 }
 
+// --- light fixtures -------------------------------------------------------------
+
+/** A globe pendant's cap over each globe (see GlobeSpot's drop), metres. */
+const GLOBE_CAP_M = 0.035;
+/** Ceiling fixtures that lie flat against it (tilted to a vault's slope);
+ * pendants hang plumb whatever the ceiling does. */
+const FLAT_CEILING_FIXTURE =
+  /recessed|wafer|flush_mount|ceiling_light|led_panel|troffer|hex_light|triangle_light/;
+/** Drawings whose 3D model reads options set on the item (globes, bulbs,
+ * shades, a strip's side): see itemDrawOpts. */
+const LIGHT_OPTS_DRAWS = new Set(["globeDrops", "vanityBar", "linearLight"]);
+/** Which way a strip throws its light (see FurnitureItem.shine). */
+export function stripShine(
+  item: FurnitureItem,
+  entry: CatalogItem | undefined,
+): "up" | "down" | "front" | "back" | null {
+  if (entry?.draw !== "linearLight") return null;
+  const own = entry.opts["shine"];
+  return (
+    item.shine ??
+    (own === "up" || own === "down" || own === "front" || own === "back"
+      ? own
+      : "down")
+  );
+}
+
+/** Where a lit indoor fixture's light comes from: metres above the
+ * floor's level, and how far toward its front. A recessed light's from
+ * a little under the ceiling (its can throws it down, not across the
+ * ceiling); a globe pendant's from among its globes; a vanity light's
+ * from in front of its shades; a strip's from out on the side it shines
+ * to. */
+function indoorLightAt(
+  item: FurnitureItem,
+  entry: CatalogItem | undefined,
+  shape: Item3d["shape"],
+  y0: number,
+  height: number,
+  H: number,
+  globes: GlobeSpot[] | null,
+): { y: number; forward?: number } {
+  if (shape === "lamp") return { y: y0 + height - 0.15 };
+  if (/recessed|wafer/.test(item.kind)) return { y: y0 - 0.9 };
+  if (globes?.length) {
+    const top = y0 + height;
+    const mid =
+      globes.reduce(
+        (a, g) => a + (g.drop + g.size / 2) / 100 + GLOBE_CAP_M,
+        0,
+      ) / globes.length;
+    return { y: top - mid };
+  }
+  if (entry?.draw === "vanityBar") return { y: y0 + height / 2, forward: 0.2 };
+  const shine = stripShine(item, entry);
+  if (shine) {
+    const mid = y0 + height / 2;
+    if (shine === "up") return { y: mid + 0.3 };
+    if (shine === "down") return { y: mid - 0.3 };
+    return { y: mid, forward: shine === "front" ? 0.3 : -0.3 };
+  }
+  return { y: y0 > H * 0.5 ? y0 - 0.05 : y0 + height + 0.05 };
+}
+
 // --- furniture heights --------------------------------------------------------
 
 type Mount = "floor" | "ceiling" | { y0: number };
@@ -446,7 +513,9 @@ const HEIGHT_RULES: [RegExp, number, Mount?][] = [
   [/mattress_floor/, 0.2],
   [/sleeping_bag|floor_cushion|meditation_cushion/, 0.12],
   [/rug|_mat$|^mat_|doormat|runner|play_mat|vr_play_area|bath_mat/, 0.01],
-  // Hung from the ceiling.
+  // Hung from the ceiling. Recessed and canless lights sit flush in it
+  // (just their trim below it).
+  [/recessed|wafer/, 0.008, "ceiling"],
   [/chandelier|pendant|globe_cluster/, 0.5, "ceiling"],
   [/ceiling_fan/, 0.35, "ceiling"],
   [
@@ -455,6 +524,14 @@ const HEIGHT_RULES: [RegExp, number, Mount?][] = [
     "ceiling",
   ],
   [/cove_light/, 0.05, { y0: -0.12 }],
+  // LED strips: a slim channel, by default just under the ceiling (a
+  // soffit's or a valance's), near the floor along a toe kick or a
+  // baseboard, along a handrail.
+  [/^led_strip/, 0.015, { y0: -0.06 }],
+  [/toe_kick_light/, 0.015, { y0: 0.07 }],
+  [/baseboard_light/, 0.015, { y0: 0.12 }],
+  [/handrail_light/, 0.015, { y0: 0.86 }],
+  [/stair_led_strip/, 0.015, { y0: 0.01 }],
   // On the wall.
   [/^wall_cabinet|over_toilet_storage|medicine_cabinet/, 0.7, { y0: 1.45 }],
   [/range_hood|microwave_otr/, 0.45, { y0: 1.55 }],
@@ -463,8 +540,9 @@ const HEIGHT_RULES: [RegExp, number, Mount?][] = [
     0.9,
     { y0: 1.0 },
   ],
+  [/vanity_light/, 0.25, { y0: 1.85 }],
   [
-    /sconce|wall_up_down|picture_light|vanity_light|wall_washer|reading_light_bed/,
+    /sconce|wall_up_down|picture_light|wall_washer|reading_light_bed/,
     0.25,
     { y0: 1.7 },
   ],
@@ -627,9 +705,7 @@ function itemPrims(
         entry?.draw ?? "box",
         item.width_cm,
         item.depth_cm,
-        item.corners?.length
-          ? { ...entry?.opts, corners: item.corners.join(",") }
-          : (entry?.opts ?? {}),
+        itemDrawOpts(entry?.opts ?? {}, item),
       );
 }
 
@@ -3179,13 +3255,29 @@ function buildFloor(
   // Closets topped by a ledge (see below), their outlines in plan units.
   const ledges: [number, number][][] = [];
   for (const room of layout.rooms) {
-    if (room.visible === false || room.points.length < 3) continue;
+    if (room.points.length < 3) continue;
+    // A room hidden on the plan (its fill and label) still has a floor
+    // (else the ground shows through it), unless it's only a zone drawn
+    // over another room.
+    if (
+      room.visible === false &&
+      layout.rooms.some(
+        (o) =>
+          o !== room &&
+          o.visible !== false &&
+          o.points.length >= 3 &&
+          pointInPolygon(...centroid(room.points), o.points),
+      )
+    )
+      continue;
     const light = showLights ? lights.get(room.id) : undefined;
     // The floor wears the room's own fill; lights only make it glow (a
     // room with its lights off isn't shaded dark, as on the plan).
     const fill = roomFillStyle(
       room.fill_color ?? DEFAULT_ROOM_FILL_COLOR,
-      room.fill_opacity ?? DEFAULT_ROOM_FILL_OPACITY,
+      room.visible === false
+        ? 0
+        : (room.fill_opacity ?? DEFAULT_ROOM_FILL_OPACITY),
       light && light.on > 0 ? light : undefined,
       dark,
     );
@@ -3871,6 +3963,32 @@ function buildFloor(
     if (pos.length) vaults.push({ id: "stairwell:vault", positions: pos });
   }
 
+  /** The vaulted ceiling over a plan point (a room vaulted under the
+   * roof): its height there, and its rise per metre along x and z. */
+  const vaultOver = (
+    x: number,
+    y: number,
+  ): { y: number; slope: [number, number] } | null => {
+    const room = layout.rooms.find(
+      (r) =>
+        !r.outdoor && r.points.length >= 3 && pointInPolygon(x, y, r.points),
+    );
+    if (!room || !vaults.some((v) => v.id === `${room.id}:vault`)) return null;
+    const level = (room.floor_offset_m ?? 0) + H;
+    const X = x * m;
+    const Z = y * m;
+    const c = vaultY(level, X, Z);
+    if (c < level + 0.01) return null;
+    const e = 0.05;
+    return {
+      y: c,
+      slope: [
+        (vaultY(level, X + e, Z) - vaultY(level, X - e, Z)) / (2 * e),
+        (vaultY(level, X, Z + e) - vaultY(level, X, Z - e)) / (2 * e),
+      ],
+    };
+  };
+
   // Furniture.
   const states = computeItemStates(layout.furniture, hass);
   const items: Item3d[] = [];
@@ -3888,6 +4006,20 @@ function buildFloor(
     const flip = !!item.mirrored !== !!entry?.flip;
     const prims = itemPrims(item, entry);
     const auto = itemHeight(item.kind, entry, H);
+    // A globe pendant hangs as low as its lowest globe.
+    const globes =
+      entry?.draw === "globeDrops"
+        ? globeLayout(
+            item.width_cm,
+            item.depth_cm,
+            itemDrawOpts(entry.opts, item),
+          )
+        : null;
+    if (globes) {
+      auto.height =
+        Math.max(...globes.map((g) => g.drop + g.size)) / 100 + GLOBE_CAP_M;
+      auto.y0 = H - auto.height;
+    }
     // A planting grows with its spread: resized, it keeps its shape.
     if (entry?.category === "landscape")
       auto.height *=
@@ -3926,10 +4058,27 @@ function buildFloor(
     // Hung from the ceiling under a floor that starts below its walls'
     // top (a basement's lights under the main floor): from that floor's
     // underside instead, not up through it.
+    // Under a vaulted ceiling, from the vault over it (a flat fixture
+    // tilted to its slope), not the walls' height.
+    let ceilingTilt: [number, number] | null = null;
+    let canopySlope: [number, number] | null = null;
     if (item.elevation_cm == null && ceilingMounted(item.kind)) {
       const above = floorAbove(item.x * m, item.y * m);
       if (above !== null && y0 + height > above - FLOOR_SLAB_M)
         y0 = Math.max(0, above - FLOOR_SLAB_M - height);
+      const vault = vaultOver(item.x, item.y);
+      if (vault) {
+        y0 = vault.y - height;
+        if (FLAT_CEILING_FIXTURE.test(item.kind)) ceilingTilt = vault.slope;
+        else {
+          // In the item's own frame (see view3d-glue's fixtureLights).
+          const a = (-item.rotation_deg * Math.PI) / 180;
+          const [gx, gz] = vault.slope;
+          const sx = gx * Math.cos(a) - gz * Math.sin(a);
+          const sz = gx * Math.sin(a) + gz * Math.cos(a);
+          canopySlope = [flip ? -sx : sx, sz];
+        }
+      }
     }
     const live = states.get(item.id);
     const own = item.color ?? null;
@@ -4046,9 +4195,22 @@ function buildFloor(
             model: {
               kind: entry.id,
               draw: entry.draw,
-              opts: entry.opts,
+              opts: LIGHT_OPTS_DRAWS.has(entry.draw)
+                ? itemDrawOpts(entry.opts, { ...item, corners: null })
+                : entry.opts,
               flip,
               tint: own,
+              ...(canopySlope ? { canopySlope } : {}),
+              ...(globes
+                ? {
+                    globes: globes.map((g) => ({
+                      x: g.x / 100 - item.width_cm / 200,
+                      z: g.y / 100 - item.depth_cm / 200,
+                      size: g.size / 100,
+                      drop: g.drop / 100,
+                    })),
+                  }
+                : {}),
               ...(entry.id === CUSTOM_COUNTER_KIND
                 ? { outline: drawnOutline(item) }
                 : {}),
@@ -4199,12 +4361,7 @@ function buildFloor(
           : {
               color: live.color ?? "#ffd54f",
               level: Math.max(0.15, live.glow),
-              y:
-                shape === "lamp"
-                  ? y0 + height - 0.15
-                  : y0 > H * 0.5
-                    ? y0 - 0.05
-                    : y0 + height + 0.05,
+              ...indoorLightAt(item, entry, shape, y0, height, H, globes),
             }
         : null,
       ...(on2 && live2
@@ -4221,6 +4378,7 @@ function buildFloor(
         : {}),
       ...(grounded ? { grounded: true } : {}),
       ...(aimTilt !== null ? { tilt: aimTilt } : {}),
+      ...(ceilingTilt ? { ceilingSlope: ceilingTilt } : {}),
       shape,
     });
   }
@@ -6449,15 +6607,55 @@ export function edgeFacing(e: RoofEdge3d, northDeg: number): CompassSide {
   return best;
 }
 
+/** The shingled roof face over a spot (x, z) nearest above `near` (the
+ * edge it's set in from): its height there and its upward normal. */
+function shingleAt(
+  faces: RoofFace3d[],
+  x: number,
+  z: number,
+  near: number,
+): { y: number; normal: [number, number, number] } | null {
+  let best: { y: number; normal: [number, number, number] } | null = null;
+  for (const f of faces) {
+    const pts = f.points;
+    const flat = pts.map((q): Vec2 => [q[0], q[2]]);
+    if (!pointInPolygon(x, z, flat)) continue;
+    const [a, b, c] = pts as [
+      [number, number, number],
+      [number, number, number],
+      [number, number, number],
+    ];
+    const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    let nx = u[1]! * v[2]! - u[2]! * v[1]!;
+    let ny = u[2]! * v[0]! - u[0]! * v[2]!;
+    let nz = u[0]! * v[1]! - u[1]! * v[0]!;
+    if (Math.abs(ny) < 1e-6) continue;
+    if (ny < 0) [nx, ny, nz] = [-nx, -ny, -nz];
+    const len = Math.hypot(nx, ny, nz);
+    const y = a[1] - (nx * (x - a[0]) + nz * (z - a[2])) / ny;
+    if (y < near - 0.3) continue;
+    if (!best || Math.abs(y - near) < Math.abs(best.y - near))
+      best = { y, normal: [nx / len, ny / len, nz / len] };
+  }
+  return best;
+}
+
 /** The roof's light strips: an LED every `spacing_in` along each edge it
  * runs along (see stripLights), lit as its light is. */
 function roofLights(input: SceneInput, roof: Roof3d | null): RoofLights3d[] {
   const strips = input.roofPlan?.lights ?? [];
   const edges = roof?.edges ?? [];
   if (!strips.length || !edges.length) return [];
+  const shingles = (roof?.faces ?? []).filter(
+    (f) => f.kind === "shingle" && f.points.length >= 3,
+  );
   return strips.map((strip) => {
-    const step = Math.max(0.01, (strip.spacing_in ?? 2) * 0.0254);
+    const puck = strip.kind === "puck";
+    const step = Math.max(0.01, (strip.spacing_in ?? (puck ? 18 : 2)) * 0.0254);
+    const inset = (strip.inset_in ?? 8) * 0.0254;
     const points: number[] = [];
+    const normals: number[] = [];
     for (const e of edges) {
       if (!stripLights(strip, e)) continue;
       const len = Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1], e.b[2] - e.a[2]);
@@ -6466,11 +6664,22 @@ function roofLights(input: SceneInput, roof: Roof3d | null): RoofLights3d[] {
       const start = (len - n * step) / 2;
       for (let k = 0; k <= n; k++) {
         const t = (start + k * step) / len;
-        points.push(
+        const p: [number, number, number] = [
           e.a[0] + (e.b[0] - e.a[0]) * t,
           e.a[1] + (e.b[1] - e.a[1]) * t,
           e.a[2] + (e.b[2] - e.a[2]) * t,
-        );
+        ];
+        if (!puck) {
+          points.push(...p);
+          continue;
+        }
+        // A puck: up the roof from its edge, sitting on the shingles.
+        const x = p[0] - e.out[0] * inset;
+        const z = p[2] - e.out[1] * inset;
+        const on = shingleAt(shingles, x, z, p[1]);
+        if (!on) continue;
+        points.push(x, on.y, z);
+        normals.push(...on.normal);
       }
     }
     const st = strip.entity_id
@@ -6494,6 +6703,7 @@ function roofLights(input: SceneInput, roof: Roof3d | null): RoofLights3d[] {
     return {
       name: strip.entity_id ?? "Roof lights",
       points,
+      ...(puck ? { pucks: normals } : {}),
       color,
       level: typeof brightness === "number" ? brightness / 255 : 1,
       ...(() => {

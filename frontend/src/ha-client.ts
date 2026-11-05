@@ -564,6 +564,14 @@ const ITEM_FINISH_KEYS = [
   "model_name",
   "lift_cm",
   "tire_cm",
+  "shine",
+  "globes",
+  "globe_drops_cm",
+  "globe_sizes_cm",
+  "bulbs",
+  "shade_style",
+  "shade_up",
+  "metal_finish",
 ] as const;
 const OPENING_STYLE_KEYS = [
   "door_style",

@@ -4,7 +4,11 @@
  * undo step, saved the same way). */
 
 import { catalogItem } from "../canvas/furniture-catalog";
-import { distance, nearestPointOnPolyline } from "../canvas/geometry";
+import {
+  distance,
+  nearestPointOnPolyline,
+  pointInPolygon,
+} from "../canvas/geometry";
 import { DEFAULT_WALL_MATERIAL } from "../canvas/materials";
 import { newId } from "../ha-client";
 import type {
@@ -322,6 +326,89 @@ export function duplicateItem(
     y: item.y + offset,
   };
   return { patch: { furniture: [...layout.furniture, copy] }, id: copy.id };
+}
+
+/** A room's lights laid out in even rows: `rows` × `cols` spots across
+ * the room, square to its longest wall, each bay the same size and the
+ * outer ones half a bay from the walls (where one would fall outside an
+ * L-shaped room, none). The room's lights of the item's kind move to the
+ * spots nearest them (keeping their own entities); spots left over get
+ * copies of the item, and lights left over are removed. */
+export function gridItems(
+  layout: FloorLayout,
+  id: string,
+  room: { points: [number, number][] },
+  rows: number,
+  cols: number,
+): LayoutPatch {
+  const item = layout.furniture.find((f) => f.id === id);
+  const pts = room.points;
+  if (!item || pts.length < 3 || rows < 1 || cols < 1) return {};
+  // The room's own axes: along its longest side, and across it.
+  let ux = 1;
+  let uy = 0;
+  let best = 0;
+  pts.forEach((a, k) => {
+    const b = pts[(k + 1) % pts.length]!;
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (len > best) {
+      best = len;
+      ux = (b[0] - a[0]) / len;
+      uy = (b[1] - a[1]) / len;
+    }
+  });
+  const [vx, vy] = [-uy, ux];
+  const us = pts.map(([x, y]) => x * ux + y * uy);
+  const vs = pts.map(([x, y]) => x * vx + y * vy);
+  const [u0, u1] = [Math.min(...us), Math.max(...us)];
+  const [v0, v1] = [Math.min(...vs), Math.max(...vs)];
+  const spots: Pt[] = [];
+  for (let j = 0; j < rows; j++)
+    for (let i = 0; i < cols; i++) {
+      const u = u0 + ((u1 - u0) * (i + 0.5)) / cols;
+      const v = v0 + ((v1 - v0) * (j + 0.5)) / rows;
+      const p: Pt = [u * ux + v * vx, u * uy + v * vy];
+      if (pointInPolygon(p[0], p[1], pts)) spots.push(p);
+    }
+  if (!spots.length) return {};
+  const lights = layout.furniture.filter(
+    (f) =>
+      f.id === id || (f.kind === item.kind && pointInPolygon(f.x, f.y, pts)),
+  );
+  // Nearest pairs first: each light to a spot, each spot one light.
+  const pairs: [number, number, number][] = [];
+  lights.forEach((f, li) =>
+    spots.forEach((s, si) =>
+      pairs.push([Math.hypot(f.x - s[0], f.y - s[1]), li, si]),
+    ),
+  );
+  pairs.sort((a, b) => a[0] - b[0]);
+  const spotOf = new Map<number, number>();
+  const taken = new Set<number>();
+  for (const [, li, si] of pairs) {
+    if (spotOf.has(li) || taken.has(si)) continue;
+    spotOf.set(li, si);
+    taken.add(si);
+  }
+  const moved = new Map<string, Pt | null>(
+    lights.map((f, li) => {
+      const si = spotOf.get(li);
+      return [f.id, si === undefined ? null : spots[si]!];
+    }),
+  );
+  const copies: FurnitureItem[] = spots
+    .filter((_, si) => !taken.has(si))
+    .map(([x, y]) => ({ ...item, id: newId("furniture"), x, y }));
+  return {
+    furniture: [
+      ...layout.furniture.flatMap((f) => {
+        if (!moved.has(f.id)) return [f];
+        const to = moved.get(f.id);
+        return to ? [{ ...f, x: to[0], y: to[1] }] : [];
+      }),
+      ...copies,
+    ],
+  };
 }
 
 export function patchRoom(
@@ -836,4 +923,86 @@ export function addOutlineItem(
   };
   const item = { ...base, ...fitOutline(base, pts, perCm) };
   return { patch: { furniture: [...layout.furniture, item] }, id };
+}
+
+/** Lights hung from or set in a ceiling: lined up with each other as
+ * they're dragged (see alignLight). */
+export const CEILING_LIGHT =
+  /recessed|wafer|pendant|globe_cluster|chandelier|flush_mount|ceiling_light|spot_bar|led_panel|troffer|hex_light|triangle_light|ceiling_fan/;
+
+/** A ceiling light being dragged to `raw` (plan units; `fallback` is it
+ * on the grid): each way, lined up with another ceiling light, keeping a
+ * row's even spacing (one more past its end, or halfway between two), or
+ * on its room's centre line — whichever is nearest within `reach` — with
+ * the guides that show it. */
+export function alignLight(
+  layout: FloorLayout,
+  id: string,
+  raw: Pt,
+  fallback: Pt,
+  reach: number,
+): { p: Pt; guides: SnapGuide[] } {
+  const others = layout.furniture.filter(
+    (f) => f.id !== id && CEILING_LIGHT.test(f.kind),
+  );
+  const room = layout.rooms.find(
+    (r) => r.points.length >= 3 && pointInPolygon(raw[0], raw[1], r.points),
+  );
+  type Hit = { v: number; d: number; guide: (p: Pt) => SnapGuide[] };
+  const line = (a: Pt, b: Pt): SnapGuide => ({
+    kind: "align",
+    own: true,
+    a,
+    b,
+    level: 0,
+  });
+  /** Along axis k (0: x, 1: y), the nearest place to line up. */
+  const along = (k: 0 | 1): Hit | null => {
+    const j = (1 - k) as 0 | 1;
+    const at = (v: number, w: number): Pt => (k === 0 ? [v, w] : [w, v]);
+    let best: Hit | null = null;
+    const offer = (v: number, guide: Hit["guide"]) => {
+      const d = Math.abs(v - raw[k]);
+      if (d <= reach && (!best || d < best.d)) best = { v, d, guide };
+    };
+    // In line with another light.
+    for (const f of others) {
+      const fp: Pt = [f.x, f.y];
+      offer(fp[k], (p) => [line(at(fp[k], fp[j]), at(fp[k], p[j]))]);
+    }
+    // A row's spacing: the lights level with it the other way.
+    const row = others
+      .filter((f) => Math.abs((k === 0 ? f.y : f.x) - raw[j]) <= reach)
+      .map((f) => (k === 0 ? f.x : f.y))
+      .sort((a, b) => a - b);
+    const rowGuide = (p: Pt) => [
+      line(at(Math.min(p[k], ...row), p[j]), at(Math.max(p[k], ...row), p[j])),
+    ];
+    const below = row.filter((v) => v < raw[k]);
+    const above = row.filter((v) => v > raw[k]);
+    const b1 = below[below.length - 1];
+    const b2 = below[below.length - 2];
+    const a1 = above[0];
+    const a2 = above[1];
+    if (b1 !== undefined && b2 !== undefined) offer(b1 + (b1 - b2), rowGuide);
+    if (a1 !== undefined && a2 !== undefined) offer(a1 - (a2 - a1), rowGuide);
+    if (b1 !== undefined && a1 !== undefined) offer((b1 + a1) / 2, rowGuide);
+    // The room's centre line.
+    if (room) {
+      const vs = room.points.map((p) => p[k]);
+      const ws = room.points.map((p) => p[j]);
+      const mid = (Math.min(...vs) + Math.max(...vs)) / 2;
+      offer(mid, () => [
+        line(at(mid, Math.min(...ws)), at(mid, Math.max(...ws))),
+      ]);
+    }
+    return best;
+  };
+  const hx = along(0);
+  const hy = along(1);
+  const p: Pt = [hx ? hx.v : fallback[0], hy ? hy.v : fallback[1]];
+  return {
+    p,
+    guides: [...(hx ? hx.guide(p) : []), ...(hy ? hy.guide(p) : [])],
+  };
 }

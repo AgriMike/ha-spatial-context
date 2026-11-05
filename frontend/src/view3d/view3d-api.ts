@@ -143,7 +143,9 @@ export interface Item3d {
     tilt?: number;
     spread?: number;
     /** How far in front of the fixture (toward its front) its light
-     * comes from: a ground spot near a wall washes it from close by. */
+     * comes from: a ground spot near a wall washes it from close by; a
+     * vanity light's from in front of its shades; a strip shining out
+     * to one side, from that side (back if negative). */
     forward?: number;
   } | null;
   /** Stands on the ground (out in the yard, in none of the floor's rooms):
@@ -156,6 +158,9 @@ export interface Item3d {
   /** A ground spotlight's tilt (degrees from straight up), aimed at the
    * wall it faces (its model's head and its beam both). */
   tilt?: number;
+  /** A fixture flat against a vaulted ceiling: the ceiling's rise per
+   * metre along x and z there, the fixture tilted to lie on it. */
+  ceilingSlope?: [number, number];
   /** Drawn as an extruded block with its 2D drawing on top ("block"), or
    * modelled: a potted plant, a tree, a lamp. */
   shape: "block" | "plant" | "tree" | "lamp" | "shower" | "stairs";
@@ -178,6 +183,14 @@ export interface Item3d {
     opts: Record<string, string | number | boolean | undefined>;
     flip: boolean;
     tint: string | null;
+    /** A globe pendant's globes, in its own frame (metres): each one's
+     * centre across and front to back, how big across, and how far it
+     * hangs below the ceiling to the top of its cap. */
+    globes?: { x: number; z: number; size: number; drop: number }[];
+    /** Under a sloping ceiling, its rise per metre across the fixture and
+     * front to back (its own frame, before any flip): a pendant's canopy
+     * lies flat against it. */
+    canopySlope?: [number, number];
     /** A cabinet's face set by hand: its drawers' heights from the top
      * (metres) and the doors below them (null: the catalog's). */
     fronts?: { drawers: number[] | null; doors: number | null };
@@ -388,6 +401,9 @@ export interface RoofEdge3d {
 export interface RoofLights3d {
   name: string;
   points: number[];
+  /** Puck lights on the shingles (else LEDs along the fascia): each one's
+   * roof normal there (x y z in turn, with `points`), aimed up. */
+  pucks?: number[];
   color: string | null;
   level: number;
   /** While on: each LED's colour in turn, repeating (else all `color`). */

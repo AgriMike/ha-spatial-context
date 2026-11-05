@@ -68,6 +68,7 @@ import {
   drawItem,
   freeformPrims,
   FURNITURE_STYLES,
+  itemDrawOpts,
   renderPrims,
   shapeCornerFractions,
 } from "./furniture-draw";
@@ -3573,9 +3574,7 @@ export class FloorplanCanvas extends LitElement {
             entry?.draw ?? "box",
             item.width_cm,
             item.depth_cm,
-            item.corners?.length
-              ? { ...entry?.opts, corners: item.corners.join(",") }
-              : (entry?.opts ?? {}),
+            itemDrawOpts(entry?.opts ?? {}, item),
           );
     const selected = !ghost && item.id === this.selectedFurnitureId;
     const transform = `translate(${item.x} ${item.y}) rotate(${item.rotation_deg}) scale(${k} ${k})`;

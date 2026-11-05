@@ -441,6 +441,40 @@ _FURNITURE_SCHEMA = {
     vol.Optional("tire_cm"): vol.Any(
         None, vol.All(vol.Coerce(float), vol.Range(min=-20, max=40))
     ),
+    # Which way an LED strip throws its light: up, down, or out to its
+    # front or back side.
+    vol.Optional("shine"): vol.Any(None, vol.In(["up", "down", "front", "back"])),
+    # A globe pendant's globes: how many, and per globe how far it hangs
+    # below the ceiling and how big across it is (cm).
+    vol.Optional("globes"): vol.Any(
+        None, vol.All(vol.Coerce(int), vol.Range(min=1, max=12))
+    ),
+    vol.Optional("globe_drops_cm"): vol.Any(
+        None,
+        vol.All(
+            [vol.All(vol.Coerce(float), vol.Range(min=2, max=600))],
+            vol.Length(max=12),
+        ),
+    ),
+    vol.Optional("globe_sizes_cm"): vol.Any(
+        None,
+        vol.All(
+            [vol.All(vol.Coerce(float), vol.Range(min=5, max=100))],
+            vol.Length(max=12),
+        ),
+    ),
+    # A vanity light's bulbs, their shades (shape, opening up or down) and
+    # the fixture's metal.
+    vol.Optional("bulbs"): vol.Any(
+        None, vol.All(vol.Coerce(int), vol.Range(min=1, max=8))
+    ),
+    vol.Optional("shade_style"): vol.Any(
+        None, vol.In(["globe", "cylinder", "bell", "cone"])
+    ),
+    vol.Optional("shade_up"): vol.Any(None, bool),
+    vol.Optional("metal_finish"): vol.Any(
+        None, vol.In(["black", "brass", "nickel", "chrome"])
+    ),
 }
 
 _SCALE_SCHEMA = vol.Any(
@@ -922,6 +956,13 @@ _ROOF_PART_SCHEMA = vol.Schema(
                                 ),
                                 vol.Optional("spacing_in"): vol.All(
                                     vol.Coerce(float), vol.Range(min=0.5, max=48)
+                                ),
+                                # LEDs along the fascia, or puck lights on
+                                # the shingles (inset inches up the roof
+                                # from its edge), aimed up.
+                                vol.Optional("kind"): vol.In(["strip", "puck"]),
+                                vol.Optional("inset_in"): vol.All(
+                                    vol.Coerce(float), vol.Range(min=0, max=60)
                                 ),
                                 # Edges lit besides the sides' and ones
                                 # left dark (keys from the frontend).
