@@ -6287,9 +6287,164 @@ const thermostat: Builder = (m, _o, tint, item) => {
   m.add(g, thermostatScreen(item.model?.reading ?? "72"));
 };
 
+let calendarFaceMat: THREE.MeshStandardMaterial | null = null;
+/** A month planner printed on white glass: MONTH over seven day columns
+ * of five weeks (a box in each day's corner), a ruled NOTE column down the
+ * right, the maker's name top right. Drawn once, shared. */
+function calendarFace(): THREE.MeshStandardMaterial {
+  if (calendarFaceMat) return calendarFaceMat;
+  const c = document.createElement("canvas");
+  c.width = 1536;
+  c.height = 1024;
+  const g = c.getContext("2d")!;
+  g.fillStyle = "#f5f6f4";
+  g.fillRect(0, 0, c.width, c.height);
+  const ink = "#8c9093";
+  g.strokeStyle = ink;
+  g.fillStyle = "#3a3c3e";
+  g.lineWidth = 2;
+  g.textBaseline = "middle";
+  g.font = "400 34px Helvetica, Arial, sans-serif";
+  g.fillText("MONTH", 112, 112);
+  g.beginPath();
+  g.moveTo(240, 126);
+  g.lineTo(720, 126);
+  g.stroke();
+  g.fillStyle = "#a3a6a8";
+  g.font = "300 38px Helvetica, Arial, sans-serif";
+  g.textAlign = "right";
+  g.fillText("Quartet", 1390, 70);
+  // The days: a heading box over each column, then five weeks.
+  const x0 = 96;
+  const x1 = 1128;
+  const top = 148;
+  const head = 36;
+  const y0 = top + head + 10;
+  const y1 = 940;
+  const colW = (x1 - x0) / 7;
+  const rowH = (y1 - y0) / 5;
+  const days = [
+    "SUNDAY",
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+    "SATURDAY",
+  ];
+  g.textAlign = "center";
+  g.font = "400 15px Helvetica, Arial, sans-serif";
+  g.fillStyle = "#5c5f62";
+  days.forEach((day, i) => {
+    const x = x0 + i * colW;
+    g.strokeRect(x + 4, top, colW - 8, head);
+    g.fillText(day, x + colW / 2, top + head / 2);
+    g.beginPath();
+    g.moveTo(x + 4, y0);
+    g.lineTo(x + 4, y1);
+    g.moveTo(x + colW - 4, y0);
+    g.lineTo(x + colW - 4, y1);
+    g.stroke();
+    for (let r = 0; r < 5; r++) {
+      const y = y0 + r * rowH;
+      g.beginPath();
+      g.moveTo(x + 4, y);
+      g.lineTo(x + colW - 4, y);
+      g.stroke();
+      g.strokeRect(x + 12, y + 10, 24, 24);
+    }
+  });
+  // The notes column: a heading box, ruled with dotted lines.
+  const n0 = x1 + 18;
+  const n1 = 1440;
+  g.strokeRect(n0, top, n1 - n0, head);
+  g.font = "500 18px Helvetica, Arial, sans-serif";
+  g.fillText("NOTE", (n0 + n1) / 2, top + head / 2);
+  g.strokeRect(n0, y0, n1 - n0, y1 - y0);
+  g.setLineDash([3, 5]);
+  for (let y = y0 + 34; y < y1 - 10; y += 34) {
+    g.beginPath();
+    g.moveTo(n0 + 10, y);
+    g.lineTo(n1 - 10, y);
+    g.stroke();
+  }
+  g.setLineDash([]);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  calendarFaceMat = new THREE.MeshStandardMaterial({
+    map: tex,
+    roughness: 0.35,
+    metalness: 0,
+  });
+  return calendarFaceMat;
+}
+
+/** A frameless glass calendar on the wall (Quartet), its back at -z:
+ * white glass held 2 cm off the wall by a matte black standoff in each
+ * corner, the planner printed on its face (see calendarFace), its edges
+ * green as glass is, and under it an aluminium marker tray with a marker
+ * lying in it. */
+const glassCalendar: Builder = (m) => {
+  const { W, D, H } = m;
+  const back = -D / 2;
+  const gh = Math.min(0.61, H * 0.92);
+  const gy = H - gh;
+  const gt = 0.005;
+  const off = Math.min(0.02, D * 0.4);
+  const gz = back + off + gt / 2;
+  const e = 0.003;
+  m.box(W - 2 * e, gh - 2 * e, gt, 0, gy + e, gz, mat("#f3f5f2", 0.35));
+  const edge = mat("#b9d3c4", 0.1);
+  for (const s of [-1, 1]) {
+    m.box(W, e, gt, 0, s < 0 ? gy : gy + gh - e, gz, edge);
+    m.box(e, gh - 2 * e, gt, s * (W / 2 - e / 2), gy + e, gz, edge);
+  }
+  const face = new THREE.PlaneGeometry(W - 2 * e, gh - 2 * e);
+  if (m.flip) {
+    const uv = face.getAttribute("uv") as THREE.BufferAttribute;
+    for (let i = 0; i < uv.count; i++) uv.setX(i, 1 - uv.getX(i));
+  }
+  face.translate(0, gy + gh / 2, gz + gt / 2 + 0.0004);
+  m.add(face, calendarFace());
+  // The standoffs: a post from the wall through the glass, a cap on it.
+  const black = mat("#1a1a1b", 0.9);
+  const inset = Math.min(0.035, W * 0.05);
+  for (const sx of [-1, 1])
+    for (const y of [gy + inset, gy + gh - inset]) {
+      const x = sx * (W / 2 - inset);
+      m.cyl(0.009, 0.009, off, x, y, back + off / 2, black, 16, "z");
+      m.cyl(0.013, 0.013, 0.008, x, y, gz + gt / 2 + 0.004, black, 20, "z");
+    }
+  // The tray under it: an aluminium shelf with a lip, a marker in it.
+  const alu = mat("#c4c7ca", 0.4, 0.6);
+  const tw = W * 0.72;
+  const td = Math.min(D, 0.05);
+  const ty = Math.max(0.005, gy - 0.035);
+  m.box(tw, 0.004, td, 0, ty, back + td / 2, alu);
+  m.box(tw, 0.018, 0.003, 0, ty, back + td - 0.0015, alu);
+  m.box(tw, 0.03, 0.003, 0, ty, back + 0.0015, alu);
+  const my = ty + 0.004 + 0.008;
+  const mx = -W * 0.08;
+  const mz = back + td * 0.5;
+  m.cyl(0.008, 0.008, 0.11, mx, my, mz, mat("#151515", 0.5), 14, "x");
+  m.cyl(
+    0.0082,
+    0.0082,
+    0.045,
+    mx + 0.012,
+    my,
+    mz,
+    mat("#eeeeea", 0.6),
+    14,
+    "x",
+  );
+};
+
 /** By drawing kind; some by catalog id where the drawing is generic. */
 const BY_DRAW: Record<string, Builder> = {
   glassBoard,
+  glassCalendar,
   thermostat,
   wallDevice,
   sofa,

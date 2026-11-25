@@ -1574,6 +1574,19 @@ const T: Record<string, Template> = {
       rect(post, board, w - 2 * post, d - board, 0.3, true),
     ];
   },
+  /** A frameless glass calendar on the wall: the glass along it, a
+   * standoff at each end, the marker tray out in front of it (dashed:
+   * it's under the glass, not on the floor). */
+  glassCalendar: (w, d) => {
+    const glass = min(2.5, d * 0.45);
+    const r = min(1.5, d * 0.25);
+    return [
+      rect(0, 0, w, glass, 0.2),
+      circ(min(3.5, w * 0.04), glass / 2, r),
+      circ(w - min(3.5, w * 0.04), glass / 2, r),
+      rect(w * 0.14, glass, w * 0.72, d - glass, 0.3, true),
+    ];
+  },
   /** A thermostat on the wall: its rounded square body and its round
    * face. */
   thermostat: (w, d) => [
@@ -1903,6 +1916,15 @@ const T: Record<string, Template> = {
     line(w * 0.15, d / 2, w * 0.85, d / 2),
     line(w / 2, d * 0.15, w / 2, d * 0.85),
   ],
+  // A C9 lawn bulb from above: the bulb, its socket, the socket's handle.
+  c9Bulb: (w, d) => {
+    const r = min(w, d) / 2;
+    return [
+      circ(w / 2, d / 2, r),
+      circ(w / 2, d / 2, r * 0.6),
+      rect(w / 2 + r * 0.6, d / 2 - r * 0.07, r * 0.32, r * 0.14, r * 0.05),
+    ];
+  },
   stepLight: (w, d) => {
     const out = [rect(0, 0, w, d, 1)];
     for (const x of dividers(0, w, 3)) out.push(line(x, d * 0.2, x, d * 0.8));

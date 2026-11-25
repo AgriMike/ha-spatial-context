@@ -4293,8 +4293,16 @@ function buildFloor(
         }
       }
     }
-    const live = states.get(item.id);
     const own = item.color ?? null;
+    // With no entity linked, a fixture that glows in its own colour (a
+    // holiday lawn bulb) is lit in the colour picked for it.
+    const ownGlow =
+      entry?.opts["ownGlow"] === true && !item.entity_id && own !== null;
+    const live =
+      states.get(item.id) ??
+      (ownGlow && own
+        ? { color: own, glow: 1, active: true, unavailable: false, text: "" }
+        : undefined);
     const line = live?.color ?? own ?? (dark ? "#e0e0e0" : "#4a4a4a");
     const base = mixHex(
       dark ? "#4a4744" : "#f6f3ee",
@@ -4314,7 +4322,7 @@ function buildFloor(
       (item.entity_id?.startsWith("light.") === true ||
         (typeof beam === "string" &&
           item.entity_id?.startsWith("switch.") === true));
-    const on = !!live && live.active && isLight && showLights;
+    const on = !!live && live.active && (isLight || ownGlow) && showLights;
     const lightY = entry?.opts["lightY"];
     const sourceY =
       typeof lightY === "number"

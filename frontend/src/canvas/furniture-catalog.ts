@@ -1434,6 +1434,18 @@ const OFFICE: Row[] = [
     "glassBoard",
     { h3d: 0.89, y3d: 0.84 },
   ],
+  // Quartet's 36" by 24" frameless glass calendar: white glass held 2 cm
+  // off the wall on a matte black standoff at each corner, a month's grid
+  // with a notes column down its right side printed on it, an aluminium
+  // marker tray under it; its glass's centre about 57" up.
+  [
+    "glass_calendar_quartet_36",
+    'Glass calendar, 36" x 24" (Quartet, notes column, black standoffs)',
+    91,
+    6,
+    "glassCalendar",
+    { h3d: 0.66, y3d: 1.1 },
+  ],
   ["corkboard", "Corkboard (wall)", 90, 4, "box", { r: 1 }],
   ["drafting_table", "Drafting table", 120, 80, "desk"],
   ["monitor_stand", "Monitor arm/stand", 70, 25, "monitor"],
@@ -2703,6 +2715,17 @@ const OUTDOOR_LIGHTING: Row[] = [
     30,
     "cafeLights",
     { h3d: 0.1, y3d: 2.3, beam: "glow" },
+  ],
+  // A giant C9 holiday bulb for the lawn, 3 ft, on a green socket with a
+  // curled handle: lit in its linked light's colour, or with none linked,
+  // in the colour picked for it (`ownGlow`).
+  [
+    "c9_bulb_3ft",
+    "C9 Christmas bulb (3 ft)",
+    36,
+    36,
+    "c9Bulb",
+    { h3d: 0.91, beam: "omni", lightY: 0.6, ownGlow: true },
   ],
 ];
 
