@@ -499,6 +499,24 @@ function indoorLightAt(
   return { y: y0 > H * 0.5 ? y0 - 0.05 : y0 + height + 0.05 };
 }
 
+/** What a thermostat's screen shows: the room temperature its linked
+ * climate entity (or temperature sensor) reads, else a plausible one. */
+function thermostatReading(
+  hass: HomeAssistant | undefined,
+  entityId: string | null | undefined,
+): string {
+  const st = entityId ? hass?.states[entityId] : undefined;
+  const raw = st
+    ? entityId!.startsWith("climate.")
+      ? st.attributes["current_temperature"]
+      : Number(st.state)
+    : undefined;
+  const v = typeof raw === "string" ? Number(raw) : raw;
+  return typeof v === "number" && Number.isFinite(v)
+    ? String(Math.round(v))
+    : "72";
+}
+
 // --- furniture heights --------------------------------------------------------
 
 type Mount = "floor" | "ceiling" | { y0: number };
@@ -1890,6 +1908,20 @@ function buildFloor(
         i < pts.length - 2 || closed
           ? t / 2 + JOINT_PROUD_M
           : freeEndExt(wall.id, [bx * m, by * m], [dx, dz]);
+      // Its ends: out of doors where the spot just past one is (an
+      // outside corner's face, which the segment runs on to), else in a
+      // room or the wall it meets.
+      const outdoorsAt = ([x, z]: Vec2) =>
+        !layout.rooms.some(
+          (r) =>
+            !r.outdoor &&
+            r.points.length >= 3 &&
+            pointInPolygon(x / m, z / m, r.points),
+        ) && !housed(x, z);
+      const endsOut: [boolean, boolean] = [
+        outdoorsAt(at(-ext0 - 0.05)),
+        outdoorsAt(at(L + ext1 + 0.05)),
+      ];
       const box = (
         s0: number,
         s1: number,
@@ -1899,6 +1931,10 @@ function buildFloor(
         side: 1 | -1 | undefined = outside,
       ): Box3d => {
         const [x, z] = at((s0 + s1) / 2);
+        const ends: [boolean, boolean] = [
+          endsOut[0] && s0 <= -ext0 + 1e-4,
+          endsOut[1] && s1 >= L + ext1 - 1e-4,
+        ];
         return {
           x,
           z,
@@ -1911,6 +1947,9 @@ function buildFloor(
           depth: depth === t && !side ? t - 2 * JOINT_INSET_M : depth,
           angle,
           ...(side && depth === t ? { outside: side } : {}),
+          ...(side && depth === t && (ends[0] || ends[1])
+            ? { endsOut: ends }
+            : {}),
           ref: wallRef,
           ...(covered && depth === t ? { cover: sideCovers } : {}),
         };
@@ -4457,6 +4496,9 @@ function buildFloor(
                 : {}),
               ...(item.device_style === "standard"
                 ? { standardDevice: true }
+                : {}),
+              ...(entry?.draw === "thermostat"
+                ? { reading: thermostatReading(hass, item.entity_id) }
                 : {}),
               ...(item.finish ? { finish: item.finish } : {}),
               ...(item.slat_cm != null || item.slat_gap_cm != null

@@ -380,7 +380,8 @@ function strip(m: Model, item: Item3d, o: Opts) {
     m.box(W - 0.004, H * 0.8, t, 0, H * 0.1, z, glow);
   }
   if (!item.light) return;
-  // A soft glow every foot or so along it, just off the diffuser.
+  // A soft glow all along it, just off the diffuser: one line of light,
+  // not a bead every foot (many faint glows close together, merging).
   const off = 0.02;
   const [gy, gz] =
     shine === "up"
@@ -388,9 +389,18 @@ function strip(m: Model, item: Item3d, o: Opts) {
       : shine === "down"
         ? [-off, 0]
         : [H / 2, shine === "front" ? D / 2 + off : -D / 2 - off];
-  const n = Math.max(1, Math.round(W / 0.3));
+  const n = Math.max(1, Math.round(W / 0.04));
   for (let k = 0; k < n; k++)
-    halo(m, item, -W / 2 + (W / n) * (k + 0.5), gy, gz, 0.06);
+    halo(
+      m,
+      item,
+      -W / 2 + (W / n) * (k + 0.5),
+      gy,
+      gz,
+      0.045,
+      item.light,
+      Math.min(1, 0.2 + 0.04 / W),
+    );
 }
 
 /** The item as one of these fixtures, or null where it's none. */

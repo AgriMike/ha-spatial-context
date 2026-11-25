@@ -1423,6 +1423,17 @@ const OFFICE: Row[] = [
   ["shredder", "Paper shredder", 35, 25, "trash"],
   ["safe", "Safe", 50, 50, "device", { button: true }],
   ["whiteboard", "Whiteboard (wall)", 180, 6, "box", { r: 1 }],
+  // Quartet Evoque G5028BA: a 50" by 28" white glass board between two
+  // black aluminium posts, a clear glass marker tray on the posts below
+  // it; its glass's centre about 54" up.
+  [
+    "glass_whiteboard_quartet_50",
+    'Glass whiteboard, 50" x 28" (Quartet Evoque, black posts, glass tray)',
+    134,
+    8,
+    "glassBoard",
+    { h3d: 0.89, y3d: 0.84 },
+  ],
   ["corkboard", "Corkboard (wall)", 90, 4, "box", { r: 1 }],
   ["drafting_table", "Drafting table", 120, 80, "desk"],
   ["monitor_stand", "Monitor arm/stand", 70, 25, "monitor"],
@@ -2023,6 +2034,17 @@ const ELECTRICAL: Row[] = [
     4,
     "wallDevice",
     { gangs: 2, outlet: true, h3d: 0.13, y3d: 0.341 },
+  ],
+  // ecobee Smart Thermostat Premium: 4.33" square, 0.94" deep, a black
+  // glass face; its middle 58" up. Linked to a climate entity (or a
+  // temperature sensor) its screen shows the room's temperature.
+  [
+    "thermostat_ecobee",
+    "Thermostat (ecobee Smart Thermostat Premium)",
+    11,
+    2.4,
+    "thermostat",
+    { h3d: 0.11, y3d: 1.418 },
   ],
 ];
 

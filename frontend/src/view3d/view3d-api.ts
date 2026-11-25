@@ -37,6 +37,9 @@ export interface Box3d {
   /** The covering of its painted long faces facing into a room: local +Z
    * then -Z (null: plain paint in the floor's wall colour). */
   cover?: [WallCover | null, WallCover | null];
+  /** Its ends (local -X, +X) out of doors, sided like its outdoor face:
+   * an outside wall run on past a corner, its end in the corner's face. */
+  endsOut?: [boolean, boolean];
 }
 
 /** A wall's covering on one face: its kind and colour. */
@@ -218,6 +221,9 @@ export interface Item3d {
     /** A light switch or outlet in a plain white decorator style (absent:
      * Legrand Adorne). */
     standardDevice?: boolean;
+    /** A thermostat's screen: the temperature its linked climate entity
+     * (or temperature sensor) reads, rounded. */
+    reading?: string;
     /** A wood finish worn instead of a plain colour. */
     finish?: "white_oak" | "maple" | "walnut" | "stained" | "black" | "white";
     /** A drawn item's outline (a custom countertop), corners rounded, in

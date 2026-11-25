@@ -1561,6 +1561,25 @@ const T: Record<string, Template> = {
    * plate along the wall, and in front of it the plan's symbol for each
    * gang, an S for a switch, a circle crossed by two lines for an
    * outlet. */
+  /** A glass whiteboard on the wall: the board along it between a post
+   * at each end, the marker tray out in front of it (dashed: it's under
+   * the board, not on the floor). */
+  glassBoard: (w, d) => {
+    const post = min(3.5, w * 0.05);
+    const board = min(2, d * 0.3);
+    return [
+      rect(post, 0, w - 2 * post, board, 0.2),
+      rect(0, 0, post, min(d, 4), 0.3),
+      rect(w - post, 0, post, min(d, 4), 0.3),
+      rect(post, board, w - 2 * post, d - board, 0.3, true),
+    ];
+  },
+  /** A thermostat on the wall: its rounded square body and its round
+   * face. */
+  thermostat: (w, d) => [
+    rect(0, 0, w, d, min(w, d) * 0.3),
+    line(w * 0.2, d * 0.75, w * 0.8, d * 0.75),
+  ],
   wallDevice: (w, d, o) => {
     const plate = min(1.2, d * 0.3);
     const out: Prim[] = [rect(0, 0, w, plate, 0.3)];

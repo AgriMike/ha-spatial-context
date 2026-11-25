@@ -85,7 +85,7 @@ export function lens(
 /** Glows waiting to be added to a model as it's grouped (see halo). */
 const GLOWS = new WeakMap<
   Model,
-  { x: number; y: number; z: number; r: number; lit: Light }[]
+  { x: number; y: number; z: number; r: number; lit: Light; gain: number }[]
 >();
 type Light = NonNullable<Item3d["light"]>;
 
@@ -113,7 +113,8 @@ function glowMap(): THREE.Texture {
 }
 
 /** A soft glow round a lit lens, `r` across from its middle: a sprite
- * facing the camera, added to the model when it's grouped. */
+ * facing the camera, added to the model when it's grouped. `gain` scales
+ * how strong it is (many close together, a strip's, make one line). */
 export function halo(
   m: Model,
   item: Item3d,
@@ -122,10 +123,11 @@ export function halo(
   z: number,
   r: number,
   lit = item.light,
+  gain = 1,
 ): void {
   if (!lit) return;
   const list = GLOWS.get(m) ?? [];
-  list.push({ x, y, z, r, lit });
+  list.push({ x, y, z, r, lit, gain });
   GLOWS.set(m, list);
 }
 
@@ -138,14 +140,14 @@ export function finish(m: Model): THREE.Group {
     // Shared by colour and brightness (sprites' materials outlive their
     // models: the scene's clean-up only frees meshes').
     const lit = h.lit;
-    const key = `${lit.color}|${lit.level.toFixed(2)}`;
+    const key = `${lit.color}|${lit.level.toFixed(2)}|${h.gain.toFixed(2)}`;
     let material = SPRITES.get(key);
     if (!material) {
       material = new THREE.SpriteMaterial({
         map: glowMap(),
         color: lit.color,
         transparent: true,
-        opacity: 0.35 + 0.5 * lit.level,
+        opacity: (0.35 + 0.5 * lit.level) * h.gain,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         toneMapped: false,

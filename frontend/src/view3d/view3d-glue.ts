@@ -240,19 +240,118 @@ const MAX_BANDED_LIGHTS = 32;
  * shadow stops it (a basement's ceiling lights would light the walls of
  * the living room over them). Shared by every lit material. */
 const SC_POINT_BANDS = new Float32Array(MAX_BANDED_LIGHTS * 2);
+/** Up to this many drawn floors' sight maps (see sightMaps). */
+const MAX_SIGHT_MAPS = 4;
+/** A sight map's cells a side (its cell size set by the floor's size). */
+const SIGHT_MAP_CELLS = 512;
+/** How many of a floor's room lights get a sight map (one bit a cell). */
+const MAX_SIGHTED_LIGHTS = 8;
+/** How far (metres) a room light's sight is traced across its floor. */
+const SIGHT_REACH_M = 14;
+/** Per point light, in three's order (see bandPointLights): the sight map
+ * it's on and its bit there, plus one (0: none, it lights anywhere). A
+ * room's light lights only what it can see across its floor's plan, past
+ * no wall: no shadow stops it at one, and it would light the next room
+ * through it. */
+const SC_POINT_SIGHT = new Float32Array(MAX_BANDED_LIGHTS * 2);
+/** Per point light, in three's order: a strip's half length along it
+ * (x, y, z, metres, world), w 1; else all 0 (a point). */
+const SC_POINT_LINES = new Float32Array(MAX_BANDED_LIGHTS * 4);
+/** Per sight map: the plan corner it starts at (x, z, metres) and one over
+ * its size (metres); zero size for none. */
+const SC_SIGHT_RECTS = new Float32Array(MAX_SIGHT_MAPS * 4);
+/** The sight maps, one over the other: each cell a bit for each of its
+ * floor's lights that sees it. */
+const SIGHT_DATA = new Uint8Array(
+  SIGHT_MAP_CELLS * SIGHT_MAP_CELLS * MAX_SIGHT_MAPS,
+);
+const SIGHT_TEX = new THREE.DataTexture(
+  SIGHT_DATA,
+  SIGHT_MAP_CELLS,
+  SIGHT_MAP_CELLS * MAX_SIGHT_MAPS,
+  THREE.RedFormat,
+  THREE.UnsignedByteType,
+);
+SIGHT_TEX.magFilter = THREE.NearestFilter;
+SIGHT_TEX.minFilter = THREE.NearestFilter;
+SIGHT_TEX.generateMipmaps = false;
+SIGHT_TEX.unpackAlignment = 1;
+SIGHT_TEX.needsUpdate = true;
+// Every material's copy of the uniforms keeps this one texture (three
+// clones a texture uniform per material), so filling it reaches them all.
+(SIGHT_TEX as unknown as { clone: () => THREE.DataTexture }).clone = () =>
+  SIGHT_TEX;
+/** A fixture lights as a small globe, not a point: within this distance
+ * (metres) its light on a surface grows no stronger, so the wall beside a
+ * sconce or a vanity bar isn't washed out white. */
+const LIGHT_SOFT_M = 0.9;
 THREE.ShaderChunk.lights_pars_begin += `
-uniform vec2 scPointBand[ ${MAX_BANDED_LIGHTS} ];`;
+uniform vec2 scPointBand[ ${MAX_BANDED_LIGHTS} ];
+uniform vec2 scPointSight[ ${MAX_BANDED_LIGHTS} ];
+uniform vec4 scPointLine[ ${MAX_BANDED_LIGHTS} ];
+uniform vec4 scSightRect[ ${MAX_SIGHT_MAPS} ];
+uniform sampler2D scSightMap;`;
 THREE.ShaderChunk.lights_fragment_begin =
-  THREE.ShaderChunk.lights_fragment_begin.replace(
-    "getPointLightInfo( pointLight, geometryPosition, directLight );",
-    `getPointLightInfo( pointLight, geometryPosition, directLight );
+  THREE.ShaderChunk.lights_fragment_begin
+    .replace(
+      "PointLight pointLight;",
+      `PointLight pointLight;
+	// Which lights of each sight map see this spot: a little way out from
+	// its surface, so a wall's face is seen from the room it faces.
+	vec3 scWorld = cameraPosition + ( vec4( geometryPosition, 0.0 ) * viewMatrix ).xyz;
+	vec3 scWorldN = ( vec4( geometryNormal, 0.0 ) * viewMatrix ).xyz;
+	vec2 scAt = scWorld.xz + scWorldN.xz * 0.08;
+	// The four cells round it and how near it is to each, so a light's
+	// edge (its sight past a door jamb) is soft, not stepped cell by cell.
+	ivec4 scSeen[ ${MAX_SIGHT_MAPS} ];
+	vec2 scFrac[ ${MAX_SIGHT_MAPS} ];
+	for ( int k = 0; k < ${MAX_SIGHT_MAPS}; k ++ ) {
+		vec4 r = scSightRect[ k ];
+		scSeen[ k ] = ivec4( 0 );
+		scFrac[ k ] = vec2( 0.0 );
+		if ( r.z <= 0.0 ) continue;
+		vec2 at = ( scAt - r.xy ) * r.zw * ${SIGHT_MAP_CELLS}.0 - 0.5;
+		ivec2 c = ivec2( floor( at ) );
+		scFrac[ k ] = at - floor( at );
+		for ( int n = 0; n < 4; n ++ ) {
+			ivec2 q = c + ivec2( n & 1, n >> 1 );
+			int v = ( q.x >= 0 && q.y >= 0 && q.x < ${SIGHT_MAP_CELLS} && q.y < ${SIGHT_MAP_CELLS} )
+				? int( texelFetch( scSightMap, ivec2( q.x, k * ${SIGHT_MAP_CELLS} + q.y ), 0 ).r * 255.0 + 0.5 )
+				: 0;
+			scSeen[ k ][ n ] = v;
+		}
+	}`,
+    )
+    .replace(
+      "getPointLightInfo( pointLight, geometryPosition, directLight );",
+      `#if UNROLLED_LOOP_INDEX < ${MAX_BANDED_LIGHTS}
+		// A strip's light: from the point along it nearest this spot (a
+		// line of light, not one point's hot spot).
+		if ( scPointLine[ i ].w > 0.5 ) {
+			vec3 scSeg = ( viewMatrix * vec4( scPointLine[ i ].xyz, 0.0 ) ).xyz;
+			float scT = clamp( dot( geometryPosition - pointLight.position, scSeg ) / max( dot( scSeg, scSeg ), 1e-6 ), -1.0, 1.0 );
+			pointLight.position += scSeg * scT;
+		}
+		#endif
+		getPointLightInfo( pointLight, geometryPosition, directLight );
 		#if UNROLLED_LOOP_INDEX < ${MAX_BANDED_LIGHTS}
 		if ( scPointBand[ i ].x < scPointBand[ i ].y ) {
 			float scUp = dot( geometryPosition - pointLight.position, ( viewMatrix * vec4( 0.0, 1.0, 0.0, 0.0 ) ).xyz );
 			if ( scUp < scPointBand[ i ].x || scUp > scPointBand[ i ].y ) directLight.color = vec3( 0.0 );
 		}
-		#endif`,
-  );
+		if ( scPointSight[ i ].y > 0.5 ) {
+			int scBit = int( scPointSight[ i ].y + 0.5 ) - 1;
+			int scK = int( scPointSight[ i ].x + 0.5 );
+			vec4 scV = vec4( ( scSeen[ scK ] >> scBit ) & 1 );
+			vec2 scF = scFrac[ scK ];
+			directLight.color *= mix( mix( scV.x, scV.y, scF.x ), mix( scV.z, scV.w, scF.x ), scF.y );
+		}
+		#endif
+		{
+			vec3 scToLight = pointLight.position - geometryPosition;
+			directLight.color *= min( 1.0, dot( scToLight, scToLight ) / ${(LIGHT_SOFT_M * LIGHT_SOFT_M).toFixed(4)} );
+		}`,
+    );
 for (const id of [
   "standard",
   "physical",
@@ -261,10 +360,169 @@ for (const id of [
   "toon",
 ] as const) {
   const lib = (THREE.ShaderLib as Record<string, { uniforms: object }>)[id];
-  if (lib)
-    (lib.uniforms as Record<string, THREE.IUniform>)["scPointBand"] = {
-      value: SC_POINT_BANDS,
-    };
+  if (!lib) continue;
+  const u = lib.uniforms as Record<string, THREE.IUniform>;
+  u["scPointBand"] = { value: SC_POINT_BANDS };
+  u["scPointSight"] = { value: SC_POINT_SIGHT };
+  u["scPointLine"] = { value: SC_POINT_LINES };
+  u["scSightRect"] = { value: SC_SIGHT_RECTS };
+  u["scSightMap"] = { value: SIGHT_TEX };
+}
+
+/** Traces each drawn floor's room lights' sight across its plan (see
+ * SC_POINT_SIGHT) into SIGHT_DATA: past no wall, a doorway closed by its
+ * header (a half wall, a railing, a low wall under the floor doesn't stop
+ * it), through an opening with none. */
+function sightMaps(entries: { spec: Floor3d; group: THREE.Group }[]): void {
+  SC_SIGHT_RECTS.fill(0);
+  SIGHT_DATA.fill(0);
+  const N = SIGHT_MAP_CELLS;
+  entries.slice(0, MAX_SIGHT_MAPS).forEach(({ spec, group }, k) => {
+    const lights: THREE.PointLight[] = [];
+    group.traverse((o) => {
+      const light = o as THREE.PointLight;
+      if (light.isPointLight && light.userData["band"]) lights.push(light);
+    });
+    if (!lights.length) return;
+    // The walls: footprints of the boxes that stand most of a storey or
+    // reach its wall tops (a door's header).
+    const walls = spec.walls.filter(
+      (b) =>
+        b.depth >= 0.03 &&
+        (b.y1 - b.y0 >= 1.2 || b.y1 >= spec.wallHeight - 0.3),
+    );
+    if (!walls.length) return;
+    let x0 = Infinity;
+    let z0 = Infinity;
+    let x1 = -Infinity;
+    let z1 = -Infinity;
+    for (const b of walls) {
+      const r = Math.hypot(b.length, b.depth) / 2;
+      x0 = Math.min(x0, b.x - r);
+      z0 = Math.min(z0, b.z - r);
+      x1 = Math.max(x1, b.x + r);
+      z1 = Math.max(z1, b.z + r);
+    }
+    x0 -= 1;
+    z0 -= 1;
+    const cell = Math.max(0.03, (Math.max(x1 - x0, z1 - z0) + 1) / N);
+    const wall = new Uint8Array(N * N);
+    for (const b of walls) {
+      // Its footprint, half a cell wider all round so a thin wall's cells
+      // join up.
+      const ux = Math.cos(b.angle);
+      const uz = -Math.sin(b.angle);
+      const hl = b.length / 2 + cell / 2;
+      const hd = b.depth / 2 + cell / 2;
+      const r = Math.hypot(hl, hd);
+      const i0 = Math.max(0, Math.floor((b.x - r - x0) / cell));
+      const i1 = Math.min(N - 1, Math.ceil((b.x + r - x0) / cell));
+      const j0 = Math.max(0, Math.floor((b.z - r - z0) / cell));
+      const j1 = Math.min(N - 1, Math.ceil((b.z + r - z0) / cell));
+      for (let j = j0; j <= j1; j++)
+        for (let i = i0; i <= i1; i++) {
+          const dx = x0 + (i + 0.5) * cell - b.x;
+          const dz = z0 + (j + 0.5) * cell - b.z;
+          if (
+            Math.abs(dx * ux + dz * uz) <= hl &&
+            Math.abs(-dx * uz + dz * ux) <= hd
+          )
+            wall[j * N + i] = 1;
+        }
+    }
+    const seen = new Uint8Array(N * N);
+    const reach = SIGHT_REACH_M / cell;
+    const rays = Math.ceil(2 * Math.PI * reach * 1.2);
+    lights.slice(0, MAX_SIGHTED_LIGHTS).forEach((light, b) => {
+      // A strip sees from its middle and both ends.
+      const line = light.userData["line"] as
+        [number, number, number] | undefined;
+      const from = line
+        ? [-0.9, 0, 0.9].map((f): [number, number] => [
+            light.position.x + line[0] * f,
+            light.position.z + line[2] * f,
+          ])
+        : [[light.position.x, light.position.z] as [number, number]];
+      let sees = false;
+      for (const [fx, fz] of from) if (trace(fx, fz, 1 << b)) sees = true;
+      if (sees) light.userData["sight"] = [k, b + 1];
+    });
+    /** Marks with `bit` the cells seen from a spot (metres), or the
+     * nearest one clear of a wall within 30 cm (a light set into a wall's
+     * face); false where there's none. */
+    function trace(px: number, pz: number, bit: number): boolean {
+      let ox = (px - x0) / cell;
+      let oz = (pz - z0) / cell;
+      const free = (x: number, z: number) => {
+        const i = Math.floor(x);
+        const j = Math.floor(z);
+        return i >= 0 && j >= 0 && i < N && j < N && !wall[j * N + i];
+      };
+      if (!free(ox, oz)) {
+        // The nearest such spot (the room's side of a wall it's set in,
+        // not the far side).
+        let best: [number, number] | null = null;
+        let near = Infinity;
+        const r = Math.ceil(0.3 / cell);
+        for (let dj = -r; dj <= r; dj++)
+          for (let di = -r; di <= r; di++) {
+            const x = Math.floor(ox) + di + 0.5;
+            const z = Math.floor(oz) + dj + 0.5;
+            const d = Math.hypot(x - ox, z - oz);
+            if (d < near && free(x, z)) {
+              near = d;
+              best = [x, z];
+            }
+          }
+        if (!best) return false;
+        [ox, oz] = best;
+      }
+      for (let n = 0; n < rays; n++) {
+        const a = (n / rays) * 2 * Math.PI;
+        const dx = Math.cos(a) * 0.5;
+        const dz = Math.sin(a) * 0.5;
+        let x = ox;
+        let z = oz;
+        for (let t = 0; t < reach * 2; t++) {
+          const i = Math.floor(x);
+          const j = Math.floor(z);
+          if (i < 0 || j < 0 || i >= N || j >= N) break;
+          const c = j * N + i;
+          if (wall[c]) break;
+          seen[c] = seen[c]! | bit;
+          x += dx;
+          z += dz;
+        }
+      }
+      return true;
+    }
+    // A wall's cells take the sight of the spaces beside them (a spot at a
+    // wall's foot or in a room's corner is lit as its room is).
+    const out = seen.slice();
+    for (let j = 1; j < N - 1; j++)
+      for (let i = 1; i < N - 1; i++) {
+        const c = j * N + i;
+        if (!wall[c]) continue;
+        let v = 0;
+        for (const d of [-N - 1, -N, -N + 1, -1, 1, N - 1, N, N + 1])
+          if (!wall[c + d]) v |= seen[c + d]!;
+        out[c] = v;
+      }
+    SIGHT_DATA.set(out, k * N * N);
+    SC_SIGHT_RECTS.set([x0, z0, 1 / (N * cell), 1 / (N * cell)], k * 4);
+  });
+  SIGHT_TEX.needsUpdate = true;
+}
+
+/** A light strip in a room that only glows (an outdoor strip's "glow"):
+ * it lights the room as a line along it, as a room's own light does. */
+function roomStrip(item: Item3d): boolean {
+  return (
+    !!item.indoor &&
+    item.model?.draw === "linearLight" &&
+    item.light?.beam === "glow" &&
+    !item.light2
+  );
 }
 
 /** Fills SC_POINT_BANDS for a render of `scene` from `camera`: its point
@@ -282,8 +540,17 @@ function bandPointLights(scene: THREE.Scene, camera: THREE.Camera): void {
   walk(scene);
   list.sort((a, b) => (b.castShadow ? 1 : 0) - (a.castShadow ? 1 : 0));
   SC_POINT_BANDS.fill(0);
+  SC_POINT_SIGHT.fill(0);
+  SC_POINT_LINES.fill(0);
   const p = new THREE.Vector3();
   list.slice(0, MAX_BANDED_LIGHTS).forEach((light, k) => {
+    const line = light.userData["line"] as [number, number, number] | undefined;
+    if (line) SC_POINT_LINES.set([...line, 1], k * 4);
+    const sight = light.userData["sight"] as [number, number] | undefined;
+    if (sight) {
+      SC_POINT_SIGHT[k * 2] = sight[0];
+      SC_POINT_SIGHT[k * 2 + 1] = sight[1];
+    }
     const band = light.userData["band"] as [number, number] | undefined;
     const floor = light.parent?.parent;
     if (!band || !floor) return;
@@ -505,8 +772,12 @@ function wallGeometry(
     // end runs a hair past a corner into a room, as the room's wall).
     const cap = face === 2 || face === 3;
     const end = face === 0 || face === 1;
+    // (Not an end out of doors at an outside corner: sided too.)
+    const endOut =
+      (face === 0 && !!b.endsOut?.[1]) || (face === 1 && !!b.endsOut?.[0]);
     const isOutdoor =
-      !cap && !end && indoor >= 0 && !(v >= indoor && v < indoor + 4);
+      !cap &&
+      (endOut || (!end && indoor >= 0 && !(v >= indoor && v < indoor + 4)));
     const side = face === 4 ? 0 : face === 5 ? 1 : -1;
     const cov = !own && !isOutdoor && side >= 0 ? covers?.[side] : null;
     const c = own ?? (isOutdoor ? outdoor : (cov?.color ?? paint));
@@ -3238,7 +3509,7 @@ function createView3d(options: View3dOptions): View3dHandle {
     group.add(lights);
     for (const item of spec.items) {
       furniture.add(buildItem(item, spec.baseY));
-      if (item.light?.beam || item.light2) {
+      if ((item.light?.beam && !roomStrip(item)) || item.light2) {
         if (pointLights.has(item.id))
           for (const light of [
             ...fixtureLights(item, spec.baseY),
@@ -3266,6 +3537,26 @@ function createView3d(options: View3dOptions): View3dHandle {
           item.light.y,
           item.z + Math.cos(item.angle) * fwd,
         );
+        // A strip that only glows: its light out from its lit face.
+        if (roomStrip(item)) {
+          // Up or down: a little that way and out from the wall it's on
+          // (its back's to it), so the wall gets its wash.
+          const shine = item.model?.opts["shine"] ?? "down";
+          const up = shine === "up" ? 0.1 : shine === "down" ? -0.1 : 0;
+          const f = shine === "front" ? 0.25 : shine === "back" ? -0.25 : 0.2;
+          light.position.y += up;
+          light.position.x += Math.sin(item.angle) * f;
+          light.position.z += Math.cos(item.angle) * f;
+        }
+        // A strip lights as a line along it (see SC_POINT_LINES).
+        if (item.model?.draw === "linearLight" && item.width > 0.3) {
+          const half = item.width / 2 - 0.05;
+          light.userData["line"] = [
+            Math.cos(item.angle) * half,
+            0,
+            -Math.sin(item.angle) * half,
+          ];
+        }
         // A room's light keeps to its storey: from under its lowest floor
         // up to the next floor's (see SC_POINT_BANDS).
         if (!item.grounded) {
@@ -3361,7 +3652,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       .filter(
         (i) =>
           i.light &&
-          !i.light.beam &&
+          (!i.light.beam || roomStrip(i)) &&
           !i.light2 &&
           !/^bookshelf_open/.test(i.model?.kind ?? ""),
       )
@@ -3393,6 +3684,7 @@ function createView3d(options: View3dOptions): View3dHandle {
       floors.set(f.floorId, entry);
       root.add(entry.group);
     });
+    sightMaps(spec.floors.flatMap((f) => floors.get(f.floorId) ?? []));
     siteModels = siteModelsNext;
     itemModels = itemModelsNext;
     placeFloors();

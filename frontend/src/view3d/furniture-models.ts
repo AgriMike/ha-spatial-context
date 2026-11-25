@@ -6140,8 +6140,156 @@ const wallDevice: Builder = (m, o, tint, item) => {
   }
 };
 
+/** A glass whiteboard on the wall (Quartet Evoque), its back at -z: a
+ * black aluminium post up each end, the board between them at their tops
+ * (white back-painted glass, its edges green as glass is), a clear glass
+ * marker tray on tabs out from the posts below it with a marker lying on
+ * it, and the maker's small mark low on the board's right. */
+const glassBoard: Builder = (m, _o, tint) => {
+  const { W, D, H } = m;
+  const back = -D / 2;
+  const black = mat(tint ?? "#1f2123", 0.45, 0.6);
+  const pw = Math.min(0.035, W * 0.05);
+  const pd = Math.min(0.04, D * 0.6);
+  for (const s of [-1, 1])
+    m.soft(pw, H, pd, s * (W / 2 - pw / 2), 0, back + pd / 2, black, 0.003);
+  // The board: 6 mm glass, its face a hair proud of the posts'.
+  const gw = W - 2 * pw;
+  const gh = Math.min(0.711, H * 0.8);
+  const gy = H - gh;
+  const gt = 0.006;
+  const gz = back + pd - gt / 2 + 0.002;
+  // White, painted on its back, with the glass's green showing only round
+  // its edge.
+  const e = 0.003;
+  const white = mat("#f3f5f2", 0.1);
+  m.box(gw - 2 * e, gh - 2 * e, gt, 0, gy + e, gz, white);
+  const edge = mat("#b9d3c4", 0.1);
+  for (const s of [-1, 1]) {
+    m.box(gw, e, gt, 0, s < 0 ? gy : gy + gh - e, gz, edge);
+    m.box(e, gh - 2 * e, gt, s * (gw / 2 - e / 2), gy + e, gz, edge);
+  }
+  // The maker's mark, low on the right.
+  m.box(
+    0.03,
+    0.005,
+    0.0005,
+    gw / 2 - 0.05,
+    gy + 0.02,
+    gz + gt / 2 + 0.0006,
+    mat("#9a9d9f", 0.6),
+  );
+  // The tray: clear glass on a tab out from each post.
+  const ty = Math.max(0.04, gy - 0.1);
+  const td = Math.min(D, 0.075);
+  for (const s of [-1, 1])
+    m.box(
+      pw,
+      0.012,
+      td - 0.01,
+      s * (W / 2 - pw / 2),
+      ty - 0.012,
+      back + (td - 0.01) / 2,
+      black,
+    );
+  const clear = mat("#d3e6dc", 0.1, 0, { opacity: 0.4 });
+  m.box(W - 0.01, 0.006, td, 0, ty, back + td / 2, clear);
+  m.box(
+    W - 0.01,
+    0.006,
+    0.002,
+    0,
+    ty,
+    back + td - 0.001,
+    mat("#a9c9b8", 0.1, 0, { opacity: 0.8 }),
+  );
+  // A marker lying on it: black, a white label band, a grey cap.
+  const my = ty + 0.006 + 0.008;
+  const mx = W * 0.2;
+  const mz = back + td * 0.55;
+  m.cyl(0.008, 0.008, 0.1, mx, my, mz, mat("#151515", 0.5), 14, "x");
+  m.cyl(0.0082, 0.0082, 0.04, mx + 0.01, my, mz, mat("#eeeeea", 0.6), 14, "x");
+  m.cyl(
+    0.0085,
+    0.0085,
+    0.035,
+    mx - 0.065,
+    my,
+    mz,
+    mat("#3a3a3a", 0.5),
+    14,
+    "x",
+  );
+};
+
+/** A thermostat's screen, by what it reads: white digits on black, lit. */
+const THERMOSTAT_SCREENS = new Map<string, THREE.MeshStandardMaterial>();
+function thermostatScreen(reading: string): THREE.MeshStandardMaterial {
+  let m = THERMOSTAT_SCREENS.get(reading);
+  if (m) return m;
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const g = c.getContext("2d")!;
+  g.fillStyle = "#000";
+  g.fillRect(0, 0, 128, 128);
+  g.fillStyle = "#fff";
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.font = "300 64px Helvetica, Arial, sans-serif";
+  g.fillText(reading, 62, 62);
+  // A small set point under it, and the dot of its occupancy sensor.
+  g.font = "400 16px Helvetica, Arial, sans-serif";
+  g.fillStyle = "#9fb0bf";
+  g.fillText("\u25B2  \u25BC", 64, 104);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  m = new THREE.MeshStandardMaterial({
+    color: "#050505",
+    roughness: 0.2,
+    emissive: "#ffffff",
+    emissiveMap: tex,
+    emissiveIntensity: 0.9,
+  });
+  THERMOSTAT_SCREENS.set(reading, m);
+  return m;
+}
+
+/** A thermostat on the wall (ecobee Smart Thermostat Premium), its back
+ * at -z: a rounded square of dark zinc, a black glass face on it, its
+ * screen lit with the room's temperature (Item3d model.reading). */
+const thermostat: Builder = (m, _o, tint, item) => {
+  const { W, D, H } = m;
+  const back = -D / 2;
+  const s = Math.min(W, H);
+  const body = mat(tint ?? "#2c2d30", 0.4, 0.6);
+  m.soft(s, s, D * 0.85, 0, (H - s) / 2, back + (D * 0.85) / 2, body, s * 0.22);
+  const glassFace = mat("#08090a", 0.15, 0.2);
+  const f = s * 0.9;
+  m.soft(
+    f,
+    f,
+    0.004,
+    0,
+    (H - f) / 2,
+    back + D * 0.85 + 0.001,
+    glassFace,
+    f * 0.2,
+  );
+  // The screen, behind the glass: its digits read right even mirrored.
+  const sw = s * 0.62;
+  const g = new THREE.PlaneGeometry(sw, sw);
+  if (m.flip) {
+    const uv = g.getAttribute("uv") as THREE.BufferAttribute;
+    for (let i = 0; i < uv.count; i++) uv.setX(i, 1 - uv.getX(i));
+  }
+  g.translate(0, H / 2, back + D * 0.85 + 0.0035);
+  m.add(g, thermostatScreen(item.model?.reading ?? "72"));
+};
+
 /** By drawing kind; some by catalog id where the drawing is generic. */
 const BY_DRAW: Record<string, Builder> = {
+  glassBoard,
+  thermostat,
   wallDevice,
   sofa,
   sectional,
