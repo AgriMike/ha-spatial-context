@@ -1020,8 +1020,10 @@ function stairsModel(
         const mesh = add(g, paint, 0);
         const line = (wx0 + wx1) / 2;
         mesh.position.x = wx1;
-        // Its wood cap.
+        // Its wood cap, where it's the half wall's top (not along the
+        // other flight's steps).
         for (let k = 1; k < tops.length; k++) {
+          if (st.sideCaps?.[i]?.[k - 1] === false) continue;
           const [za, la] = tops[k - 1]!;
           const [zb, lb] = tops[k]!;
           const ya = la - low;

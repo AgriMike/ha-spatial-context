@@ -1369,10 +1369,19 @@ function buildFloor(
   /** A flight's side shared with a flight climbing beside it (a split
    * level's up flight beside its down one): the wall between them is a
    * half wall sloped with this flight, a rail's height over its nosings,
-   * open above (that flight keeps its own railing); as [z, level] along
-   * this side (see Item3d's stairs.sideTops). */
+   * capped, open above (that flight keeps its own railing). Where that
+   * flight's own steps stand beside it, higher than that, the half wall
+   * has met their wall: it rises with them instead, a skirt just over
+   * their treads, and its cap stops there. As [z, level] along this side
+   * (see Item3d's stairs.sideTops), with each stretch's cap. */
   const STAIR_CAP_M = 0.9;
-  const sideTop = (si: number, side: 0 | 1): [number, number][] | null => {
+  /** How far a skirt stands over a flight's nosing line: past its treads'
+   * tops by a little at the back of each step. */
+  const SKIRT_M = 0.05;
+  const sideProfile = (
+    si: number,
+    side: 0 | 1,
+  ): { tops: [number, number][]; caps: boolean[] } | null => {
     const st = stairs[si]!;
     const seg = st.sides[side]!;
     const o = stairs.find(
@@ -1384,19 +1393,82 @@ function buildFloor(
     if (!o) return null;
     // Its nosing line, back (-d/2) to front, a rail's height up; cut
     // where it runs into a wall (as a railing would: see railEnds).
-    const at = (z: number): [number, number] => [
-      z,
-      st.back + ((st.front - st.back) * (z + st.d / 2)) / st.d + STAIR_CAP_M,
-    ];
+    const cap = (z: number) =>
+      st.back + ((st.front - st.back) * (z + st.d / 2)) / st.d + STAIR_CAP_M;
     // (Along its own line: its middle 5 cm out past the flight's side.)
     const [lowCut, highCut] = railEnds(si, side, -0.05);
     const low = st.front < st.back ? st.d / 2 : -st.d / 2;
     const toward = Math.sign(-low);
-    const zs = [low + toward * lowCut, -low - toward * highCut].sort(
+    const [za, zb] = [low + toward * lowCut, -low - toward * highCut].sort(
       (p, q) => p - q,
-    );
-    return zs.map(at);
+    ) as [number, number];
+    // The other flight along this side: how far along it (its own z) a
+    // spot on this side's line is, and its skirt there.
+    const W = st.item.width_cm / 100;
+    const sx = (side === 0 ? -1 : 1) * (W / 2);
+    const oa = (-o.item.rotation_deg * Math.PI) / 180;
+    const oc = Math.cos(oa);
+    const os = Math.sin(oa);
+    const ozAt = (z: number) => {
+      const [x, wz] = st.P(sx, z);
+      return (x - o.item.x * m) * os + (wz - o.item.y * m) * oc;
+    };
+    const oRise = Math.abs(o.front - o.back);
+    const oStep = oRise / Math.max(1, Math.round(oRise / 0.18));
+    const skirt = (z: number) =>
+      o.back +
+      ((o.front - o.back) * (ozAt(z) + o.d / 2)) / o.d +
+      oStep +
+      SKIRT_M;
+    const beside = (z: number) => Math.abs(ozAt(z)) < o.d / 2;
+    // Break at the other flight's ends, then at any crossing of the two
+    // lines between.
+    const k = ozAt(1) - ozAt(0);
+    const breaks = [za, zb];
+    if (Math.abs(k) > 1e-6)
+      for (const e of [-o.d / 2, o.d / 2]) {
+        const z = (e - ozAt(0)) / k;
+        if (z > za + 0.005 && z < zb - 0.005) breaks.push(z);
+      }
+    breaks.sort((p, q) => p - q);
+    const tops: [number, number][] = [];
+    const caps: boolean[] = [];
+    const push = (z: number, level: number, capped: boolean) => {
+      const last = tops[tops.length - 1];
+      if (
+        last &&
+        Math.abs(last[0] - z) < 1e-6 &&
+        Math.abs(last[1] - level) < 1e-6
+      )
+        return;
+      if (last) caps.push(capped && Math.abs(last[0] - z) >= 1e-6);
+      tops.push([z, level]);
+    };
+    for (let i = 0; i + 1 < breaks.length; i++) {
+      const z0 = breaks[i]!;
+      const z1 = breaks[i + 1]!;
+      if (!beside((z0 + z1) / 2)) {
+        push(z0, cap(z0), true);
+        push(z1, cap(z1), true);
+        continue;
+      }
+      // Beside its steps: the higher of the two, capped only where it's
+      // this flight's half wall.
+      const d0 = cap(z0) - skirt(z0);
+      const d1 = cap(z1) - skirt(z1);
+      const pts =
+        d0 * d1 < 0 ? [z0, z0 + ((z1 - z0) * d0) / (d0 - d1), z1] : [z0, z1];
+      for (let j = 0; j < pts.length; j++) {
+        const z = pts[j]!;
+        const mid = j > 0 ? (pts[j - 1]! + z) / 2 : z;
+        const over = cap(mid) >= skirt(mid);
+        push(z, Math.max(cap(z), skirt(z)), over);
+      }
+    }
+    return tops.length >= 2 ? { tops, caps } : null;
   };
+  const sideTop = (si: number, side: 0 | 1): [number, number][] | null =>
+    sideProfile(si, side)?.tops ?? null;
   /** Where a flight's sideTop half wall stands (see sideTop): on the
    * footprint of the wall along that side it stands on (the floor
    * below's, else this floor's own), so their faces run flush; as its
@@ -4431,6 +4503,10 @@ function buildFloor(
                 [number, number][] | null,
                 [number, number][] | null,
               ],
+              sideCaps: [
+                sideProfile(si, 0)?.caps ?? null,
+                sideProfile(si, 1)?.caps ?? null,
+              ] as [boolean[] | null, boolean[] | null],
               sideWalls: [
                 sideTop(si, 0) ? sideWall(si, 0) : null,
                 sideTop(si, 1) ? sideWall(si, 1) : null,

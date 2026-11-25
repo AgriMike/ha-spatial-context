@@ -317,6 +317,10 @@ export interface Item3d {
      * pairs in the item's frame (z back to front, metres; level above the
      * floor's), else null (level with the floor). */
     sideTops?: [[number, number][] | null, [number, number][] | null];
+    /** Per side with a sideTops half wall, per stretch between its
+     * points: whether it's capped in wood (not where it rises with the
+     * other flight's steps as their skirt). */
+    sideCaps?: [boolean[] | null, boolean[] | null];
     /** Per side with a sideTops half wall: its across range (x0, x1, the
      * item's frame), on the footprint of the wall it stands on; null for
      * 10 cm on the side's line. */
