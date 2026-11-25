@@ -2801,6 +2801,9 @@ function createView3d(options: View3dOptions): View3dHandle {
   let dark = false;
   let editScanId: string | null = null;
   let scanMode: ScanMode = "plan";
+  /** Whether the ceiling's light fixtures are drawn (their lights shine
+   * either way: those live in each floor's Lights group). */
+  let ceilingFixtures = true;
   let editSnap = true;
   let fitted = false;
   let destroyed = false;
@@ -2944,6 +2947,10 @@ function createView3d(options: View3dOptions): View3dHandle {
   function buildItem(item: Item3d, baseY = 0): THREE.Object3D {
     const obj = buildItemObject(item, baseY);
     if (item.indoor) keepIndoors(obj);
+    if (item.ceilingFixture) {
+      obj.userData["ceilingFixture"] = true;
+      obj.visible = ceilingFixtures;
+    }
     // Out in the yard it rides the ground as it's dragged.
     if (item.grounded) {
       obj.userData["grounded"] = true;
@@ -3994,11 +4001,14 @@ function createView3d(options: View3dOptions): View3dHandle {
       // Likewise furniture: hidden where the scan has a floor of its own
       // (its objects stand in), kept elsewhere.
       const floorsCovered = scanModel ? scanFloorBoxes(shown) : [];
+      // And the ceiling's light fixtures while they're switched off.
       for (const item of f.furniture.children) {
         const [x, z] = (item.userData["xz"] as [number, number]) ?? [0, 0];
-        item.visible = !floorsCovered.some(
-          (c) => x >= c.min.x && x <= c.max.x && z >= c.min.z && z <= c.max.z,
-        );
+        item.visible =
+          (ceilingFixtures || !item.userData["ceilingFixture"]) &&
+          !floorsCovered.some(
+            (c) => x >= c.min.x && x <= c.max.x && z >= c.min.z && z <= c.max.z,
+          );
       }
       // The scan model replaces the plan's walls only where the scan has
       // walls of its own: parts it never covered (an unscanned garage)
@@ -5168,6 +5178,14 @@ function createView3d(options: View3dOptions): View3dHandle {
       if (mode === scanMode) return;
       scanMode = mode;
       applyWallHiding();
+      invalidate();
+    },
+    setCeilingFixtures(show) {
+      if (show === ceilingFixtures) return;
+      ceilingFixtures = show;
+      applyWallHiding();
+      // A hidden fixture casts no shadow.
+      renderer.shadowMap.needsUpdate = true;
       invalidate();
     },
     setEditScan(id, snap) {

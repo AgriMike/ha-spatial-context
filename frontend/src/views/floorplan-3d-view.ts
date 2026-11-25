@@ -372,9 +372,20 @@ function readScanMode(): ScanMode {
 }
 
 const ROOF_KEY = "spatial-context-3d-roof";
+const CEILING_FIXTURES_KEY = "spatial-context-3d-ceiling-fixtures";
 
 /** Whether the building view wears its roof — a per-browser choice, on
  * unless turned off. */
+/** Whether the ceiling's light fixtures show (a per-browser choice; their
+ * light shines either way). */
+function readCeilingFixtures(): boolean {
+  try {
+    return localStorage.getItem(CEILING_FIXTURES_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
 function readRoof(): boolean {
   try {
     return localStorage.getItem(ROOF_KEY) !== "off";
@@ -906,6 +917,7 @@ export class Floorplan3dView extends LitElement {
    * setScanMode) — a per-browser choice. */
   @state() private _scanMode: ScanMode = readScanMode();
   @state() private _roof = readRoof();
+  @state() private _ceilingFixtures = readCeilingFixtures();
   @state() private _uploading = false;
   @state() private _scanStatus = new Map<string, string>();
   @state() private _exporting = false;
@@ -1413,6 +1425,7 @@ export class Floorplan3dView extends LitElement {
       handle.setSpread(spread);
     }
     handle.setScanMode(this._scanMode);
+    handle.setCeilingFixtures(this._ceilingFixtures);
     handle.setEditFloor(this._editing ? this.floorId : null);
     // What was selected may be gone (undone, deleted on the plan).
     if (this._sel && this.layout && !this._refExists(this._sel))
@@ -6628,6 +6641,24 @@ export class Floorplan3dView extends LitElement {
                 </button>`
               : nothing
           }
+          <button
+            class=${this._ceilingFixtures ? "active" : ""}
+            title=${localize("view3d.ceilingFixturesHint")}
+            @click=${() => {
+              this._ceilingFixtures = !this._ceilingFixtures;
+              try {
+                localStorage.setItem(
+                  CEILING_FIXTURES_KEY,
+                  this._ceilingFixtures ? "on" : "off",
+                );
+              } catch {
+                /* private window: just this session */
+              }
+            }}
+          >
+            <ha-icon icon="mdi:ceiling-light"></ha-icon>
+            ${localize("view3d.ceilingFixtures")}
+          </button>
           ${
             this._peopleAvailable
               ? html`<button

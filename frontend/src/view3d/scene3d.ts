@@ -530,6 +530,14 @@ function ceilingMounted(kind: string): boolean {
   return HEIGHT_RULES.find(([re]) => re.test(kind))?.[2] === "ceiling";
 }
 
+/** The ceiling's light fixtures (not its fans, detectors or projector):
+ * the ones the 3D view's Ceiling lights toggle hides. */
+const CEILING_LIGHT =
+  /recessed|wafer|chandelier|pendant|globe_cluster|ceiling_light|flush_mount|led_panel|troffer|track_|spot_bar|shop_light|skylight_light|closet_puck|hex_light|triangle_light/;
+function ceilingLightFixture(kind: string): boolean {
+  return ceilingMounted(kind) && CEILING_LIGHT.test(kind);
+}
+
 /** [matches the item id, height in metres, how it's mounted] — first match
  * wins. Rough real-world sizes; a scene only needs to read right. */
 const HEIGHT_RULES: [RegExp, number, Mount?][] = [
@@ -4604,6 +4612,7 @@ function buildFloor(
       ...(grounded ? { grounded: true } : {}),
       ...(aimTilt !== null ? { tilt: aimTilt } : {}),
       ...(ceilingTilt ? { ceilingSlope: ceilingTilt } : {}),
+      ...(ceilingLightFixture(item.kind) ? { ceilingFixture: true } : {}),
       shape,
     });
   }

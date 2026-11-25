@@ -580,6 +580,8 @@
     "dollhouseHint": "Stack every floor of this building",
     "roof": "Roof",
     "roofHint": "Put a roof on the building (hidden while the floors are spread apart)",
+    "ceilingFixtures": "Ceiling lights",
+    "ceilingFixturesHint": "Show the ceiling's light fixtures (cans, flush mounts, pendants). Hidden, they still light the rooms.",
     "spread": "Spread the floors apart",
     "sunTime": "Time of day for the sun",
     "now": "Now",

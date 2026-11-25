@@ -164,6 +164,9 @@ export interface Item3d {
   /** A ground spotlight's tilt (degrees from straight up), aimed at the
    * wall it faces (its model's head and its beam both). */
   tilt?: number;
+  /** A light fixture on the ceiling (a can, a flush mount, a pendant):
+   * hidden while setCeilingFixtures(false), its light still on. */
+  ceilingFixture?: boolean;
   /** A fixture flat against a vaulted ceiling: the ceiling's rise per
    * metre along x and z there, the fixture tilted to lie on it. */
   ceilingSlope?: [number, number];
@@ -681,6 +684,9 @@ export interface View3dHandle {
   autoAlignScan(id: string): void;
   /** Spreads stacked floors apart vertically (metres added per storey). */
   setSpread(metres: number): void;
+  /** Shows or hides the ceiling's light fixtures (items with
+   * `ceilingFixture`); hidden, they still light the rooms. */
+  setCeilingFixtures(show: boolean): void;
   /** The people to show, each on their floor (others glide there, new
    * ones appear, missing ones leave). Not rebuilt with the scene, and
    * never exported. */
