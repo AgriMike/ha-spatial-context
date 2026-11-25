@@ -414,6 +414,9 @@ const WINDOW_SILL_M = 0.9;
 const WINDOW_HEAD_M = 2.1;
 /** The gap between storeys in the dollhouse (floor structure). */
 export const STOREY_GAP_M = 0.3;
+/** A dug-in floor's bare concrete under its walled-in spaces no room
+ * covers: this far under its lowest room's floor, out of their way. */
+const BARE_FLOOR_DROP_M = 0.012;
 
 /** Stored plan units per real centimetre — the same rule as
  * floorplan-canvas.ts's unitsPerCm (a stand-in until calibrated). */
@@ -920,6 +923,9 @@ function buildFloor(
     roofBelow: (x: number, z: number, y: number) => number | null;
     /** Whether the roof is drawn (else the walls needn't meet it). */
     roofShown: boolean;
+    /** Whether the floor is dug into the hillside (below its high side's
+     * grade): the ground is cut away all within its walls (see terrain). */
+    dugIn: boolean;
     /** The roof's underside a vaulted ceiling follows at a spot (metres
      * above this floor's level): the lowest roof section over it, a
      * dormer's (see dormers) only where nothing else is; else null. */
@@ -3252,6 +3258,33 @@ function buildFloor(
   const floorBase = dark ? "#3b3936" : "#ece7df";
   const deckBase = dark ? "#5d4a3a" : "#b8916b";
   const slabs: Slab3d[] = [];
+  // Dug into the hillside, the ground is cut away all within its walls
+  // (see terrain): where no room covers that (a stairwell's foot, the
+  // space under its stairs), a bare concrete floor just under the rooms'
+  // own, not open to below.
+  if (exterior.dugIn) {
+    const low = Math.min(
+      0,
+      ...layout.rooms
+        .filter((r) => !r.outdoor && r.points.length >= 3)
+        .map((r) => r.floor_offset_m ?? 0),
+    );
+    houseLoopsOf(layout).forEach((loop, k) =>
+      slabs.push({
+        id: `${input.floorId}:bare-${k}`,
+        name: `${input.name} bare floor`,
+        y: low - BARE_FLOOR_DROP_M,
+        points: loop.map(([x, y]): Vec2 => [x * m, y * m]),
+        color: dark ? "#55524e" : "#b3aea6",
+        finish: "concrete",
+        tinted: true,
+        emissive: null,
+        emissiveIntensity: 0,
+        outdoor: false,
+        bare: true,
+      }),
+    );
+  }
   // Closets topped by a ledge (see below), their outlines in plan units.
   const ledges: [number, number][][] = [];
   for (const room of layout.rooms) {
@@ -5254,6 +5287,10 @@ export function buildScene(input: SceneInput): Scene3d {
           return best;
         },
         roofShown: !!input.roof,
+        dugIn:
+          !!input.ground &&
+          f.baseY <
+            Math.max(input.ground.uphill_m, input.ground.downhill_m) - 0.01,
         dormers,
         roofLines,
         vaultAt: (x, z) => {
@@ -7040,15 +7077,24 @@ function terrain(
 ): Terrain3d {
   const [dx, dz] = planVector(ground.downhill_deg, northDeg);
   const top = Math.max(ground.uphill_m, ground.downhill_m);
-  const holes = input.floors.flatMap((f) => {
+  // (The whole building's floors, drawn or not: a basement left out of
+  // the view is still dug out, so no grass shows down its stairwell.)
+  const holes = (input.context ?? input.floors).flatMap((f) => {
     const m = metersPerUnit(f.layout.scale);
-    return f.layout.rooms
-      .filter(
-        (r) =>
-          r.points.length >= 3 &&
-          f.baseY + (r.floor_offset_m ?? 0) < top - 0.01,
-      )
-      .map((r) => r.points.map(([x, y]): Vec2 => [x * m, y * m]));
+    const toWorld = (pts: [number, number][]) =>
+      pts.map(([x, y]): Vec2 => [x * m, y * m]);
+    return [
+      ...f.layout.rooms
+        .filter(
+          (r) =>
+            r.points.length >= 3 &&
+            f.baseY + (r.floor_offset_m ?? 0) < top - 0.01,
+        )
+        .map((r) => toWorld(r.points)),
+      // A floor dug in is dug out all within its walls, the spaces no
+      // room covers (a stairwell's foot, under the stairs) as well.
+      ...(f.baseY < top - 0.01 ? houseLoopsOf(f.layout).map(toWorld) : []),
+    ];
   });
   // How far along the downhill direction the building reaches: the grade
   // falls from uphill to downhill across it.

@@ -3051,7 +3051,7 @@ function createView3d(options: View3dOptions): View3dHandle {
         slab.lid ? ceilingLit(edge.clone()) : edge,
       ]);
       mesh.name = slab.name || `Room ${slab.id}`;
-      if (!slab.lid) mesh.userData["roomId"] = slab.id;
+      if (!slab.lid && !slab.bare) mesh.userData["roomId"] = slab.id;
       mesh.receiveShadow = true;
       group.add(mesh);
       // Facing down: the shape in XY (z as y) turned so +Z looks down.

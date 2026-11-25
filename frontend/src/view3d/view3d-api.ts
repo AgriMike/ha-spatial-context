@@ -94,6 +94,9 @@ export interface Slab3d {
   /** A lid over a room (a closet's top, a ledge): painted all round, like
    * the walls' tops it lies flush with. */
   lid?: boolean;
+  /** A dug-in floor's bare concrete under the walled-in spaces no room
+   * covers (a stairwell's foot): no room's, so not picked as one. */
+  bare?: boolean;
 }
 
 export type FloorFinish =
