@@ -998,8 +998,10 @@ function stairsModel(
       if (tops && tops.length >= 2) {
         const low = Math.min(st.front, st.back);
         const shape = new THREE.Shape();
-        shape.moveTo(tops[0]![0], 0);
-        shape.lineTo(tops[tops.length - 1]![0], 0);
+        // Its foot a joint's inset under the flight's foot, meeting the
+        // top of the wall under it (which stops that far under a floor).
+        shape.moveTo(tops[0]![0], -0.003);
+        shape.lineTo(tops[tops.length - 1]![0], -0.003);
         for (const [z, level] of [...tops].reverse())
           shape.lineTo(z, level - low);
         const g = new THREE.ExtrudeGeometry(shape, {
