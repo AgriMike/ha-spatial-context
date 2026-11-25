@@ -269,7 +269,14 @@
     "fillUnder": "Room colour under the background",
     "fillUnderHint": "Draw room colours beneath the background image, so counters, appliances and other items already in the drawing stay on top.",
     "scaleLine": "Scale reference line",
-    "scaleLineHint": "The dashed line from Set Scale and its length. It always shows while you set the scale, and never on dashboards."
+    "scaleLineHint": "The dashed line from Set Scale and its length. It always shows while you set the scale, and never on dashboards.",
+    "people": "People (Bermuda)",
+    "peopleAuto": "Automatic ({who})",
+    "peopleItself": "Itself",
+    "peopleHidden": "Hidden",
+    "peopleSeen": "Now in {area}",
+    "peopleNotSeen": "Not seen right now",
+    "peopleHint": "Each device Bermuda tracks shows on the plan as the person it belongs to, in the room traced for its area, beside the nearest Bluetooth proxy when that proxy is placed there. With several devices, a person is drawn where the one that moved last says they are."
   },
   "picker": {
     "search": "Search devices…",
@@ -412,7 +419,8 @@
     "fit": "Fit to screen",
     "furniture": "Show furniture",
     "lights": "Show live lights",
-    "covers": "Show daylight & cover shading"
+    "covers": "Show daylight & cover shading",
+    "people": "Show people (Bermuda)"
   },
   "materials": {
     "timber_frame": "Timber framed (drywall)",
@@ -952,5 +960,9 @@
     "deleteCorner": "Remove corner",
     "outlineHint": "Drag it to move it over the ground, or drag a corner's dot. The small blue dots mid-edge add a corner: drag one out (or click it), then curve the corners. Click a dot, then Delete to remove it.",
     "totalLength": "{length} in all"
+  },
+  "people": {
+    "notSeen": "not seen",
+    "fromProxy": "{distance} from {proxy}"
   }
 }

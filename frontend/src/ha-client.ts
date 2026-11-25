@@ -762,6 +762,7 @@ export function emptySettings(): Settings {
     room_fill_under_background: false,
     custom_icons: [],
     show_scale_line: true,
+    people_devices: {},
   };
 }
 

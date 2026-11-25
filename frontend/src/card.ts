@@ -25,6 +25,11 @@ import {
   type RoomLight,
 } from "./canvas/live-state";
 import { skyFromWeather } from "./canvas/sun";
+import {
+  bermudaDevices,
+  computePeople,
+  peopleSignature,
+} from "./canvas/people";
 import type { CustomIcon } from "./canvas/custom-icons";
 
 const PANEL_BUNDLE_URL = `/spatial_context_panel.js?v=${__BUILD_ID__}`;
@@ -46,6 +51,8 @@ export interface SpatialContextCardConfig {
   show_furniture?: boolean;
   show_lights?: boolean;
   show_covers?: boolean;
+  /** People where Bermuda BLE Trilateration places them. */
+  show_people?: boolean;
   show_devices?: boolean;
   show_background?: boolean;
   /** Zoom and overlay buttons on the plan. */
@@ -61,6 +68,8 @@ export interface SpatialContextCardConfig {
   weather_entity?: string;
   /** A furniture item linked to an entity (a lamp, say). */
   item_tap_action?: TapAction;
+  /** A person: their details (the person entity's more-info). */
+  person_tap_action?: "more-info" | "none";
   /** "3d" shows the floor in 3D (three.js loads on demand) instead of
    * the plan; taps and overlay buttons are 2D-only. */
   view?: "2d" | "3d";
@@ -117,7 +126,14 @@ class SpatialContextCard extends HTMLElement {
   private _liveSig = "";
   private _roomLights = new Map<string, RoomLight>();
   private _error: string | null = null;
-  private _overlays = { furniture: true, lights: true, covers: true };
+  private _overlays = {
+    furniture: true,
+    lights: true,
+    covers: true,
+    people: true,
+  };
+  /** The panel's Settings → People choices. */
+  private _peopleDevices: Record<string, string> | undefined;
   /** The panel's weather setting (Settings → Daylight). */
   private _weatherSetting: string | null = null;
   /** The panel's Settings → Plan → light count choice. */
@@ -170,6 +186,7 @@ class SpatialContextCard extends HTMLElement {
       furniture: config.show_furniture !== false,
       lights: config.show_lights !== false,
       covers: config.show_covers !== false,
+      people: config.show_people !== false,
     };
     this._loadedFor = null;
     this._render();
@@ -309,6 +326,7 @@ class SpatialContextCard extends HTMLElement {
           room_label_halo_color?: string | null;
           room_fill_under_background?: boolean;
           custom_icons?: CustomIcon[];
+          people_devices?: Record<string, string>;
         }>({ type: "spatial_context/get_settings" })
         .catch(() => null);
       this._weatherSetting = settings?.weather_entity_id ?? null;
@@ -329,6 +347,7 @@ class SpatialContextCard extends HTMLElement {
       };
       this._roomFillUnder = settings?.room_fill_under_background === true;
       this._customIcons = settings?.custom_icons ?? [];
+      this._peopleDevices = settings?.people_devices;
       this._entities = new Map(entities.map((e) => [e.entity_id, e]));
       this._error = null;
     } catch (err) {
@@ -445,6 +464,7 @@ class SpatialContextCard extends HTMLElement {
     c["showFurniture"] = this._overlays.furniture;
     c["showLights"] = this._overlays.lights;
     c["showCovers"] = this._overlays.covers;
+    c["showPeople"] = this._overlays.people;
     c["roomBorder"] = this._roomBorder;
     c["roomLabelStyle"] = this._roomLabelStyle;
     c["roomFillUnder"] = this._roomFillUnder;
@@ -500,9 +520,14 @@ class SpatialContextCard extends HTMLElement {
       hass.states,
       this._config.weather_entity ?? this._weatherSetting,
     );
-    const sig = `${liveSignature(lights, covers, pins, items)}|${skyNow?.condition}:${skyNow?.clouds}`;
+    const people = computePeople(l.rooms, l.pins, hass, this._peopleDevices);
+    const peopleAvailable =
+      people.length > 0 || bermudaDevices(hass).length > 0;
+    const sig = `${liveSignature(lights, covers, pins, items)}|${skyNow?.condition}:${skyNow?.clouds}|${peopleSignature(people)}|${peopleAvailable}`;
     if (sig === this._liveSig) return;
     this._liveSig = sig;
+    c["people"] = people;
+    c["peopleAvailable"] = peopleAvailable;
     this._roomLights = lights;
     c["roomLights"] = lights;
     c["coverOpenness"] = covers;
@@ -515,7 +540,7 @@ class SpatialContextCard extends HTMLElement {
   }
 
   private _onOverlayToggle = (
-    e: CustomEvent<{ key: "furniture" | "lights" | "covers" }>,
+    e: CustomEvent<{ key: "furniture" | "lights" | "covers" | "people" }>,
   ) => {
     this._overlays[e.detail.key] = !this._overlays[e.detail.key];
     this._render();
@@ -536,6 +561,12 @@ class SpatialContextCard extends HTMLElement {
     const l = this._layout;
     if (!hass || !l) return;
     const cfg = this._config;
+    if (e.detail.kind === "person") {
+      if ((cfg.person_tap_action ?? "more-info") !== "none") {
+        this._moreInfo(e.detail.id);
+      }
+      return;
+    }
     if (e.detail.kind === "room") {
       const action = cfg.room_tap_action ?? "toggle";
       const light = this._roomLights.get(e.detail.id);
@@ -645,6 +676,7 @@ class SpatialContextCardEditor extends HTMLElement {
       ["show_lights", "Live lights"],
       ["show_covers", "Cover shading"],
       ["show_furniture", "Furniture"],
+      ["show_people", "People (Bermuda)"],
       ["show_devices", "Devices"],
       ["show_background", "Background image"],
       ["show_controls", "Zoom & overlay buttons"],
@@ -765,7 +797,7 @@ if (
     type: "spatial-context-card",
     name: "Spatial Context floor plan",
     description:
-      "A live floor plan: rooms lit by their lights, cover shading, furniture and devices.",
+      "A live floor plan: rooms lit by their lights, cover shading, furniture, devices and people.",
     preview: false,
     documentationURL: "https://github.com/Greminn/ha-spatial-context",
   });

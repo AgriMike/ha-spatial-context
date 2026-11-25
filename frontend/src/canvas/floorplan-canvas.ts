@@ -73,6 +73,8 @@ import {
   shapeCornerFractions,
 } from "./furniture-draw";
 import { roomFillStyle, type ItemState, type RoomLight } from "./live-state";
+import type { PersonOnPlan } from "./people";
+import { repeat } from "lit/directives/repeat.js";
 import {
   cloudySunColor,
   compassName,
@@ -107,6 +109,8 @@ export const DEFAULT_ROOM_FILL_COLOR = "#03a9f4";
 export const DEFAULT_ROOM_FILL_OPACITY = 0.18;
 export const DEFAULT_ROOM_BORDER_OPACITY = 1;
 const PIN_RADIUS_PX = 12;
+/** A person on the plan (people.ts), a little bigger than a device. */
+const PERSON_RADIUS_PX = 13;
 /** Furniture sizes are real centimetres; until a floor is calibrated they
  * draw as if the plan were 20 m wide. */
 const FALLBACK_UNITS_PER_CM = BASE_WIDTH / 2000;
@@ -209,6 +213,7 @@ type DownHit =
   | { type: "openingHandle"; opening: Opening; whichEnd: 0 | 1 }
   | { type: "meshLink"; link: ResolvedMeshLink }
   | { type: "meshStub"; stub: ResolvedMeshStub }
+  | { type: "person"; person: PersonOnPlan }
   | { type: "empty" };
 
 type Gesture =
@@ -711,6 +716,38 @@ export class FloorplanCanvas extends LitElement {
         color: var(--sc-fg-secondary);
         opacity: 0.6;
       }
+      /* A person glides to where Bermuda next puts them (the outer group's
+       * transform, in plan units); zoom-dependent nudges sit on the inner
+       * group so zooming doesn't animate. */
+      .person {
+        transition: transform 1.2s ease-in-out;
+      }
+      .person-dot {
+        stroke: white;
+      }
+      .person-initials {
+        fill: white;
+        font-weight: 600;
+        text-anchor: middle;
+        pointer-events: none;
+      }
+      .person-name {
+        fill: var(--sc-fg);
+        font-weight: 600;
+        text-anchor: middle;
+        pointer-events: none;
+        paint-order: stroke;
+        stroke: var(--sc-bg);
+      }
+      .person-hit {
+        fill: transparent;
+        cursor: pointer;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .person {
+          transition: none;
+        }
+      }
     `,
   ];
 
@@ -771,6 +808,13 @@ export class FloorplanCanvas extends LitElement {
   @property({ type: Boolean }) showFurniture = true;
   @property({ type: Boolean }) showLights = true;
   @property({ type: Boolean }) showCovers = true;
+  /** People Bermuda places on this floor (people.ts), and whether to
+   * draw them. */
+  @property({ attribute: false }) people: PersonOnPlan[] = [];
+  @property({ type: Boolean }) showPeople = true;
+  /** Bermuda tracks someone, so the People button is offered (it stays
+   * put while people come and go from this floor). */
+  @property({ type: Boolean }) peopleAvailable = false;
   /** "x of y lights on" under room names (always in the tooltip). */
   @property({ type: Boolean }) showLightCount = true;
   /** Room outlines for every room (Settings → Plan → Room borders). */
@@ -1667,6 +1711,10 @@ export class FloorplanCanvas extends LitElement {
       return { type: "roomLabel", room: selectedRoom };
     }
 
+    // People are drawn on top of everything.
+    const person = this._personAt(image.x, image.y);
+    if (person) return { type: "person", person };
+
     const pinsHere = findPinsAt(this.pins, image.x, image.y, hitR);
     if (pinsHere.length > 1) return { type: "pinStack", pins: pinsHere };
     if (pinsHere.length === 1) return { type: "pin", pin: pinsHere[0]! };
@@ -2404,18 +2452,31 @@ export class FloorplanCanvas extends LitElement {
     if (this.readOnly) {
       // Dashboard: report what was tapped, select nothing.
       const tap =
-        hit.type === "furniture"
-          ? { kind: "furniture", id: hit.item.id }
-          : hit.type === "pin"
-            ? { kind: "pin", id: hit.pin.id }
-            : hit.type === "pinStack"
-              ? { kind: "pin", id: hit.pins[0]!.id }
-              : hit.type === "opening"
-                ? { kind: "opening", id: hit.opening.id }
-                : hit.type === "room" || hit.type === "roomLabel"
-                  ? { kind: "room", id: hit.room.id }
-                  : null;
+        hit.type === "person"
+          ? { kind: "person", id: hit.person.entityId }
+          : hit.type === "furniture"
+            ? { kind: "furniture", id: hit.item.id }
+            : hit.type === "pin"
+              ? { kind: "pin", id: hit.pin.id }
+              : hit.type === "pinStack"
+                ? { kind: "pin", id: hit.pins[0]!.id }
+                : hit.type === "opening"
+                  ? { kind: "opening", id: hit.opening.id }
+                  : hit.type === "room" || hit.type === "roomLabel"
+                    ? { kind: "room", id: hit.room.id }
+                    : null;
       if (tap) this.dispatchEvent(new CustomEvent("plan-tap", { detail: tap }));
+      return;
+    }
+    if (hit.type === "person") {
+      // HA's own details dialog for the person (or their device).
+      this.dispatchEvent(
+        new CustomEvent("hass-more-info", {
+          detail: { entityId: hit.person.entityId },
+          bubbles: true,
+          composed: true,
+        }),
+      );
       return;
     }
     if (hit.type === "furniture") {
@@ -3277,6 +3338,165 @@ export class FloorplanCanvas extends LitElement {
     label: string,
   ) {
     return this._pinIcons.renderMarker(x, y, r, icon, color, selected, label);
+  }
+
+  /** Where each person is drawn: `base` follows where Bermuda says they
+   * are (plan units; this is what glides when they move) and `nudge` keeps
+   * the marker clear of the proxy's pin, the room's name and each other
+   * at this zoom. */
+  private _personSpots(): {
+    person: PersonOnPlan;
+    base: [number, number];
+    nudge: [number, number];
+    r: number;
+  }[] {
+    if (!this.showPeople || this.people.length === 0) return [];
+    const r = this._pxToUnits(PERSON_RADIUS_PX);
+    const pinR = this._pxToUnits(PIN_RADIUS_PX);
+    const perM = this.unitsPerCm * 100;
+    const placed: {
+      person: PersonOnPlan;
+      base: [number, number];
+      at: [number, number];
+    }[] = [];
+    for (const person of this.people) {
+      const room = this.rooms.find((x) => x.id === person.roomId);
+      if (!room) continue;
+      const points = this._effectivePoints("room", room.id, room.points);
+      if (points.length < 3) continue;
+      const [lx, ly] = this._roomLabelPosition(room, points);
+      const named = room.show_label !== false && room.visible !== false;
+      const size = named ? this._roomLabelSize(room) : 0;
+      const countLine =
+        named &&
+        this.showLightCount &&
+        this.showLights &&
+        this.roomLights.has(room.id);
+      // No proxy to go by: just under the room's name (and lights count).
+      const below: [number, number] = [
+        lx,
+        ly + size * (countLine ? 1.55 : 0.45) + r * 1.3,
+      ];
+      let base: [number, number] = [lx, ly];
+      let at: [number, number] = pointInPolygon(below[0], below[1], points)
+        ? below
+        : [lx, ly];
+      if (person.proxy && person.distanceM !== null) {
+        // From the proxy toward the middle of the room, as far as Bermuda
+        // says — which way is a guess; how far isn't.
+        const move =
+          this._liveRoomMove?.id === room.id ? this._liveRoomMove : null;
+        const sx = person.proxy.x + (move?.dx ?? 0);
+        const sy = person.proxy.y + (move?.dy ?? 0);
+        const len = Math.hypot(lx - sx, ly - sy);
+        const [ux, uy] =
+          len > 1e-6 ? [(lx - sx) / len, (ly - sy) / len] : [0, 1];
+        const tBase = Math.min(person.distanceM * perM, len);
+        base = [sx + ux * tBase, sy + uy * tBase];
+        const minT = pinR + r * 1.25;
+        const maxT = len - size * 0.9 - r * 1.2;
+        const t = Math.max(minT, Math.min(tBase, maxT));
+        const p: [number, number] = [sx + ux * t, sy + uy * t];
+        if (pointInPolygon(p[0], p[1], points)) at = p;
+      }
+      // Side by side when two land on the same spot.
+      const gap = r * 2.3;
+      for (let tries = 0; tries < 12; tries++) {
+        const clash = placed.some(
+          (o) => Math.hypot(o.at[0] - at[0], o.at[1] - at[1]) < gap * 0.95,
+        );
+        if (!clash) break;
+        at = [at[0] + gap, at[1]];
+      }
+      placed.push({ person, base, at });
+    }
+    return placed.map(({ person, base, at }) => ({
+      person,
+      base,
+      nudge: [at[0] - base[0], at[1] - base[1]],
+      r,
+    }));
+  }
+
+  /** The person drawn at a point, if any (for taps). */
+  private _personAt(x: number, y: number): PersonOnPlan | null {
+    for (const s of this._personSpots()) {
+      const px = s.base[0] + s.nudge[0];
+      const py = s.base[1] + s.nudge[1];
+      if (Math.hypot(px - x, py - y) <= s.r * 1.3) return s.person;
+    }
+    return null;
+  }
+
+  /** A person's tooltip: where they are, then each of their devices. */
+  private _personTitle(p: PersonOnPlan): string {
+    const far = (m: number) =>
+      `${(this.unitSystem === "imperial" ? m / 0.3048 : m).toFixed(1)} ${largeUnitLabel(this.unitSystem)}`;
+    const lines = [`${p.name} · ${p.areaName}`];
+    for (const d of p.devices) {
+      const where = d.areaName ?? localize("people.notSeen");
+      const near =
+        d.areaName && d.distanceM !== null && d.scanner
+          ? ` · ${localize("people.fromProxy", { distance: far(d.distanceM), proxy: d.scanner })}`
+          : "";
+      lines.push(`${d.name}: ${where}${near}`);
+    }
+    return lines.join("\n");
+  }
+
+  private _renderPeople() {
+    const spots = this._personSpots();
+    if (spots.length === 0) return nothing;
+    const font = this._pxToUnits(11);
+    const ring = this._pxToUnits(2);
+    const halo = this._pxToUnits(3);
+    return svg`
+      <defs>
+        <clipPath id="sc-person-clip" clipPathUnits="objectBoundingBox">
+          <circle cx="0.5" cy="0.5" r="0.5"></circle>
+        </clipPath>
+      </defs>
+      ${repeat(
+        spots,
+        (s) => s.person.key,
+        ({ person: p, base, nudge, r }) => svg`
+          <g class="person" style="transform:translate(${base[0]}px,${base[1]}px)">
+            <g transform="translate(${nudge[0]} ${nudge[1]})">
+              <title>${this._personTitle(p)}</title>
+              <circle
+                class="person-dot"
+                r=${r}
+                fill=${p.color}
+                stroke-width=${ring}
+              ></circle>
+              ${
+                p.picture
+                  ? svg`<image
+                      href=${p.picture}
+                      x=${-r}
+                      y=${-r}
+                      width=${2 * r}
+                      height=${2 * r}
+                      preserveAspectRatio="xMidYMid slice"
+                      clip-path="url(#sc-person-clip)"
+                    ></image>`
+                  : svg`<text
+                      class="person-initials"
+                      dy="0.36em"
+                      style="font-size:${r * 0.85}px"
+                    >${p.initials}</text>`
+              }
+              <text
+                class="person-name"
+                y=${r + font * 1.15}
+                style="font-size:${font}px;stroke-width:${halo}px"
+              >${p.shortName}</text>
+              <circle class="person-hit" r=${r * 1.3}></circle>
+            </g>
+          </g>
+        `,
+      )}
+    `;
   }
 
   private _renderPendingTrace() {
@@ -4164,7 +4384,7 @@ export class FloorplanCanvas extends LitElement {
   private _renderOverlayButtons() {
     if (!this.overlayButtons) return nothing;
     const button = (
-      key: "furniture" | "lights" | "covers",
+      key: "furniture" | "lights" | "covers" | "people",
       on: boolean,
       icon: string,
     ) =>
@@ -4182,6 +4402,11 @@ export class FloorplanCanvas extends LitElement {
       ${button("furniture", this.showFurniture, "mdi:sofa-outline")}
       ${button("lights", this.showLights, "mdi:lightbulb-group-outline")}
       ${button("covers", this.showCovers, "mdi:blinds")}
+      ${
+        this.peopleAvailable
+          ? button("people", this.showPeople, "mdi:account-multiple-outline")
+          : nothing
+      }
     `;
   }
 
@@ -4364,6 +4589,7 @@ export class FloorplanCanvas extends LitElement {
           ${this._renderScaleLine()}
           ${this.mode === "scale" ? this._renderPendingScale() : nothing}
           ${this._pinGroups().map((group) => this._renderPinGroup(group))}
+          ${this._renderPeople()}
           ${this.mode === "furniture" ? this._renderFurnitureGhost() : nothing}
         </svg>
       `}

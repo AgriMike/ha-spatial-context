@@ -5,6 +5,16 @@ import type { Settings } from "../types";
 import { localize } from "../i18n";
 import { selectStyles, sharedStyles, switchStyles } from "../styles";
 
+/** A Bermuda-tracked device in Settings → People. */
+export interface PeopleDeviceRow {
+  id: string;
+  name: string;
+  /** Where Bermuda sees it now; null = not seen. */
+  area: string | null;
+  /** The person it's matched to automatically, if any. */
+  autoName: string | null;
+}
+
 /** The Settings menu's content: grouped rows, label (and an optional
  * one-line description) on the left, its control on the right. Every
  * change is reported as a `settings-change` patch — the panel applies and
@@ -193,6 +203,13 @@ export class SettingsMenu extends LitElement {
     deviceId: string;
     label: string;
   }[] = [];
+  /** Devices Bermuda tracks, for who each one stands for on the plan. */
+  @property({ attribute: false }) peopleDevices: PeopleDeviceRow[] = [];
+  /** HA's person entities. */
+  @property({ attribute: false }) persons: {
+    entity_id: string;
+    name: string;
+  }[] = [];
 
   private _change(patch: Partial<Settings>) {
     this.dispatchEvent(
@@ -246,6 +263,59 @@ export class SettingsMenu extends LitElement {
         ${description ? html`<div class="description">${description}</div>` : nothing}
       </div>
       ${control}
+    </div>`;
+  }
+
+  /** Settings → People: who each Bermuda device stands for on the plan. */
+  private _renderPeople() {
+    if (this.peopleDevices.length === 0) return nothing;
+    const choices = this.settings.people_devices ?? {};
+    const pick = (id: string, value: string) => {
+      const next = { ...choices };
+      if (value) next[id] = value;
+      else delete next[id];
+      this._change({ people_devices: next });
+    };
+    return html`<div class="section">
+      <div class="section-title">${localize("settings.people")}</div>
+      ${this.peopleDevices.map((d) => {
+        const current = choices[d.id] ?? "";
+        return this._row(
+          d.name,
+          html`<select
+            aria-label=${d.name}
+            @change=${(e: Event) =>
+              pick(d.id, (e.target as HTMLSelectElement).value)}
+          >
+            <option value="" ?selected=${current === ""}>
+              ${localize("settings.peopleAuto", {
+                who: d.autoName ?? localize("settings.peopleItself"),
+              })}
+            </option>
+            ${this.persons.map(
+              (p) =>
+                html`<option
+                  value=${p.entity_id}
+                  ?selected=${current === p.entity_id}
+                >
+                  ${p.name}
+                </option>`,
+            )}
+            <option value="self" ?selected=${current === "self"}>
+              ${localize("settings.peopleItself")}
+            </option>
+            <option value="hidden" ?selected=${current === "hidden"}>
+              ${localize("settings.peopleHidden")}
+            </option>
+          </select>`,
+          d.area
+            ? localize("settings.peopleSeen", { area: d.area })
+            : localize("settings.peopleNotSeen"),
+        );
+      })}
+      <div class="row">
+        <div class="description">${localize("settings.peopleHint")}</div>
+      </div>
     </div>`;
   }
 
@@ -622,6 +692,8 @@ export class SettingsMenu extends LitElement {
             localize("settings.weatherHint"),
           )}
         </div>
+
+        ${this._renderPeople()}
 
         <div class="section">
           <div class="section-title">

@@ -111,11 +111,19 @@ import {
   type ItemState,
   type RoomLight,
 } from "./canvas/live-state";
+import {
+  autoPersonFor,
+  bermudaDevices,
+  computePeople,
+  peopleSignature,
+  type PersonOnPlan,
+} from "./canvas/people";
 import "./views/property-overlay";
 import "./views/icon-picker-dialog";
 import { localize } from "./i18n";
 import { panMap, rotateMapTo, zoomMap } from "./map/map-camera";
 import "./views/settings-menu";
+import type { PeopleDeviceRow } from "./views/settings-menu";
 import "./views/floorplan-3d-view";
 import type { PropertyBuilding } from "./views/property-overlay";
 
@@ -145,10 +153,16 @@ interface OverlayToggles {
   furniture: boolean;
   lights: boolean;
   covers: boolean;
+  people: boolean;
 }
 
 function readStoredOverlays(): OverlayToggles {
-  const defaults = { furniture: true, lights: true, covers: true };
+  const defaults = {
+    furniture: true,
+    lights: true,
+    covers: true,
+    people: true,
+  };
   try {
     const raw = localStorage.getItem(OVERLAYS_STORAGE_KEY);
     return raw
@@ -342,6 +356,11 @@ export class SpatialContextPanel extends LitElement {
   /** Daylight preview: minutes past midnight today, or null for now. */
   @state() private _sunPreviewMinutes: number | null = null;
   private _liveSig = "";
+  /** People Bermuda places on this floor (people.ts). */
+  @state() private _people: PersonOnPlan[] = [];
+  private _peopleSig = "";
+  /** Bermuda tracks at least one device: offer the People button. */
+  @state() private _peopleAvailable = false;
   @state() private _entities: PlaceableEntity[] = [];
   @state() private _areas: AreaMeta[] = [];
   @state() private _mode: CanvasMode = "select";
@@ -1126,6 +1145,19 @@ export class SpatialContextPanel extends LitElement {
     ) {
       this._sky = sky;
     }
+    const people = computePeople(
+      this._layout.rooms,
+      this._layout.pins,
+      hass,
+      this._settings.people_devices,
+    );
+    const peopleSig = peopleSignature(people);
+    if (peopleSig !== this._peopleSig) {
+      this._peopleSig = peopleSig;
+      this._people = people;
+    }
+    const available = people.length > 0 || bermudaDevices(hass).length > 0;
+    if (available !== this._peopleAvailable) this._peopleAvailable = available;
     const sig = liveSignature(lights, covers, pins, items);
     if (sig === this._liveSig) return;
     this._liveSig = sig;
@@ -1133,6 +1165,24 @@ export class SpatialContextPanel extends LitElement {
     this._roomLights = lights;
     this._coverOpenness = covers;
     this._pinColors = pins;
+  }
+
+  /** Bermuda's devices for Settings → People, with who each is matched to
+   * when nobody has said. */
+  private _peopleRows(): PeopleDeviceRow[] {
+    const hass = this._hass;
+    if (!hass) return [];
+    return bermudaDevices(hass).map((d) => {
+      const auto = autoPersonFor(d, hass);
+      return {
+        id: d.id,
+        name: d.name,
+        area: d.areaName,
+        autoName: auto
+          ? String(hass.states[auto]?.attributes["friendly_name"] ?? auto)
+          : null,
+      };
+    });
   }
 
   /** Every entity of a domain, by display name — for the light and cover
@@ -2449,7 +2499,7 @@ export class SpatialContextPanel extends LitElement {
 
   override updated(changed: Map<string, unknown>): void {
     super.updated(changed);
-    if (changed.has("_layout")) this._refreshLive();
+    if (changed.has("_layout") || changed.has("_settings")) this._refreshLive();
     // Every edit replaces _layout/_propertyLayout with a new object, so
     // this restarts the debounce on each change.
     if (
@@ -4700,6 +4750,8 @@ export class SpatialContextPanel extends LitElement {
             .settings=${this._settings}
             .coordinatorChoices=${this._placedDeviceChoices}
             .weatherEntities=${this._entityOptions("weather")}
+            .peopleDevices=${this._settingsPopoverOpen ? this._peopleRows() : []}
+            .persons=${this._settingsPopoverOpen ? this._entityOptions("person") : []}
             @settings-change=${this._onSettingsChange}
             @settings-close=${() => (this._settingsPopoverOpen = false)}
           ></settings-menu>
@@ -4938,6 +4990,9 @@ export class SpatialContextPanel extends LitElement {
                     .showFurniture=${this._overlays.furniture}
                     .showLights=${this._overlays.lights}
                     .showCovers=${this._overlays.covers}
+                    .people=${this._people}
+                    .showPeople=${this._overlays.people}
+                    .peopleAvailable=${this._peopleAvailable}
                     .showLightCount=${this._settings.show_light_count !== false}
                     .roomBorder=${roomBorderOf(this._settings)}
                     .roomLabelStyle=${{

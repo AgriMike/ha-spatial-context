@@ -309,6 +309,9 @@ def _empty_settings() -> dict[str, Any]:
         "custom_icons": [],
         # The dashed Set Scale reference line on the plan.
         "show_scale_line": True,
+        # Who each Bermuda-tracked device stands for on the plan, by device
+        # id (a person entity, "self" or "hidden"); unlisted = automatic.
+        "people_devices": {},
     }
 
 

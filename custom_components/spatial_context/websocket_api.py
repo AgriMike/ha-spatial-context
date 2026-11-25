@@ -726,6 +726,16 @@ _SETTINGS_SCHEMA = {
     ),
     vol.Optional("room_fill_under_background", default=False): bool,
     vol.Optional("show_scale_line", default=True): bool,
+    # Who each Bermuda-tracked device stands for on the plan, by device
+    # id: a person entity, "self" or "hidden" (see the panel's people.ts).
+    vol.Optional("people_devices", default=dict): vol.All(
+        {
+            vol.All(str, vol.Length(min=1, max=120)): vol.Any(
+                "self", "hidden", vol.Match(r"^person\.[a-z0-9_]+$")
+            )
+        },
+        vol.Length(max=500),
+    ),
     vol.Optional("custom_icons", default=list): vol.All(
         [
             vol.Schema(

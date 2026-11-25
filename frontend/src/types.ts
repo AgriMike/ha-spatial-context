@@ -168,6 +168,10 @@ export interface Settings {
   custom_icons?: CustomIcon[];
   /** The dashed Set Scale reference line on the plan (absent = shown). */
   show_scale_line?: boolean;
+  /** Who each Bermuda-tracked device stands for on the plan, by device id
+   * (people.ts): a person entity id, "self" (the device by its own name)
+   * or "hidden". A device not listed is matched automatically. */
+  people_devices?: Record<string, string>;
 }
 
 /** What the backend reports for the version handshake (see debug.py). */
@@ -987,17 +991,35 @@ export interface HomeAssistant {
   themes?: { darkMode?: boolean };
   states: Record<
     string,
-    { state?: string; attributes: Record<string, unknown> } | undefined
+    | {
+        state?: string;
+        attributes: Record<string, unknown>;
+        /** ISO time the state last changed. */
+        last_changed?: string;
+      }
+    | undefined
   >;
   /** Entity/device registry display entries, as the HA frontend keeps
    * them — used to find which lights are in which area. */
   entities?: Record<
     string,
-    { area_id?: string | null; device_id?: string | null } | undefined
+    | {
+        area_id?: string | null;
+        device_id?: string | null;
+        /** The integration that made it, e.g. "bermuda". */
+        platform?: string;
+      }
+    | undefined
   >;
   devices?: Record<
     string,
-    { area_id?: string | null; model?: string | null } | undefined
+    | {
+        area_id?: string | null;
+        model?: string | null;
+        name?: string | null;
+        name_by_user?: string | null;
+      }
+    | undefined
   >;
   callService?: (
     domain: string,

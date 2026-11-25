@@ -269,7 +269,14 @@
     "fillUnder": "Raumfarbe unter dem Hintergrund",
     "fillUnderHint": "Raumfarben unter dem Hintergrundbild zeichnen, damit Arbeitsplatten, Geräte und andere Objekte der Zeichnung obenauf bleiben.",
     "scaleLine": "Maßstabslinie",
-    "scaleLineHint": "Die gestrichelte Linie aus „Maßstab festlegen“ und ihre Länge. Sie erscheint immer beim Festlegen des Maßstabs und nie auf Dashboards."
+    "scaleLineHint": "Die gestrichelte Linie aus „Maßstab festlegen“ und ihre Länge. Sie erscheint immer beim Festlegen des Maßstabs und nie auf Dashboards.",
+    "people": "Personen (Bermuda)",
+    "peopleAuto": "Automatisch ({who})",
+    "peopleItself": "Als Gerät selbst",
+    "peopleHidden": "Ausgeblendet",
+    "peopleSeen": "Gerade in {area}",
+    "peopleNotSeen": "Gerade nicht gesehen",
+    "peopleHint": "Jedes Gerät, das Bermuda verfolgt, erscheint auf dem Plan als die Person, der es gehört – im Raum seines Bereichs, neben dem nächsten Bluetooth-Proxy, wenn dieser dort platziert ist. Bei mehreren Geräten zählt das, das sich zuletzt bewegt hat."
   },
   "picker": {
     "search": "Geräte suchen…",
@@ -412,7 +419,8 @@
     "fit": "An Bildschirm anpassen",
     "furniture": "Möbel zeigen",
     "lights": "Live-Licht zeigen",
-    "covers": "Tageslicht & Beschattung zeigen"
+    "covers": "Tageslicht & Beschattung zeigen",
+    "people": "Personen zeigen (Bermuda)"
   },
   "materials": {
     "timber_frame": "Holzständerwand (Trockenbau)",
@@ -617,5 +625,9 @@
     "groundToward": "Fällt ab nach",
     "scanMode": "Scan",
     "scanModeHint": "Wände und Objekte der Raumscans statt der Wände und Möbel des Plans zeigen (Treppen der Scans sind immer zu sehen)"
+  },
+  "people": {
+    "notSeen": "nicht gesehen",
+    "fromProxy": "{distance} von {proxy}"
   }
 }
