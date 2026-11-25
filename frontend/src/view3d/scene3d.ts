@@ -417,6 +417,9 @@ export const STOREY_GAP_M = 0.3;
 /** A dug-in floor's bare concrete under its walled-in spaces no room
  * covers: this far under its lowest room's floor, out of their way. */
 const BARE_FLOOR_DROP_M = 0.012;
+/** Bare concrete laid on the ground down a stairwell to a hidden floor:
+ * this far over the stated grade, clear of the lawn drawn on it. */
+const BARE_ON_GROUND_M = 0.03;
 
 /** Stored plan units per real centimetre — the same rule as
  * floorplan-canvas.ts's unitsPerCm (a stand-in until calibrated). */
@@ -5279,13 +5282,32 @@ export function buildScene(input: SceneInput): Scene3d {
   // Within a dug-in floor's walls (see dugInFloors), where no room covers
   // it (a stairwell's foot, the space under its stairs), a bare concrete
   // floor just under its rooms' own: the ground is cut away there, so it
-  // isn't left open to below. A hidden one's is drawn with the lowest
-  // drawn floor, at its own level.
+  // isn't left open to below.
   if (input.ground && floors.length) {
-    const top = Math.max(input.ground.uphill_m, input.ground.downhill_m);
-    const lowest = floors.reduce((a, b) => (b.baseY < a.baseY ? b : a));
+    const ground = input.ground;
+    const top = Math.max(ground.uphill_m, ground.downhill_m);
+    const bare = (
+      host: Floor3d,
+      id: string,
+      name: string,
+      y: number,
+      points: Vec2[],
+    ) =>
+      host.slabs.push({
+        id,
+        name,
+        y,
+        points,
+        color: dark ? "#55524e" : "#b3aea6",
+        finish: "concrete",
+        tinted: true,
+        emissive: null,
+        emissiveIntensity: 0,
+        outdoor: false,
+        bare: true,
+      });
     for (const g of dugInFloors(input, top)) {
-      const host = floors.find((f) => f.floorId === g.floorId) ?? lowest;
+      const host = floors.find((f) => f.floorId === g.floorId)!;
       const m = metersPerUnit(g.layout.scale);
       const low = Math.min(
         0,
@@ -5294,20 +5316,45 @@ export function buildScene(input: SceneInput): Scene3d {
           .map((r) => r.floor_offset_m ?? 0),
       );
       houseLoopsOf(g.layout).forEach((loop, k) =>
-        host.slabs.push({
-          id: `${g.floorId}:bare-${k}`,
-          name: `${g.name} bare floor`,
-          y: g.baseY - host.baseY + low - BARE_FLOOR_DROP_M,
-          points: loop.map(([x, y]): Vec2 => [x * m, y * m]),
-          color: dark ? "#55524e" : "#b3aea6",
-          finish: "concrete",
-          tinted: true,
-          emissive: null,
-          emissiveIntensity: 0,
-          outdoor: false,
-          bare: true,
-        }),
+        bare(
+          host,
+          `${g.floorId}:bare-${k}`,
+          `${g.name} bare floor`,
+          low - BARE_FLOOR_DROP_M,
+          loop.map(([x, y]): Vec2 => [x * m, y * m]),
+        ),
       );
+    }
+    // A dug-in floor left out of the view, under the drawn ones: down a
+    // stairwell to it, bare concrete laid on the ground (not the grass
+    // over its rooms; it isn't dug out, or the pit would show round the
+    // house under a floor shown on its own).
+    const lowest = floors.reduce((a, b) => (b.baseY < a.baseY ? b : a));
+    for (const g of input.context ?? []) {
+      if (g.baseY >= lowest.baseY - 0.01 || g.baseY >= top - 0.01) continue;
+      openingsDownTo(g, input.floors).forEach(([x0, z0, x1, z1], k) => {
+        const y = Math.max(
+          ...[
+            [x0, z0],
+            [x1, z0],
+            [x0, z1],
+            [x1, z1],
+            [(x0 + x1) / 2, (z0 + z1) / 2],
+          ].map(([x, z]) => groundHeight(site!, x!, z!)),
+        );
+        bare(
+          lowest,
+          `${g.floorId}:well-${k}`,
+          `${g.name} stairwell floor`,
+          y + BARE_ON_GROUND_M - lowest.baseY,
+          [
+            [x0, z0],
+            [x1, z0],
+            [x1, z1],
+            [x0, z1],
+          ],
+        );
+      });
     }
   }
   // Backsplashes round the windows and doors of every floor built.
@@ -7066,19 +7113,60 @@ function soilBand(
   return { points: [...pts, ...out.reverse()], blend, band: { line: pts } };
 }
 
-/** The floors dug into the hillside (below `top`, its high side's grade)
- * whose ground is dug out all within their walls: the drawn ones, and
- * those under every drawn one (a basement left out of the view, so no
- * grass shows down a stairwell to it). Not one over them (a garage a step
- * down, over a basement shown alone): that would leave a hole there. */
+/** The drawn floors dug into the hillside (below `top`, its high side's
+ * grade): their ground is dug out all within their walls, not only
+ * under their rooms. */
 function dugInFloors(input: SceneInput, top: number): FloorInput[] {
-  const drawn = new Set(input.floors.map((f) => f.floorId));
-  const lowest = Math.min(...input.floors.map((f) => f.baseY));
-  return (input.context ?? input.floors).filter(
-    (f) =>
-      f.baseY < top - 0.01 &&
-      (drawn.has(f.floorId) || f.baseY < lowest - 0.01),
+  return input.floors.filter((f) => f.baseY < top - 0.01);
+}
+
+/** Where a floor left out of the view, under the drawn ones, shows
+ * through them: inside its walls' closed outline, under none of the
+ * drawn floors' rooms (a stairwell down to it). Rectangles (x0, z0, x1,
+ * z1, metres) on the plans' own lines, exact for square-cornered plans. */
+function openingsDownTo(
+  hidden: FloorInput,
+  drawn: FloorInput[],
+): [number, number, number, number][] {
+  const hm = metersPerUnit(hidden.layout.scale);
+  const loops = houseLoopsOf(hidden.layout).map((l) =>
+    l.map(([x, y]): Vec2 => [x * hm, y * hm]),
   );
+  if (!loops.length) return [];
+  const covers = drawn.flatMap((f) => {
+    const m = metersPerUnit(f.layout.scale);
+    return f.layout.rooms
+      .filter((r) => r.points.length >= 3)
+      .map((r) => r.points.map(([x, y]): Vec2 => [x * m, y * m]));
+  });
+  const cut = (axis: 0 | 1) =>
+    [
+      ...new Set(
+        [...loops, ...covers].flatMap((p) =>
+          p.map((q) => Math.round(q[axis] * 1000) / 1000),
+        ),
+      ),
+    ].sort((a, b) => a - b);
+  const xs = cut(0);
+  const zs = cut(1);
+  const out: [number, number, number, number][] = [];
+  for (let j = 0; j + 1 < zs.length; j++) {
+    const cz = (zs[j]! + zs[j + 1]!) / 2;
+    let run: number | null = null;
+    for (let i = 0; i < xs.length; i++) {
+      const cx = i + 1 < xs.length ? (xs[i]! + xs[i + 1]!) / 2 : NaN;
+      const open =
+        i + 1 < xs.length &&
+        loops.some((l) => insidePoly(l, cx, cz)) &&
+        !covers.some((c) => insidePoly(c, cx, cz));
+      if (open && run === null) run = i;
+      if (!open && run !== null) {
+        out.push([xs[run]!, zs[j]!, xs[i]!, zs[j + 1]!]);
+        run = null;
+      }
+    }
+  }
+  return out;
 }
 
 /** The hillside the building stands on: grade on its high and low sides,
