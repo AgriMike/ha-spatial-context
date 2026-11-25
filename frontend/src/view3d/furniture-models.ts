@@ -105,8 +105,9 @@ export class Model {
       const pos = g.getAttribute("position") as THREE.BufferAttribute;
       const nor = g.getAttribute("normal") as THREE.BufferAttribute;
       const uv = g.getAttribute("uv") as THREE.BufferAttribute;
+      const col = g.getAttribute("color") as THREE.BufferAttribute | undefined;
       for (let i = 0; i < pos.count; i += 3)
-        for (const a of [pos, nor, uv]) {
+        for (const a of col ? [pos, nor, uv, col] : [pos, nor, uv]) {
           for (let c = 0; c < a.itemSize; c++) {
             const t = a.getComponent(i + 1, c);
             a.setComponent(i + 1, c, a.getComponent(i + 2, c));
@@ -2499,19 +2500,137 @@ const bathFaucet: Builder = (m, _o, tint) => {
   m.add(g, black);
 };
 
+const WASH_MATS = new Map<string, THREE.MeshBasicMaterial>();
+/** Light cast over a surface, as bright at each corner as its vertex
+ * colour, screened over it (1 - (1 - light)(1 - surface)): a dark surface
+ * brightened a lot, a sunlit one only a little and never past white, its
+ * texture showing through. No shadows; drawn just in front of it. */
+function washMaterial(
+  color: string,
+  strength: number,
+): THREE.MeshBasicMaterial {
+  const key = `${color}|${strength.toFixed(2)}`;
+  let m = WASH_MATS.get(key);
+  if (!m) {
+    m = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(color).multiplyScalar(strength),
+      vertexColors: true,
+      transparent: true,
+      blending: THREE.CustomBlending,
+      blendEquation: THREE.AddEquation,
+      blendSrc: THREE.OneMinusDstColorFactor,
+      blendDst: THREE.OneFactor,
+      depthWrite: false,
+      toneMapped: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -4,
+    });
+    m.userData["halo"] = true;
+    WASH_MATS.set(key, m);
+  }
+  return m;
+}
+
+/** A shower niche's LED strip lighting its inside: a line of light along
+ * x at height `ys`, `zc` in from the front, shining down through its
+ * `slot` (nothing past about 70° from straight down) and fading with
+ * distance. Brightest along the top of the back wall it grazes, pooling
+ * on the shelf, fainter down the sides; its top lit only by what bounces
+ * back up, but for the strip's glare. None of it leaves the niche. */
+function nicheWash(
+  m: Model,
+  W: number,
+  H: number,
+  R: number,
+  front: number,
+  ys: number,
+  zc: number,
+  slot: number,
+  lit: NonNullable<Item3d["light"]>,
+): void {
+  const back = front - R;
+  const smooth = (t: number) => {
+    const u = Math.max(0, Math.min(1, t));
+    return u * u * (3 - 2 * u);
+  };
+  // How lit a point is: `face` how squarely it faces the strip, from the
+  // way the light reaches it (down, out).
+  const lightAt = (
+    y: number,
+    z: number,
+    face: (dy: number, dz: number) => number,
+  ) => {
+    const dy = ys - y;
+    const dz = z - zc;
+    const d = Math.max(0.01, Math.hypot(dy, dz));
+    const down = dy / d;
+    const out = smooth((down - 0.15) / 0.3) * (0.4 + 0.6 * down);
+    const e = (2 * out * face(dy / d, dz / d)) / d;
+    return 1 - Math.exp(-e / 4);
+  };
+  const paint = (
+    g: THREE.BufferGeometry,
+    at: (y: number, z: number) => number,
+  ) => {
+    const pos = g.getAttribute("position") as THREE.BufferAttribute;
+    const c = new Float32Array(pos.count * 3);
+    // (Linear, so as seen on screen it falls off as `at` says.)
+    for (let i = 0; i < pos.count; i++)
+      c.fill(at(pos.getY(i), pos.getZ(i)) ** 2.2, i * 3, i * 3 + 3);
+    g.setAttribute("color", new THREE.BufferAttribute(c, 3));
+    m.add(g, washMaterial(lit.color, 0.45 + 0.45 * lit.level));
+  };
+  const off = 0.0016;
+  // The back wall, faced squarely only as it drops below the strip.
+  const b = new THREE.PlaneGeometry(W, H, 1, 24);
+  b.translate(0, H / 2, back + off);
+  paint(b, (y, z) => lightAt(y, z, (_dy, dz) => Math.max(0, -dz)));
+  // The shelf, facing straight up at it.
+  const f = new THREE.PlaneGeometry(W, R, 1, 12);
+  f.rotateX(-Math.PI / 2);
+  f.translate(0, off, front - R / 2);
+  paint(f, (y, z) => lightAt(y, z, (dy) => Math.max(0, dy)));
+  // The sides, square to the strip's ends.
+  for (const sx of [-1, 1]) {
+    const g = new THREE.PlaneGeometry(R, H, 12, 24);
+    g.rotateY((-sx * Math.PI) / 2);
+    g.translate(sx * (W / 2 - off), H / 2, front - R / 2);
+    paint(g, (y, z) => lightAt(y, z, () => 0.5));
+  }
+  // The top, facing down: the light bounced off the shelf and back wall,
+  // and a narrow glare either side of the slot.
+  const t = new THREE.PlaneGeometry(W, R, 1, 50);
+  t.rotateX(Math.PI / 2);
+  t.translate(0, H - off, front - R / 2);
+  paint(
+    t,
+    (_y, z) =>
+      0.34 + 0.66 * Math.exp(-Math.max(0, Math.abs(z - zc) - slot / 2) / 0.012),
+  );
+}
+
 /** A shower niche set in a tile wall (its front, at +z, flush with the
  * tile; recessed 10" behind it): its back and the shelf it stands on in
  * white hex tile, its sides and top plain white, a 1 cm black trim round
  * its opening, closed round the back (out the far side of a wall thinner
- * than it's deep). */
-const showerNiche: Builder = (m, _o, tint) => {
+ * than it's deep). An LED strip is recessed in its top along the back,
+ * wall to wall: a 16 mm slot 8 mm off the back tile, lined in matte black
+ * like the trim, an opal diffuser 5 mm up in it. Lit by the light it's
+ * linked to, the diffuser glows and washes the niche (see nicheWash). */
+const showerNiche: Builder = (m, _o, tint, item) => {
   const { W, D, H } = m;
   const R = 0.254;
   const s = 0.012;
   const front = D / 2;
   const back = front - R;
   const white = mat(tint ?? "#f2f1ec", 0.4);
-  // The box: sides, top, bottom and back, their inner faces its own.
+  // The strip's slot in the top.
+  const slot = 0.016;
+  const z0 = back + 0.008;
+  const z1 = z0 + slot;
+  // The box: sides, top (either side of the slot), bottom and back, their
+  // inner faces its own.
   for (const sx of [-1, 1])
     m.box(
       s,
@@ -2522,7 +2641,8 @@ const showerNiche: Builder = (m, _o, tint) => {
       front - (R + s) / 2,
       white,
     );
-  m.box(W, s, R + s, 0, H, front - (R + s) / 2, white);
+  m.box(W, s, z0 - back + s, 0, H, (back - s + z0) / 2, white);
+  m.box(W, s, front - z1, 0, H, (z1 + front) / 2, white);
   m.box(W, s, R + s, 0, -s, front - (R + s) / 2, white);
   m.box(W, H, s, 0, 0, back - s / 2, white);
   // The hex tile on its back and its shelf, laid at real size.
@@ -2548,6 +2668,27 @@ const showerNiche: Builder = (m, _o, tint) => {
   m.box(W + 2 * b, b, t, 0, -b, front + t / 2, trim);
   for (const sx of [-1, 1])
     m.box(b, H, t, sx * (W / 2 + b / 2), 0, front + t / 2, trim);
+  // The LED strip: its channel's black sides lining the slot, the opal
+  // diffuser 5 mm up between them, the channel closed above it.
+  const lit = item.light;
+  const lip = 0.0015;
+  const up = 0.005;
+  const dt = 0.002;
+  for (const z of [z0 + lip / 2, z1 - lip / 2])
+    m.box(W, up + dt, lip, 0, H, z, trim);
+  m.box(W, s - up - dt, slot, 0, H + up + dt, (z0 + z1) / 2, trim);
+  m.box(
+    W,
+    dt,
+    slot - 2 * lip,
+    0,
+    H + up,
+    (z0 + z1) / 2,
+    lit
+      ? mat("#fffaf0", 0.4, 0, { glow: lit.color, glowLevel: 1.2 + lit.level })
+      : mat("#e4e3de", 0.35),
+  );
+  if (lit) nicheWash(m, W, H, R, front, H + up, (z0 + z1) / 2, slot, lit);
 };
 
 /** A metal print (its back at -z, on the wall): a thin aluminium panel

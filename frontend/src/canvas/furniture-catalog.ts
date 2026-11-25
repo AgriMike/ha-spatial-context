@@ -1162,14 +1162,16 @@ const BATHROOM: Row[] = [
     { h3d: 0.3, y3d: 0.86 },
   ],
   // A niche set in a tile wall: 24" by 12" unless sized, 10" deep, its
-  // back and shelf in white hex tile, its sides plain white.
+  // back and shelf in white hex tile, its sides plain white, an LED strip
+  // recessed in its top along the back (lit by the light it's linked to,
+  // its glow kept inside the niche: "glow", no light of its own).
   [
     "shower_niche",
-    "Shower niche (white hex back and shelf)",
+    "Shower niche (white hex back and shelf, LED strip)",
     61,
     2,
     "box",
-    { h3d: 0.305, y3d: 1.2 },
+    { h3d: 0.305, y3d: 1.2, beam: "glow" },
   ],
   // A square bar on blocky posts, as wide as set, 1.2 m up unless moved;
   // a folded towel over it if set (its drop and colour too).
