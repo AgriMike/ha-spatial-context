@@ -5202,9 +5202,13 @@ export class SpatialContextPanel extends LitElement {
                           .floors=${this._floors}
                           .sky=${this._sky}
                           .dark=${this._hass?.themes?.darkMode ?? false}
+                          .showPeople=${this._overlays.people}
+                          .peopleDevices=${this._settings.people_devices}
+                          .unitSystem=${this._settings.unit_system}
                           editable
                           closable
                           @close-3d=${() => (this._view3dOpen = false)}
+                          @overlay-toggle=${this._onOverlayToggle}
                           @layout-edit=${(
                             e: CustomEvent<{ patch: Partial<FloorLayout> }>,
                           ) => this._updateLayout(e.detail.patch)}

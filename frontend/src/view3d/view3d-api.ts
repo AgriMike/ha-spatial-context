@@ -498,6 +498,34 @@ export interface ScanPlacement3d {
 
 export type ScanMode = "plan" | "scan";
 
+/** A person Bermuda BLE Trilateration places in a room (see
+ * canvas/people.ts), where they stand on its floor. */
+export interface Person3d {
+  /** The person entity id, or `bermuda:<device id>`. */
+  key: string;
+  floorId: string;
+  /** Where they stand on the floor plane (metres), and the floor's height
+   * there above the floor's level (a sunken room's). */
+  x: number;
+  z: number;
+  y: number;
+  /** Which way they face when they first show (radians about +Y, 0
+   * facing +Z); afterwards, the way they last went. */
+  facing: number;
+  /** In a room indoors (not on a deck or patio). */
+  indoor: boolean;
+  /** Under their disc: a first name, a device's own name. */
+  name: string;
+  initials: string;
+  color: string;
+  /** Their picture (HA's entity_picture), drawn in the disc. */
+  picture: string | null;
+  /** What a tap opens (see View3dOptions.onPersonTap), and the pointer's
+   * tooltip over them. */
+  entityId: string;
+  title: string;
+}
+
 export interface ScanPose {
   x: number;
   z: number;
@@ -523,6 +551,9 @@ export interface View3dOptions {
    * true from a "down" starts a drag: the camera stays put and the moves
    * that follow come as "drag" until the "up". */
   onEditPointer?(e: EditPointer): boolean | void;
+  /** A person (setPeople's) was tapped, outside editing: their
+   * `entityId`. */
+  onPersonTap?(entityId: string): void;
   /** A scan finished loading (or failed). */
   onScanStatus?(
     id: string,
@@ -625,6 +656,10 @@ export interface View3dHandle {
   autoAlignScan(id: string): void;
   /** Spreads stacked floors apart vertically (metres added per storey). */
   setSpread(metres: number): void;
+  /** The people to show, each on their floor (others glide there, new
+   * ones appear, missing ones leave). Not rebuilt with the scene, and
+   * never exported. */
+  setPeople(people: Person3d[]): void;
   view(kind: "orbit" | "top" | "fit"): void;
   /** Puts the camera at `eye` looking at `target` (world metres). */
   lookAt(eye: [number, number, number], target: [number, number, number]): void;

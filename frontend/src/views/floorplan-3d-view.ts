@@ -121,8 +121,12 @@ import {
   stackFloors,
   type FloorInput,
 } from "../view3d/scene3d";
+import { bermudaDevices, peopleSignature } from "../canvas/people";
+import { peopleOnFloors, placePeople } from "../view3d/people-spots";
+import type { UnitSystem } from "../units";
 import type {
   Box3d,
+  Item3d,
   RoofEdge3d,
   EditPointer,
   EditRef,
@@ -864,8 +868,23 @@ export class Floorplan3dView extends LitElement {
   @property({ type: Boolean }) closable = false;
   @property({ type: Boolean }) dollhouse = false;
   @property({ attribute: false }) moduleUrl = MODULE_URL;
+  /** People where Bermuda BLE Trilateration places them (the panel's and
+   * card's People choice; the toolbar's People button flips it and fires
+   * `overlay-toggle` with key "people"). */
+  @property({ type: Boolean }) showPeople = true;
+  /** Settings → People: who each Bermuda device stands for. */
+  @property({ attribute: false }) peopleDevices:
+    Record<string, string> | undefined = undefined;
+  /** For distances in a person's tooltip. */
+  @property({ attribute: false }) unitSystem: UnitSystem = "metric";
 
   @state() private _status: "idle" | "starting" | "ready" | "error" = "idle";
+  /** Bermuda tracks at least one device: offer the People button. */
+  @state() private _peopleAvailable = false;
+  /** What the people were last placed from (see _pushPeople). */
+  private _peopleSig = "";
+  /** Each shown floor's things as last built, to stand people clear of. */
+  private _floorItems = new Map<string, Item3d[]>();
   @state() private _error: string | null = null;
   /** The roof parts being edited, as text (null = showing the saved). */
   @state() private _roofDraft: string | null = null;
@@ -1043,6 +1062,7 @@ export class Floorplan3dView extends LitElement {
             : Promise.reject(new Error("offline")),
         onScanMove: this._onScanMove,
         onEditPointer: (e) => this._onEditPointer(e),
+        onPersonTap: (entityId) => this._onPersonTap(entityId),
         onScanStatus: (id, status, message) => {
           const next = new Map(this._scanStatus);
           if (status === "ready") next.delete(id);
@@ -1058,6 +1078,7 @@ export class Floorplan3dView extends LitElement {
       });
       this._sceneSig = "";
       this._scanSig = "";
+      this._peopleSig = "";
       this._spreadShown = -1;
       this._status = "ready";
       this._rebuild();
@@ -1351,6 +1372,9 @@ export class Floorplan3dView extends LitElement {
         roofPlan: this._roofPlan,
       });
       handle.setScene(scene);
+      // Where people stand depends on the rooms and what's in them.
+      this._floorItems = new Map(scene.floors.map((f) => [f.floorId, f.items]));
+      this._peopleSig = "";
       // The roof's edges, for picking which a light strip runs along.
       const edges = scene.roof?.edges;
       if (edges && edges !== this._roofEdges) this._roofEdges = edges;
@@ -1397,7 +1421,61 @@ export class Floorplan3dView extends LitElement {
         : null,
       this._snap,
     );
+    this._pushPeople(handle, floors);
   };
+
+  /** Shows the people Bermuda places on the shown floors, when they've
+   * moved (cheap: the scene isn't rebuilt for it). Not while editing. */
+  private _pushPeople(
+    handle: View3dHandle,
+    floors: { floorId: string; layout: FloorLayout }[],
+  ): void {
+    const hass = this.hass;
+    const available = !!hass && bermudaDevices(hass).length > 0;
+    if (available !== this._peopleAvailable) this._peopleAvailable = available;
+    const found =
+      hass && available && this.showPeople && !this._editing
+        ? peopleOnFloors(floors, hass, this.peopleDevices)
+        : [];
+    const sig = [
+      this.unitSystem,
+      ...found.map(
+        (f) =>
+          `${f.floorId}:${peopleSignature(f.people)}:${f.people
+            .map((p) => `${p.shortName}/${p.color}/${p.entityId}`)
+            .join(",")}`,
+      ),
+    ].join("#");
+    if (sig === this._peopleSig) return;
+    this._peopleSig = sig;
+    handle.setPeople(
+      placePeople(
+        found,
+        floors.map((f) => ({
+          ...f,
+          items: this._floorItems.get(f.floorId) ?? [],
+        })),
+        this.unitSystem,
+      ),
+    );
+  }
+
+  /** A person tapped: their details. On the dashboard card, the card
+   * decides (its person_tap_action), as for a tap on the plan. */
+  private _onPersonTap(entityId: string): void {
+    this.dispatchEvent(
+      this.editable
+        ? new CustomEvent("hass-more-info", {
+            detail: { entityId },
+            bubbles: true,
+            composed: true,
+          })
+        : new CustomEvent("plan-tap", {
+            detail: { kind: "person", id: entityId },
+          }),
+    );
+  }
+
   private _lastLayouts: FloorLayout[] = [];
   /** A rebuild waits for the drag to end. */
   private _rebuildHeld = false;
@@ -6487,6 +6565,24 @@ export class Floorplan3dView extends LitElement {
                 >
                   <ha-icon icon="mdi:home-roof"></ha-icon>
                   ${localize("view3d.roof")}
+                </button>`
+              : nothing
+          }
+          ${
+            this._peopleAvailable
+              ? html`<button
+                  class="icon ${this.showPeople ? "active" : ""}"
+                  title=${localize("canvasControls.people")}
+                  @click=${() => {
+                    this.showPeople = !this.showPeople;
+                    this.dispatchEvent(
+                      new CustomEvent("overlay-toggle", {
+                        detail: { key: "people" },
+                      }),
+                    );
+                  }}
+                >
+                  <ha-icon icon="mdi:account-multiple-outline"></ha-icon>
                 </button>`
               : nothing
           }

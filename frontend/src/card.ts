@@ -71,7 +71,8 @@ export interface SpatialContextCardConfig {
   /** A person: their details (the person entity's more-info). */
   person_tap_action?: "more-info" | "none";
   /** "3d" shows the floor in 3D (three.js loads on demand) instead of
-   * the plan; taps and overlay buttons are 2D-only. */
+   * the plan; taps are 2D-only but for people, and of the overlay
+   * buttons only People shows (in the 3D view's own toolbar). */
   view?: "2d" | "3d";
   /** 3D only: stack every floor of the building. */
   dollhouse?: boolean;
@@ -134,6 +135,8 @@ class SpatialContextCard extends HTMLElement {
   };
   /** The panel's Settings → People choices. */
   private _peopleDevices: Record<string, string> | undefined;
+  /** The panel's units (Settings), for distances in a person's tooltip. */
+  private _unitSystem: "metric" | "imperial" = "metric";
   /** The panel's weather setting (Settings → Daylight). */
   private _weatherSetting: string | null = null;
   /** The panel's Settings → Plan → light count choice. */
@@ -327,6 +330,7 @@ class SpatialContextCard extends HTMLElement {
           room_fill_under_background?: boolean;
           custom_icons?: CustomIcon[];
           people_devices?: Record<string, string>;
+          unit_system?: "metric" | "imperial";
         }>({ type: "spatial_context/get_settings" })
         .catch(() => null);
       this._weatherSetting = settings?.weather_entity_id ?? null;
@@ -348,6 +352,7 @@ class SpatialContextCard extends HTMLElement {
       this._roomFillUnder = settings?.room_fill_under_background === true;
       this._customIcons = settings?.custom_icons ?? [];
       this._peopleDevices = settings?.people_devices;
+      this._unitSystem = settings?.unit_system ?? "metric";
       this._entities = new Map(entities.map((e) => [e.entity_id, e]));
       this._error = null;
     } catch (err) {
@@ -489,6 +494,12 @@ class SpatialContextCard extends HTMLElement {
         "floorplan-3d-view",
       ) as unknown as CanvasElement;
       this._view3d.style.cssText = "display:block;position:absolute;inset:0;";
+      // A person tapped, and the People button (as on the plan).
+      this._view3d.addEventListener("plan-tap", this._onTap as EventListener);
+      this._view3d.addEventListener(
+        "overlay-toggle",
+        this._onOverlayToggle as EventListener,
+      );
       plan.appendChild(this._view3d);
     }
     const v = this._view3d;
@@ -498,6 +509,9 @@ class SpatialContextCard extends HTMLElement {
     v["floors"] = this._floors;
     v["dark"] = this._hass?.themes?.darkMode ?? false;
     v["dollhouse"] = this._config.dollhouse === true;
+    v["showPeople"] = this._overlays.people;
+    v["peopleDevices"] = this._peopleDevices;
+    v["unitSystem"] = this._unitSystem;
     v["sky"] = this._hass
       ? skyFromWeather(
           this._hass.states,

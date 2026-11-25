@@ -7,6 +7,7 @@ import { counterModel, furnitureModel } from "./furniture-models";
 import { outdoorModel } from "./outdoor-models";
 import { indoorLightModel } from "./indoor-light-models";
 import { siteModel } from "./site-models";
+import { createPeopleLayer } from "./people-layer";
 import { gradeAt } from "./ground-grid";
 import {
   boxOf,
@@ -2418,6 +2419,13 @@ function createView3d(options: View3dOptions): View3dHandle {
   let editSnap = true;
   let fitted = false;
   let destroyed = false;
+  /** People (see people-layer.ts): beside the building, not part of it. */
+  const people = createPeopleLayer({
+    floorY: (id) => floors.get(id)?.group.position.y ?? null,
+    redraw: () => redraw(),
+    indoorOnly,
+  });
+  scene.add(people.group);
 
   // --- rendering on demand ------------------------------------------------
   // The shadow maps are redrawn only when the scene changes, not when
@@ -2434,13 +2442,17 @@ function createView3d(options: View3dOptions): View3dHandle {
     // The pointer's latest move, at most once a frame and before drawing.
     flushPointer();
     const moved = controls.update();
-    if (moved || dirty) {
+    // People glide and keep their size on screen as the camera moves.
+    const gliding = people.count()
+      ? people.tick(camera, renderer.domElement.clientHeight, performance.now())
+      : false;
+    if (moved || dirty || gliding) {
       dirty = false;
       sizeHandles();
       renderer.render(scene, camera);
       if (retired.length) freeRetired();
     }
-    if (moved) schedule();
+    if (moved || gliding) schedule();
   };
   const schedule = () => {
     if (!raf && !destroyed) raf = requestAnimationFrame(draw);
@@ -4606,7 +4618,47 @@ function createView3d(options: View3dOptions): View3dHandle {
     return a.kind === b.kind && a.id === b.id;
   }
 
+  // --- tapping a person ------------------------------------------------------
+
+  let tapDown: { x: number; y: number; id: number } | null = null;
+  /** The person the pointer's over (its cursor and tooltip are ours). */
+  let overPerson: string | null = null;
+  const personAt = (e: PointerEvent) => {
+    if (editFloorId || editScanId || !people.count()) return null;
+    setPointer(e);
+    return people.pick(raycaster);
+  };
+  const onTapDown = (e: PointerEvent) => {
+    tapDown =
+      e.button === 0 ? { x: e.clientX, y: e.clientY, id: e.pointerId } : null;
+  };
+  const onTapUp = (e: PointerEvent) => {
+    const down = tapDown;
+    tapDown = null;
+    if (!down || down.id !== e.pointerId || !options.onPersonTap) return;
+    if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5) return;
+    const hit = personAt(e);
+    if (hit) options.onPersonTap(hit.entityId);
+  };
+  const onPersonHover = (e: PointerEvent) => {
+    if (e.buttons !== 0 || e.pointerType === "touch") return;
+    const hit = personAt(e);
+    if ((hit?.key ?? null) === overPerson) return;
+    overPerson = hit?.key ?? null;
+    canvasEl.style.cursor = hit
+      ? "pointer"
+      : editFloorId
+        ? "default"
+        : editScanId
+          ? "move"
+          : "";
+    canvasEl.title = hit?.title ?? "";
+  };
+
   const canvasEl = renderer.domElement;
+  canvasEl.addEventListener("pointerdown", onTapDown);
+  canvasEl.addEventListener("pointerup", onTapUp);
+  canvasEl.addEventListener("pointermove", onPersonHover);
   canvasEl.addEventListener("pointerdown", onEditDown, true);
   canvasEl.addEventListener("pointermove", onEditMove);
   canvasEl.addEventListener("pointerup", onEditUp);
@@ -4715,6 +4767,9 @@ function createView3d(options: View3dOptions): View3dHandle {
       applyOverlay();
       invalidate();
     },
+    setPeople(list) {
+      people.set(list);
+    },
     view,
     lookAt(eye, target) {
       fitted = true;
@@ -4742,6 +4797,10 @@ function createView3d(options: View3dOptions): View3dHandle {
       canvasEl.removeEventListener("pointerup", onEditUp);
       canvasEl.removeEventListener("pointercancel", onEditUp);
       canvasEl.removeEventListener("dblclick", onEditDblClick);
+      canvasEl.removeEventListener("pointerdown", onTapDown);
+      canvasEl.removeEventListener("pointerup", onTapUp);
+      canvasEl.removeEventListener("pointermove", onPersonHover);
+      people.dispose();
       controls.dispose();
       for (const obj of retired) disposeObject(obj);
       retired = [];
