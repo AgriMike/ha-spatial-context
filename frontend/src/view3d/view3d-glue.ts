@@ -52,8 +52,14 @@ import type {
  * loads room scans with GLTFLoader and lets one be dragged into place. */
 
 const SLAB_M = 0.04;
-/** Point lights are costly per fragment; the brightest few get one. */
-const MAX_POINT_LIGHTS = 8;
+/** Point lights are costly per fragment; this many of the room lights get
+ * one, picked by spreadRoomLights. With the outdoor budget below it stays
+ * within MAX_BANDED_LIGHTS, so each keeps to its storey and its sight. */
+const MAX_POINT_LIGHTS = 12;
+/** How far apart (metres, across a floor's plan) two room lights must be
+ * before a dimmer one stops losing out to a brighter one beside it (see
+ * spreadRoomLights). */
+const LIGHT_SPREAD_M = 4;
 /** Outdoor fixtures' lights (spots, floods, lanterns), on top of those:
  * the brightest get one (two for an up & down light). */
 const MAX_OUTDOOR_LIGHTS = 18;
@@ -244,8 +250,9 @@ const SC_POINT_BANDS = new Float32Array(MAX_BANDED_LIGHTS * 2);
 const MAX_SIGHT_MAPS = 4;
 /** A sight map's cells a side (its cell size set by the floor's size). */
 const SIGHT_MAP_CELLS = 512;
-/** How many of a floor's room lights get a sight map (one bit a cell). */
-const MAX_SIGHTED_LIGHTS = 8;
+/** How many of a floor's room lights get a sight map (one bit a cell, two
+ * bytes a cell: up to 16). */
+const MAX_SIGHTED_LIGHTS = MAX_POINT_LIGHTS;
 /** How far (metres) a room light's sight is traced across its floor. */
 const SIGHT_REACH_M = 14;
 /** Per point light, in three's order (see bandPointLights): the sight map
@@ -261,15 +268,15 @@ const SC_POINT_LINES = new Float32Array(MAX_BANDED_LIGHTS * 4);
  * its size (metres); zero size for none. */
 const SC_SIGHT_RECTS = new Float32Array(MAX_SIGHT_MAPS * 4);
 /** The sight maps, one over the other: each cell a bit for each of its
- * floor's lights that sees it. */
+ * floor's lights that sees it, 16 bits as two bytes (red low, green high). */
 const SIGHT_DATA = new Uint8Array(
-  SIGHT_MAP_CELLS * SIGHT_MAP_CELLS * MAX_SIGHT_MAPS,
+  SIGHT_MAP_CELLS * SIGHT_MAP_CELLS * MAX_SIGHT_MAPS * 2,
 );
 const SIGHT_TEX = new THREE.DataTexture(
   SIGHT_DATA,
   SIGHT_MAP_CELLS,
   SIGHT_MAP_CELLS * MAX_SIGHT_MAPS,
-  THREE.RedFormat,
+  THREE.RGFormat,
   THREE.UnsignedByteType,
 );
 SIGHT_TEX.magFilter = THREE.NearestFilter;
@@ -315,9 +322,10 @@ THREE.ShaderChunk.lights_fragment_begin =
 		scFrac[ k ] = at - floor( at );
 		for ( int n = 0; n < 4; n ++ ) {
 			ivec2 q = c + ivec2( n & 1, n >> 1 );
-			int v = ( q.x >= 0 && q.y >= 0 && q.x < ${SIGHT_MAP_CELLS} && q.y < ${SIGHT_MAP_CELLS} )
-				? int( texelFetch( scSightMap, ivec2( q.x, k * ${SIGHT_MAP_CELLS} + q.y ), 0 ).r * 255.0 + 0.5 )
-				: 0;
+			ivec2 scRG = ( q.x >= 0 && q.y >= 0 && q.x < ${SIGHT_MAP_CELLS} && q.y < ${SIGHT_MAP_CELLS} )
+				? ivec2( texelFetch( scSightMap, ivec2( q.x, k * ${SIGHT_MAP_CELLS} + q.y ), 0 ).rg * 255.0 + 0.5 )
+				: ivec2( 0 );
+			int v = scRG.x | ( scRG.y << 8 );
 			scSeen[ k ][ n ] = v;
 		}
 	}`,
@@ -430,7 +438,7 @@ function sightMaps(entries: { spec: Floor3d; group: THREE.Group }[]): void {
             wall[j * N + i] = 1;
         }
     }
-    const seen = new Uint8Array(N * N);
+    const seen = new Uint16Array(N * N);
     const reach = SIGHT_REACH_M / cell;
     const rays = Math.ceil(2 * Math.PI * reach * 1.2);
     lights.slice(0, MAX_SIGHTED_LIGHTS).forEach((light, b) => {
@@ -508,7 +516,11 @@ function sightMaps(entries: { spec: Floor3d; group: THREE.Group }[]): void {
           if (!wall[c + d]) v |= seen[c + d]!;
         out[c] = v;
       }
-    SIGHT_DATA.set(out, k * N * N);
+    const at = k * N * N * 2;
+    for (let c = 0; c < N * N; c++) {
+      SIGHT_DATA[at + c * 2] = out[c]! & 0xff;
+      SIGHT_DATA[at + c * 2 + 1] = out[c]! >> 8;
+    }
     SC_SIGHT_RECTS.set([x0, z0, 1 / (N * cell), 1 / (N * cell)], k * 4);
   });
   SIGHT_TEX.needsUpdate = true;
@@ -523,6 +535,39 @@ function roomStrip(item: Item3d): boolean {
     item.light?.beam === "glow" &&
     !item.light2
   );
+}
+
+/** Which of the room lights that are on get a real point light: `max` of
+ * them, spread across the house rather than the brightest in plan order
+ * (a dozen lit cans in one room would take every one, leaving the next
+ * room's just glowing). Each pick goes to the light with the most level
+ * left once it's discounted for a brighter pick within LIGHT_SPREAD_M of
+ * it on the same floor; ties keep their order. */
+export function spreadRoomLights<
+  T extends { floor: string; x: number; z: number; level: number },
+>(candidates: T[], max: number): T[] {
+  const left = [...candidates];
+  const picked: T[] = [];
+  const score = (c: T) => {
+    let near = Infinity;
+    for (const p of picked)
+      if (p.floor === c.floor)
+        near = Math.min(near, Math.hypot(p.x - c.x, p.z - c.z));
+    return c.level * Math.min(1, near / LIGHT_SPREAD_M);
+  };
+  while (picked.length < max && left.length) {
+    let best = 0;
+    let bestScore = -1;
+    left.forEach((c, k) => {
+      const v = score(c);
+      if (v > bestScore) {
+        bestScore = v;
+        best = k;
+      }
+    });
+    picked.push(left.splice(best, 1)[0]!);
+  }
+  return picked;
 }
 
 /** Fills SC_POINT_BANDS for a render of `scene` from `camera`: its point
@@ -3638,8 +3683,9 @@ function createView3d(options: View3dOptions): View3dHandle {
     siteModelsGround = groundKey;
     siteModelsNext = new Map();
     itemModelsNext = new Map();
-    // The brightest linked lights get a real point light; outdoor
-    // fixtures theirs, from a budget of their own.
+    // Room lights get a real point light spread across the house (see
+    // spreadRoomLights); outdoor fixtures theirs, from a budget of their
+    // own.
     const level = (i: Item3d) =>
       Math.max(i.light?.level ?? 0, i.light2?.level ?? 0);
     const byLevel = spec.floors
@@ -3648,15 +3694,27 @@ function createView3d(options: View3dOptions): View3dHandle {
       .sort((a, b) => level(b) - level(a));
     // (An open bookshelf's strips light only its cubbies, drawn in its
     // model: no light of its own shining out through its sides.)
-    const lit = byLevel
-      .filter(
-        (i) =>
-          i.light &&
-          (!i.light.beam || roomStrip(i)) &&
-          !i.light2 &&
-          !/^bookshelf_open/.test(i.model?.kind ?? ""),
-      )
-      .slice(0, MAX_POINT_LIGHTS);
+    const floorOf = new Map<Item3d, string>();
+    for (const f of spec.floors)
+      for (const i of f.items) floorOf.set(i, f.floorId);
+    const lit = spreadRoomLights(
+      byLevel
+        .filter(
+          (i) =>
+            i.light &&
+            (!i.light.beam || roomStrip(i)) &&
+            !i.light2 &&
+            !/^bookshelf_open/.test(i.model?.kind ?? ""),
+        )
+        .map((i) => ({
+          item: i,
+          floor: floorOf.get(i) ?? "",
+          x: i.x,
+          z: i.z,
+          level: level(i),
+        })),
+      MAX_POINT_LIGHTS,
+    ).map((c) => c.item);
     let budget = MAX_OUTDOOR_LIGHTS;
     for (const i of byLevel) {
       const beam = i.light?.beam;
