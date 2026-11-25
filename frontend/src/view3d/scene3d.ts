@@ -4261,10 +4261,12 @@ function buildFloor(
     );
     const beam = entry?.opts["beam"];
     // An outdoor fixture may be switched by a plain switch.
+    // (A wall switch or outlet linked to the light it works is no light.)
     const isLight =
-      item.entity_id?.startsWith("light.") === true ||
-      (typeof beam === "string" &&
-        item.entity_id?.startsWith("switch.") === true);
+      entry?.draw !== "wallDevice" &&
+      (item.entity_id?.startsWith("light.") === true ||
+        (typeof beam === "string" &&
+          item.entity_id?.startsWith("switch.") === true));
     const on = !!live && live.active && isLight && showLights;
     const lightY = entry?.opts["lightY"];
     const sourceY =
@@ -4450,6 +4452,12 @@ function buildFloor(
                   }
                 : {}),
               ...(item.countertop === false ? { noTop: true } : {}),
+              ...(item.countertop_finish === "white_oak"
+                ? { oakTop: true }
+                : {}),
+              ...(item.device_style === "standard"
+                ? { standardDevice: true }
+                : {}),
               ...(item.finish ? { finish: item.finish } : {}),
               ...(item.slat_cm != null || item.slat_gap_cm != null
                 ? {

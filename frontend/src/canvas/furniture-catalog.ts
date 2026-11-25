@@ -17,6 +17,7 @@ export type FurnitureCategory =
   | "laundry"
   | "electronics"
   | "lighting"
+  | "electrical"
   | "kids"
   | "entry"
   | "outdoor"
@@ -41,6 +42,7 @@ export const FURNITURE_CATEGORIES: { id: FurnitureCategory; icon: string }[] = [
   { id: "laundry", icon: "mdi:washing-machine" },
   { id: "electronics", icon: "mdi:television" },
   { id: "lighting", icon: "mdi:floor-lamp" },
+  { id: "electrical", icon: "mdi:light-switch" },
   { id: "kids", icon: "mdi:baby-carriage" },
   { id: "entry", icon: "mdi:door-open" },
   { id: "site", icon: "mdi:road-variant" },
@@ -1975,6 +1977,53 @@ const LIGHTING: Row[] = [
   ["galaxy_projector", "Star projector", 18, 18, "starProjector"],
   ["pool_light", "Pool light", 30, 30, "uplight"],
   ["skylight_light", "Smart skylight panel", 60, 120, "skylightPanel"],
+];
+
+// Light switches and outlets on the wall (their backs at y = 0, against
+// it): Legrand Adorne in magnesium unless their style's set to a plain
+// white decorator rocker / outlet. Plates at Adorne's sizes (3.45" by
+// 5.13", 1.81" more per gang); switches' centres 48" up, outlets' 16".
+const ELECTRICAL: Row[] = [
+  [
+    "light_switch_adorne_1",
+    "Light switch, 1-gang (Legrand Adorne paddle, magnesium)",
+    8.8,
+    4,
+    "wallDevice",
+    { gangs: 1, h3d: 0.13, y3d: 1.154 },
+  ],
+  [
+    "light_switch_adorne_2",
+    "Light switch, 2-gang (Legrand Adorne paddles, magnesium)",
+    13.4,
+    4,
+    "wallDevice",
+    { gangs: 2, h3d: 0.13, y3d: 1.154 },
+  ],
+  [
+    "light_switch_adorne_3",
+    "Light switch, 3-gang (Legrand Adorne paddles, magnesium)",
+    18,
+    4,
+    "wallDevice",
+    { gangs: 3, h3d: 0.13, y3d: 1.154 },
+  ],
+  [
+    "outlet_adorne_1",
+    "Outlet, 1-gang (Legrand Adorne, magnesium)",
+    8.8,
+    4,
+    "wallDevice",
+    { gangs: 1, outlet: true, h3d: 0.13, y3d: 0.341 },
+  ],
+  [
+    "outlet_adorne_2",
+    "Outlet, 2-gang (Legrand Adorne, magnesium)",
+    13.4,
+    4,
+    "wallDevice",
+    { gangs: 2, outlet: true, h3d: 0.13, y3d: 0.341 },
+  ],
 ];
 
 const KIDS: Row[] = [
@@ -3954,6 +4003,7 @@ const ROWS: [FurnitureCategory, Row[]][] = [
   ["laundry", LAUNDRY],
   ["electronics", ELECTRONICS],
   ["lighting", LIGHTING],
+  ["electrical", ELECTRICAL],
   ["kids", KIDS],
   ["entry", ENTRY],
   ["site", SITE],

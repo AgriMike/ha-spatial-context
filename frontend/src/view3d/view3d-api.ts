@@ -213,6 +213,11 @@ export interface Item3d {
      * edge (else its left), swinging to its back (else its front). */
     door?: { open: number; hingeRight: boolean; swingBack: boolean };
     noTop?: boolean;
+    /** A cabinet's (or painted island's) top in white oak, not quartz. */
+    oakTop?: boolean;
+    /** A light switch or outlet in a plain white decorator style (absent:
+     * Legrand Adorne). */
+    standardDevice?: boolean;
     /** A wood finish worn instead of a plain colour. */
     finish?: "white_oak" | "maple" | "walnut" | "stained" | "black" | "white";
     /** A drawn item's outline (a custom countertop), corners rounded, in

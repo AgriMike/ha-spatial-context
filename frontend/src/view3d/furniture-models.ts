@@ -1108,6 +1108,12 @@ const MAPLE = "#e6dccb";
 /** A wood finish's colour: white oak unless set. */
 const woodOf = (finish: string | undefined) =>
   finish === "maple" ? MAPLE : finish === "walnut" ? WALNUT : WHITE_OAK;
+/** Cabinets painted white (their finish "white"): a soft satin white. */
+const CABINET_WHITE = "#f0eee8";
+/** A cabinet's paint: the colour picked, else white where its finish is;
+ * null for wood. */
+const paintOf = (finish: string | undefined, tint: string | null) =>
+  tint ?? (finish === "white" ? CABINET_WHITE : null);
 
 /** White oak's grain: a pale warm board with fine darker streaks along it
  * and a few faint rays, one repeat `OAK_REPEAT` metres along and across
@@ -1236,6 +1242,18 @@ function mapleGrainTexture(): THREE.Texture {
 }
 
 const OAK_MATS = new Map<string, THREE.MeshStandardMaterial>();
+/** A white oak countertop (oiled, a touch more sheen than the cabinets),
+ * its own material so its grain's laid along its length (see
+ * grainParts). */
+let oakTopMat: THREE.MeshStandardMaterial | null = null;
+function oakTopMaterial(): THREE.MeshStandardMaterial {
+  oakTopMat ??= new THREE.MeshStandardMaterial({
+    map: oakGrainTexture(),
+    color: "#d0b48a",
+    roughness: 0.5,
+  });
+  return oakTopMat;
+}
 /** White oak, grained (a colour picked tints it); maple its own grain. */
 function oakMaterial(tint: string | null = null): THREE.MeshStandardMaterial {
   const key = tint ?? WHITE_OAK;
@@ -1434,21 +1452,24 @@ function plankHood(m: Model, oak: string): void {
     );
 }
 
-/** White oak shaker cabinets (front at +z): a base cabinet, drawer base
- * or sink base on a toe kick under a quartz top, a wall cabinet, a tall
+/** White oak shaker cabinets (front at +z; maple, walnut or painted
+ * white if set): a base cabinet, drawer base or sink base on a toe kick
+ * under a quartz top (white oak if set), a wall cabinet, a tall
  * pantry, and a plank range hood to go with them. Its face, from the top
  * down: drawers at the heights set on the item (`fronts`; the last one
  * taking up the rest when there are no doors), then its doors across the
  * rest — else its type's own. */
 const shaker: Builder = (m, o, tint, item) => {
   shakerAt(m, o, tint, item);
-  // Its wood grained at real size (not one texture stretched per face).
-  if (!tint) grainParts(m);
+  // Its wood grained at real size (not one texture stretched per face);
+  // a white oak top's along its length, edges and all.
+  grainParts(m, oakTopMaterial());
 };
 
 /** A model's grained wood (oak, walnut, maple) laid at real size: up the
- * fronts and sides, along x on top. */
-function grainParts(m: Model): void {
+ * fronts and sides, along x on top; a top in `along` along x all round
+ * (its ends across). */
+function grainParts(m: Model, along?: THREE.Material): void {
   const parts = (
     m as unknown as {
       parts: Map<THREE.Material, THREE.BufferGeometry[]>;
@@ -1468,7 +1489,17 @@ function grainParts(m: Model): void {
         const [x, y, z] = [pos.getX(i), pos.getY(i), pos.getZ(i)];
         // Along the grain, then across it.
         const [a, b] =
-          ny >= nx && ny >= nz ? [x, z] : nz >= nx ? [y, x] : [y, z];
+          mt === along
+            ? ny >= nx && ny >= nz
+              ? [x, z]
+              : nz >= nx
+                ? [x, y]
+                : [z, y]
+            : ny >= nx && ny >= nz
+              ? [x, z]
+              : nz >= nx
+                ? [y, x]
+                : [y, z];
         uv[i * 2] = a / OAK_REPEAT[0];
         uv[i * 2 + 1] = b / OAK_REPEAT[1];
       }
@@ -1480,14 +1511,16 @@ function grainParts(m: Model): void {
 const shakerAt: Builder = (m, o, tint, item) => {
   const { W, D, H } = m;
   const type = typeof o["shaker"] === "string" ? o["shaker"] : "base";
-  const oak = tint ?? woodOf(item.model?.finish);
+  const paint = paintOf(item.model?.finish, tint);
+  const white = !tint && paint !== null;
+  const oak = paint ?? woodOf(item.model?.finish);
   if (type === "hood") {
     plankHood(m, oak);
     return;
   }
-  const wood = tint ? mat(oak, 0.6) : oakMaterial(oak);
-  const panel = tint
-    ? mat(shade(oak, 0.93), 0.65)
+  const wood = paint ? mat(oak, white ? 0.55 : 0.6) : oakMaterial(oak);
+  const panel = paint
+    ? mat(shade(oak, white ? 0.97 : 0.93), white ? 0.58 : 0.65)
     : oakMaterial(shade(oak, 0.93));
   const counter =
     (type === "base" || type === "drawers" || type === "sink") &&
@@ -1507,7 +1540,7 @@ const shakerAt: Builder = (m, o, tint, item) => {
       0,
       0,
       -(t + 0.075) / 2,
-      mat(shade(oak, 0.45), 0.8),
+      mat(shade(oak, white ? 0.82 : 0.45), 0.8),
     );
   if (top)
     cutTop(
@@ -1518,7 +1551,7 @@ const shakerAt: Builder = (m, o, tint, item) => {
       0,
       H - top,
       0.0125,
-      quartzMaterial(),
+      item.model?.oakTop ? oakTopMaterial() : quartzMaterial(),
       cuts,
     );
   const gap = 0.003;
@@ -2937,7 +2970,8 @@ class Turned extends Model {
 }
 
 /** A kitchen island (its working side at -z, seating at +z): a painted
- * base of shaker cabinets on its working side under a quartz top that
+ * base of shaker cabinets on its working side under a quartz top (white
+ * oak if set) that
  * overhangs the seating side on square posts. At its far (+x) end, a
  * cabinet with a full-width drawer over a full-width door, then a wider
  * three-drawer cabinet, then cabinets with a drawer over doors. */
@@ -2952,7 +2986,19 @@ const kitchenIsland: Builder = (m, _o, tint, item) => {
   const L = W - 2 * overhang;
   const zc = -D / 2 + overhang + cd / 2;
   const cuts = item.model?.cuts;
-  cutTop(m, W, top, D, 0, H - top, 0, quartzMaterial(), cuts);
+  const oakTop = !!item.model?.oakTop;
+  cutTop(
+    m,
+    W,
+    top,
+    D,
+    0,
+    H - top,
+    0,
+    oakTop ? oakTopMaterial() : quartzMaterial(),
+    cuts,
+  );
+  if (oakTop) grainParts(m, oakTopMaterial());
   // The cabinets' box, its recessed kick on the working side.
   carcass(m, L, H - top - kick, cd, 0, kick, zc, paint, !!cuts);
   m.box(
@@ -5804,7 +5850,10 @@ const BOOK_COLORS = [
 const openBookshelf: Builder = (m, o, tint, item) => {
   const { W, D, H } = m;
   const set = item.model?.cubbies;
-  const wood = tint ? mat(tint, 0.6) : grainOf(item.model?.finish, null);
+  const paint = paintOf(item.model?.finish, tint);
+  const wood = paint
+    ? mat(paint, tint ? 0.6 : 0.55)
+    : grainOf(item.model?.finish, null);
   const piece = (
     w: number,
     h: number,
@@ -5814,7 +5863,7 @@ const openBookshelf: Builder = (m, o, tint, item) => {
     z: number,
     up = false,
   ) =>
-    tint
+    paint
       ? m.box(w, h, d, x, y, z, wood)
       : grainBox(m, w, h, d, x, y, z, wood, up);
   const t = 0.019;
@@ -5838,7 +5887,13 @@ const openBookshelf: Builder = (m, o, tint, item) => {
       0,
       0,
       bz - 0.0375,
-      mat(shade(tint ?? woodOf(item.model?.finish), 0.45), 0.8),
+      mat(
+        shade(
+          paint ?? woodOf(item.model?.finish),
+          paint && !tint ? 0.82 : 0.45,
+        ),
+        0.8,
+      ),
     );
   // Its cubbies: rows from the top down, columns across.
   const inner = H - kick - 2 * t;
@@ -5991,8 +6046,103 @@ function shade(hex: string, k: number): string {
   return `#${c.getHexString()}`;
 }
 
+/** Legrand Adorne's magnesium: a dark grey with a soft metallic sheen (a
+ * touch cool, so the warm sun doesn't turn it khaki). */
+const MAGNESIUM = "#5f646a";
+/** A plain decorator wall plate and its device: gloss white. */
+const DEVICE_WHITE = "#f4f3ef";
+
+/** A US outlet's face (a 5-15R) centred at (x, y) on a face at `z`: its
+ * two slots, the neutral (taller) on the left, and the round ground hole
+ * under them. */
+function receptacle(
+  m: Model,
+  x: number,
+  y: number,
+  z: number,
+  hole: THREE.Material,
+): void {
+  const t = 0.0004;
+  const sy = y + 0.003;
+  m.box(0.0016, 0.0079, t, x - 0.00635, sy - 0.00395, z + t / 2, hole);
+  m.box(0.0016, 0.0063, t, x + 0.00635, sy - 0.00315, z + t / 2, hole);
+  m.cyl(0.0024, 0.0024, t, x, y - 0.0068, z + t / 2, hole, 14, "z");
+}
+
+/** A light switch or outlet on the wall (its back at -z, on the wall), its
+ * gangs (`gangs`) side by side 1.81" apart. Legrand Adorne unless set
+ * plain: a thin screwless plate as big as the item, magnesium, with a
+ * square opening 1.77" across per gang holding a flat square paddle (an
+ * outlet: a face with its two receptacles side by side). Plain: a gloss
+ * white decorator plate at its own size (2.75" by 4.5", 1.81" wider per
+ * gang) held by two screws a gang, a rocker in each opening tipped top
+ * out (an outlet: a duplex face, one receptacle over the other). A colour
+ * picked paints it. */
+const wallDevice: Builder = (m, o, tint, item) => {
+  const { W, D, H } = m;
+  const IN = 0.0254;
+  const n = Math.max(1, Math.round(num(o, "gangs", 1)));
+  const outlet = flag(o, "outlet");
+  const pitch = Math.min(1.81 * IN, W / n);
+  const xs = Array.from({ length: n }, (_, k) => (k - (n - 1) / 2) * pitch);
+  const back = -D / 2;
+  const cy = H / 2;
+  const gap = mat("#161616", 0.9);
+  const hole = mat("#0c0c0c", 0.95);
+  if (!item.model?.standardDevice) {
+    const metal = mat(tint ?? MAGNESIUM, 0.5, tint ? 0 : 0.7);
+    const tp = 0.0065;
+    const face = back + tp;
+    m.soft(W, H, tp, 0, 0, back + tp / 2, metal, 0.0022);
+    const a = Math.min(1.77 * IN, pitch - 0.001, H - 0.01);
+    const p = a - 0.0014;
+    for (const x of xs) {
+      // The opening: a dark hairline round what's set in it.
+      m.box(a, a, 0.001, x, cy - a / 2, face - 0.0002, gap);
+      if (!outlet) {
+        // A flat square paddle, a little proud of the plate.
+        m.soft(p, p, 0.004, x, cy - p / 2, face - 0.0003, metal, 0.0012);
+        continue;
+      }
+      m.soft(p, p, 0.003, x, cy - p / 2, face - 0.0008, metal, 0.001);
+      for (const s of [-1, 1])
+        receptacle(m, x + (s * a) / 4, cy, face + 0.0007, hole);
+    }
+    return;
+  }
+  // Plain: a white decorator plate at its own size, centred on the item.
+  const white = mat(tint ?? DEVICE_WHITE, 0.38);
+  const pw = Math.min(W, (2.75 + 1.81 * (n - 1)) * IN);
+  const ph = Math.min(H, 4.5 * IN);
+  const tp = 0.005;
+  const face = back + tp;
+  m.soft(pw, ph, tp, 0, cy - ph / 2, back + tp / 2, white, 0.002);
+  const ow = Math.min(1.31 * IN, pitch - 0.004);
+  const oh = Math.min(2.63 * IN, ph - 0.03);
+  for (const x of xs) {
+    m.box(ow, oh, 0.001, x, cy - oh / 2, face - 0.0002, gap);
+    // Two screws holding the plate, painted to match, a slot in each.
+    for (const s of [-1, 1]) {
+      const sy = cy + s * Math.min(0.0488, ph / 2 - 0.006);
+      m.cyl(0.0031, 0.0031, 0.0012, x, sy, face + 0.0006, white, 14, "z");
+      m.box(0.0005, 0.0046, 0.0004, x, sy - 0.0023, face + 0.0013, gap);
+    }
+    const fw = ow - 0.001;
+    const fh = oh - 0.001;
+    if (outlet) {
+      m.soft(fw, fh, 0.003, x, cy - fh / 2, face - 0.0005, white, 0.0008);
+      for (const s of [-1, 1])
+        receptacle(m, x, cy + s * 0.019, face + 0.001, hole);
+      continue;
+    }
+    // The rocker: tipped top out about its middle (3.5 degrees).
+    m.soft(fw, fh, 0.005, x, cy - fh / 2, face, white, 0.0015, 0.061);
+  }
+};
+
 /** By drawing kind; some by catalog id where the drawing is generic. */
 const BY_DRAW: Record<string, Builder> = {
+  wallDevice,
   sofa,
   sectional,
   chair,

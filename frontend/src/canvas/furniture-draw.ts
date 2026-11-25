@@ -1557,6 +1557,39 @@ const T: Record<string, Template> = {
       out.push(line(x, 1, x, d - 1));
     return out;
   },
+  /** A light switch or outlet on the wall (opts: gangs, outlet): its
+   * plate along the wall, and in front of it the plan's symbol for each
+   * gang, an S for a switch, a circle crossed by two lines for an
+   * outlet. */
+  wallDevice: (w, d, o) => {
+    const plate = min(1.2, d * 0.3);
+    const out: Prim[] = [rect(0, 0, w, plate, 0.3)];
+    const n = max(1, Math.round(num(o, "gangs", 1)));
+    const y0 = plate + 0.4;
+    const h = max(0.5, d - y0 - 0.2);
+    const ym = y0 + h / 2;
+    for (const cx of centres(0, w, n)) {
+      if (flag(o, "outlet")) {
+        const r = min(h * 0.32, w / n / 3);
+        out.push(
+          circ(cx, ym, r),
+          line(cx - r * 0.4, ym - r * 1.5, cx - r * 0.4, ym + r * 1.5),
+          line(cx + r * 0.4, ym - r * 1.5, cx + r * 0.4, ym + r * 1.5),
+        );
+        continue;
+      }
+      const a = min(h * 0.32, w / n / 3);
+      const [t, b] = [y0, y0 + h];
+      out.push(
+        path(
+          `M${cx + a},${t + h * 0.18} C${cx + a * 0.6},${t - h * 0.02} ${cx - a},${t} ${cx - a},${t + h * 0.25} ` +
+            `C${cx - a},${ym - h * 0.02} ${cx + a},${ym + h * 0.02} ${cx + a},${b - h * 0.25} ` +
+            `C${cx + a},${b} ${cx - a * 0.6},${b + h * 0.02} ${cx - a},${b - h * 0.18}`,
+        ),
+      );
+    }
+    return out;
+  },
   tank: (w, d, o) => {
     const n = num(o, "tanks", 1);
     const out: Prim[] = [rect(0, 0, w, d, 0, true)];

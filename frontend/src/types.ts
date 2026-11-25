@@ -363,6 +363,12 @@ export interface FurnitureItem {
   door_hinge_flip?: boolean | null;
   door_swing_flip?: boolean | null;
   countertop?: boolean | null;
+  /** A cabinet's (or a painted island's) top in white oak instead of its
+   * quartz; unset = quartz. */
+  countertop_finish?: "quartz" | "white_oak" | null;
+  /** A light switch's or outlet's style: Legrand Adorne in magnesium
+   * (unset) or a plain white decorator rocker / outlet. */
+  device_style?: "adorne" | "standard" | null;
   /** A wood finish worn instead of a plain colour (a floating shelf; a
    * bookshelf's or slat wall's wood). */
   /** A wood finish (stained, matte black and white too, for a custom

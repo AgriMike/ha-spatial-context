@@ -478,6 +478,9 @@ function planCentre(layout: FloorLayout): [number, number] {
 /** A wood-only finish select's value: the wood, else unset. */
 const woodFinish = (f: FurnitureItem["finish"]) =>
   f === "white_oak" || f === "maple" || f === "walnut" ? f : null;
+/** A cabinet's finish select's value: a wood or white paint, else unset. */
+const cabinetFinish = (f: FurnitureItem["finish"]) =>
+  f === "white" ? f : woodFinish(f);
 
 /** The 3D view of a floor (or its whole building, stacked as a
  * "dollhouse"): walls, openings, room floors, furniture, live lights and
@@ -4369,16 +4372,7 @@ export class Floorplan3dView extends LitElement {
         ],
         (v) => set({ door_tiers: v ? Number(v) : null }),
       )}
-      ${this._select<"white_oak" | "maple" | "walnut">(
-        L("finish"),
-        woodFinish(item.finish) ?? "white_oak",
-        [
-          ["white_oak", L("finishWhiteOak")],
-          ["maple", L("finishMaple")],
-          ["walnut", L("finishWalnut")],
-        ],
-        (v) => set({ finish: v === "white_oak" ? null : v }),
-      )}
+      ${this._cabinetFinish(item, set)}
       ${this._select<"left" | "right">(
         L("handleSide"),
         item.handle_side ?? null,
@@ -4424,21 +4418,63 @@ export class Floorplan3dView extends LitElement {
         ["base", "drawers", "sink"].includes(
           String(catalogItem(item.kind)?.opts["shaker"] ?? ""),
         )
-          ? html`<label class="row">
-              <span>${L("countertop")}</span>
-              <input
-                type="checkbox"
-                .checked=${item.countertop !== false}
-                @change=${(e: Event) =>
-                  set({
-                    countertop: (e.target as HTMLInputElement).checked
-                      ? null
-                      : false,
-                  })}
-              />
-            </label>`
+          ? this._countertop(item, set, true)
           : nothing
       }`;
+  }
+
+  /** A shaker cabinet's (or its hood's) finish: a wood, or painted
+   * white. */
+  private _cabinetFinish(
+    item: FurnitureItem,
+    set: (patch: Partial<FurnitureItem>) => void,
+  ) {
+    const L = (k: string) => localize(`edit3d.${k}`);
+    return this._select<"white_oak" | "maple" | "walnut" | "white">(
+      L("finish"),
+      cabinetFinish(item.finish) ?? "white_oak",
+      [
+        ["white_oak", L("finishWhiteOak")],
+        ["maple", L("finishMaple")],
+        ["walnut", L("finishWalnut")],
+        ["white", L("finishWhite")],
+      ],
+      (v) => set({ finish: v === "white_oak" ? null : v }),
+    );
+  }
+
+  /** A cabinet's top: quartz, white oak, or (`none`) left off. */
+  private _countertop(
+    item: FurnitureItem,
+    set: (patch: Partial<FurnitureItem>) => void,
+    none: boolean,
+  ) {
+    const L = (k: string) => localize(`edit3d.${k}`);
+    type Top = "quartz" | "white_oak" | "none";
+    const value: Top =
+      none && item.countertop === false
+        ? "none"
+        : item.countertop_finish === "white_oak"
+          ? "white_oak"
+          : "quartz";
+    return this._select<Top>(
+      L("countertop"),
+      value,
+      [
+        ["quartz", L("countertopQuartz")],
+        ["white_oak", L("countertopWhiteOak")],
+        ...(none ? [["none", L("countertopNone")] as [Top, string]] : []),
+      ],
+      (v) =>
+        set(
+          v === "none"
+            ? { countertop: false, countertop_finish: null }
+            : {
+                countertop: null,
+                countertop_finish: v === "white_oak" ? "white_oak" : null,
+              },
+        ),
+    );
   }
 
   /** The open bookshelf cubby being set (-1: all of them). */
@@ -5916,6 +5952,28 @@ export class Floorplan3dView extends LitElement {
         ${this._num(localize("edit3d.elevation"), item.elevation_cm ?? null, (v) => set({ elevation_cm: v }), { unit: "cm", placeholder: localize("edit3d.auto") })}
         ${this._renderItemFloor(item)}
         ${entry?.opts["shaker"] && entry.opts["shaker"] !== "hood" ? this._renderCabinetFronts(item, set) : nothing}
+        ${entry?.opts["shaker"] === "hood" ? this._cabinetFinish(item, set) : nothing}
+        ${entry?.id.startsWith("island_shaker") ? this._countertop(item, set, false) : nothing}
+        ${
+          entry?.draw === "wallDevice"
+            ? this._select<"adorne" | "standard">(
+                localize("edit3d.deviceStyle"),
+                item.device_style ?? "adorne",
+                [
+                  ["adorne", localize("edit3d.styleAdorne")],
+                  [
+                    "standard",
+                    localize(
+                      entry.opts["outlet"]
+                        ? "edit3d.styleOutlet"
+                        : "edit3d.styleRocker",
+                    ),
+                  ],
+                ],
+                (v) => set({ device_style: v === "standard" ? v : null }),
+              )
+            : nothing
+        }
         ${entry && (["houseplant", "plant", "cactus"].includes(entry.draw) || entry.id === "bonsai") ? this._renderPlantPot(item, set) : nothing}
         ${entry?.id.startsWith("bookshelf_open") ? this._renderBookshelf(item, set) : nothing}
         ${
@@ -6099,18 +6157,20 @@ export class Floorplan3dView extends LitElement {
             : nothing
         }
         ${
-          entry && /^(bookshelf_open|slat_wall)/.test(entry.id)
-            ? this._select<"white_oak" | "maple" | "walnut">(
-                localize("edit3d.finish"),
-                woodFinish(item.finish) ?? "white_oak",
-                [
-                  ["white_oak", localize("edit3d.finishWhiteOak")],
-                  ["maple", localize("edit3d.finishMaple")],
-                  ["walnut", localize("edit3d.finishWalnut")],
-                ],
-                (v) => set({ finish: v === "white_oak" ? null : v }),
-              )
-            : nothing
+          entry?.id.startsWith("bookshelf_open")
+            ? this._cabinetFinish(item, set)
+            : entry?.id.startsWith("slat_wall")
+              ? this._select<"white_oak" | "maple" | "walnut">(
+                  localize("edit3d.finish"),
+                  woodFinish(item.finish) ?? "white_oak",
+                  [
+                    ["white_oak", localize("edit3d.finishWhiteOak")],
+                    ["maple", localize("edit3d.finishMaple")],
+                    ["walnut", localize("edit3d.finishWalnut")],
+                  ],
+                  (v) => set({ finish: v === "white_oak" ? null : v }),
+                )
+              : nothing
         }
         ${
           entry?.id.startsWith("slat_wall")

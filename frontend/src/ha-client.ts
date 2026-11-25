@@ -535,6 +535,8 @@ const ITEM_FINISH_KEYS = [
   "door_hinge_flip",
   "door_swing_flip",
   "countertop",
+  "countertop_finish",
+  "device_style",
   "finish",
   "slat_cm",
   "slat_gap_cm",

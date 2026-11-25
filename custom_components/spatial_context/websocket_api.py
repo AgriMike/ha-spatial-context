@@ -342,6 +342,13 @@ _FURNITURE_SCHEMA = {
         None, vol.All(vol.Coerce(int), vol.Range(min=1, max=2))
     ),
     vol.Optional("countertop"): vol.Any(None, bool),
+    # A cabinet's (or painted island's) top: quartz (unset) or white oak.
+    vol.Optional("countertop_finish"): vol.Any(
+        None, vol.In(["quartz", "white_oak"])
+    ),
+    # A light switch's or outlet's style: Legrand Adorne in magnesium
+    # (unset) or a plain white decorator rocker / outlet.
+    vol.Optional("device_style"): vol.Any(None, vol.In(["adorne", "standard"])),
     # A wood finish worn instead of a plain colour (a floating shelf).
     vol.Optional("finish"): vol.Any(
         None,
