@@ -927,6 +927,63 @@ function stairsModel(
       mesh.position.z = z0 + (dir * D) / 2;
     }
   }
+  // Walled in both sides: a round wood handrail on the wall, 86 cm over
+  // the nosings from the bottom step to the top one, on brackets, each
+  // end turned back into the wall.
+  if (!out && st.wallRail !== undefined) {
+    const s = st.wallRail === 0 ? -1 : 1;
+    const gap = 0.065;
+    const x = s * (W / 2 - gap);
+    const railH = 0.86;
+    const r = 0.022;
+    // The nosing line: step k's at its riser, k risers up.
+    const za = z0;
+    const ya = h + railH;
+    const zb = z0 + dir * (n - 1) * run;
+    const yb = rise + railH;
+    const len = Math.hypot(zb - za, yb - ya);
+    const g = new THREE.CylinderGeometry(r, r, len, 16);
+    g.rotateX(Math.PI / 2);
+    const rail = add(g, wood, (ya + yb) / 2);
+    rail.position.x = x;
+    rail.position.z = (za + zb) / 2;
+    rail.rotation.x = -Math.atan2(yb - ya, Math.abs(zb - za)) * dir;
+    // Its ends turned into the wall, with a rounded elbow.
+    for (const [z, y] of [
+      [za, ya],
+      [zb, yb],
+    ] as const) {
+      const ret = new THREE.CylinderGeometry(r, r, gap, 16);
+      ret.rotateZ(Math.PI / 2);
+      const turn = add(ret, wood, y);
+      turn.position.x = x + (s * gap) / 2;
+      turn.position.z = z;
+      const elbow = add(new THREE.SphereGeometry(r, 16, 10), wood, y);
+      elbow.position.x = x;
+      elbow.position.z = z;
+    }
+    // Brackets: an arm from a round plate on the wall up under the rail,
+    // about every 1.2 m between the ends.
+    const metal = modelMaterial("#2b2b2b");
+    const count = Math.max(1, Math.ceil(len / 1.2) - 1);
+    for (let k = 1; k <= count; k++) {
+      const f = k / (count + 1);
+      const z = za + (zb - za) * f;
+      const y = ya + (yb - ya) * f - r - 0.025;
+      const plate = new THREE.CylinderGeometry(0.03, 0.03, 0.008, 16);
+      plate.rotateZ(Math.PI / 2);
+      const p = add(plate, metal, y);
+      p.position.x = s * (W / 2 - 0.004);
+      p.position.z = z;
+      const arm = add(new THREE.BoxGeometry(gap, 0.012, 0.012), metal, y);
+      arm.position.x = x + (s * gap) / 2;
+      arm.position.z = z;
+      const post = add(new THREE.BoxGeometry(0.012, 0.025, 0.012), metal, y);
+      post.position.y = y + 0.0125;
+      post.position.x = x;
+      post.position.z = z;
+    }
+  }
   // A flight down from its floor (its top is the floor's level): a wall
   // along each open side up to the floor, and a level banister on top of
   // it at the floor's level, running the flight's length to the wall.
@@ -949,10 +1006,18 @@ function stairsModel(
           depth: 0.1,
           bevelEnabled: false,
         });
-        // Its profile's x along z, extruded across the side.
+        // Its profile's x along z, extruded across the side: on the
+        // footprint of the wall it stands on (flush with it), else 10 cm
+        // thick on the side's line.
+        const [wx0, wx1] = st.sideWalls?.[i] ?? [
+          (i === 0 ? -1 : 1) * (W / 2) - 0.05,
+          (i === 0 ? -1 : 1) * (W / 2) + 0.05,
+        ];
+        g.scale(1, 1, (wx1 - wx0) / 0.1);
         g.rotateY(-Math.PI / 2);
         const mesh = add(g, paint, 0);
-        mesh.position.x = x + 0.05;
+        const line = (wx0 + wx1) / 2;
+        mesh.position.x = wx1;
         // Its wood cap.
         for (let k = 1; k < tops.length; k++) {
           const [za, la] = tops[k - 1]!;
@@ -964,7 +1029,7 @@ function stairsModel(
             0.14,
             0.03,
             Math.hypot(zb - za, yb - ya) + 0.01,
-            x,
+            line,
             (ya + yb) / 2 + 0.015,
             (za + zb) / 2,
             wood,

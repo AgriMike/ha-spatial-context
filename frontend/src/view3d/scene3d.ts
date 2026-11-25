@@ -924,6 +924,13 @@ function buildFloor(
     /** The highest planned roof surface at a spot that lies below `y`
      * (metres above this floor's level), else null. */
     roofBelow: (x: number, z: number, y: number) => number | null;
+    /** As floorAbove, counting only the floors drawn (a flight's top step
+     * is the floor up there only where that floor is in the view). */
+    drawnFloorAbove: (x: number, z: number) => number | null;
+    /** The long sides (metres, floor plane) of the floors above's
+     * staircases: a wall shared with one (a split level's up flight
+     * beside this floor's flight up to it) is topped by its half wall. */
+    upperFlightSides: [Vec2, Vec2][];
     /** Whether the roof is drawn (else the walls needn't meet it). */
     roofShown: boolean;
     /** The roof's underside a vaulted ceiling follows at a spot (metres
@@ -1316,13 +1323,17 @@ function buildFloor(
       }
       const top = Math.max(front, back);
       // How far back from its high end the floor up there runs over it:
-      // its top step is that floor.
+      // its top step is that floor. A floor left out of the view (a
+      // basement's flight up to the entry, the entry's floor not drawn)
+      // isn't there to be it: the step gets its own tread.
       const high = front > back ? 1 : -1;
       const floorAt = ([x, z]: Vec2): boolean => {
         const room = layout.rooms.find(
           (r) => r.points.length >= 3 && pointInPolygon(x / m, z / m, r.points),
         );
-        const y = room ? (room.floor_offset_m ?? 0) : floorAbove(x, z);
+        const y = room
+          ? (room.floor_offset_m ?? 0)
+          : exterior.drawnFloorAbove(x, z);
         return y !== null && Math.abs(y - top) < 0.05;
       };
       let landing = 0;
@@ -1386,6 +1397,41 @@ function buildFloor(
     );
     return zs.map(at);
   };
+  /** Where a flight's sideTop half wall stands (see sideTop): on the
+   * footprint of the wall along that side it stands on (the floor
+   * below's, else this floor's own), so their faces run flush; as its
+   * across range in the item's frame (x0, x1), null for the default (10
+   * cm on the side's line). */
+  const sideWall = (si: number, side: 0 | 1): [number, number] | null => {
+    const st = stairs[si]!;
+    const seg = st.sides[side]!;
+    const f = st.item;
+    const a = (-f.rotation_deg * Math.PI) / 180;
+    const c = Math.cos(a);
+    const sn = Math.sin(a);
+    let best: { lx: number; t: number; share: number } | null = null;
+    for (const w of [
+      ...exterior.below.walls,
+      ...wallSegs.map(([[p, q], t]) => ({ a: p, b: q, t })),
+    ]) {
+      if (w.t <= RAIL_THICKNESS_M) continue;
+      const share = alongShare(seg, [w.a, w.b], w.t / 2 + 0.08);
+      if (share < 0.6 || (best && share <= best.share)) continue;
+      // Its line's offset across the flight (the item's local x).
+      const L = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
+      if (L < 0.05) continue;
+      const mx = (seg[0][0] + seg[1][0]) / 2;
+      const mz = (seg[0][1] + seg[1][1]) / 2;
+      const k =
+        ((mx - w.a[0]) * (w.b[0] - w.a[0]) +
+          (mz - w.a[1]) * (w.b[1] - w.a[1])) /
+        (L * L);
+      const px = w.a[0] + (w.b[0] - w.a[0]) * k - f.x * m;
+      const pz = w.a[1] + (w.b[1] - w.a[1]) * k - f.y * m;
+      best = { lx: px * c - pz * sn, t: w.t - 2 * JOINT_INSET_M, share };
+    }
+    return best ? [best.lx - best.t / 2, best.lx + best.t / 2] : null;
+  };
   /** How much of segment [a, b] (metres) runs within `reach` of [p, q]. */
   const alongShare = (
     [a, b]: [Vec2, Vec2],
@@ -1412,32 +1458,74 @@ function buildFloor(
       ];
     }),
   );
+  /** Whether a wall runs along a staircase's side: this floor's, or one
+   * of the floor above standing over it (a closet beside the flight, open
+   * below), which closes it. */
+  const walledSide = (si: number, side: 0 | 1): boolean => {
+    const st = stairs[si]!;
+    const seg = st.sides[side]!;
+    return (
+      wallSegs.some(
+        ([w, t]) =>
+          t > RAIL_THICKNESS_M && alongShare(seg, w, t / 2 + 0.12) >= 0.6,
+      ) ||
+      upperWalls.some(
+        (w) => w.y <= st.top + 0.3 && alongShare(seg, [w.a, w.b], 0.2) >= 0.6,
+      )
+    );
+  };
   /** Whether a staircase's side gets a railing: not where a wall runs
    * along it, and where two flights share a side only on the higher. */
   const railed = (si: number, side: 0 | 1): boolean => {
     const st = stairs[si]!;
     const seg = st.sides[side]!;
-    if (
-      wallSegs.some(
-        ([w, t]) =>
-          t > RAIL_THICKNESS_M && alongShare(seg, w, t / 2 + 0.12) >= 0.6,
-      )
-    )
-      return false;
-    // A wall of the floor above standing over it (a closet beside the
-    // flight, open below): the flight's side is closed by that.
-    if (
-      upperWalls.some(
-        (w) => w.y <= st.top + 0.3 && alongShare(seg, [w.a, w.b], 0.2) >= 0.6,
-      )
-    )
-      return false;
+    if (walledSide(si, side)) return false;
     return !stairs.some(
       (o, oi) =>
         oi !== si &&
         o.sides.some((os) => alongShare(seg, os, 0.15) >= 0.6) &&
         (o.top > st.top || (o.top === st.top && oi < si)),
     );
+  };
+  /** An indoor flight walled in on both sides, with no banister or half
+   * wall of its own: a handrail fixed to the wall on the climber's right
+   * (else the other walled side), as any flight of a few steps has. */
+  const wallRail = (si: number): 0 | 1 | null => {
+    const st = stairs[si]!;
+    if (st.outdoor || Math.abs(st.front - st.back) < 0.55) return null;
+    if (railed(si, 0) || railed(si, 1)) return null;
+    if (sideTop(si, 0) || sideTop(si, 1)) return null;
+    // Only with the floor at its top in the view: without it the walls
+    // round the flight stop at that floor's underside, and a rail would
+    // stand clear of them.
+    const up = st.front > st.back ? 1 : -1;
+    const [hx, hz] = st.P(0, up * (st.d / 2 + 0.3));
+    const room = layout.rooms.find(
+      (r) => r.points.length >= 3 && pointInPolygon(hx / m, hz / m, r.points),
+    );
+    const above = exterior.drawnFloorAbove(hx, hz);
+    const topDrawn =
+      (room !== undefined &&
+        Math.abs((room.floor_offset_m ?? 0) - st.top) < 0.05) ||
+      (above !== null && Math.abs(above - st.top) < 0.05);
+    if (!topDrawn) return null;
+    // Not on a wall shared with another flight (topped by its half wall);
+    // else on the climber's right (climbing toward +z, that's -x).
+    const beside = (side: 0 | 1) => {
+      const seg = st.sides[side]!;
+      return (
+        stairs.some(
+          (o, oi) =>
+            oi !== si && o.sides.some((os) => alongShare(seg, os, 0.15) >= 0.4),
+        ) ||
+        exterior.upperFlightSides.some((os) => alongShare(seg, os, 0.15) >= 0.4)
+      );
+    };
+    const right: 0 | 1 = up === 1 ? 0 : 1;
+    const sides = [right, right === 0 ? 1 : 0].filter((s) =>
+      walledSide(si, s as 0 | 1),
+    ) as (0 | 1)[];
+    return sides.find((s) => !beside(s)) ?? sides[0] ?? null;
   };
   /** Where a staircase side's railing runs into a wall (this floor's, or
    * one standing on a floor above, like the landing's half wall carrying
@@ -4343,10 +4431,15 @@ function buildFloor(
                 [number, number][] | null,
                 [number, number][] | null,
               ],
+              sideWalls: [
+                sideTop(si, 0) ? sideWall(si, 0) : null,
+                sideTop(si, 1) ? sideWall(si, 1) : null,
+              ] as [[number, number] | null, [number, number] | null],
               railEnds: [railEnds(si, 0), railEnds(si, 1)] as [
                 [number, number],
                 [number, number],
               ],
+              ...(wallRail(si) !== null ? { wallRail: wallRail(si)! } : {}),
             },
           }
         : {}),
@@ -4742,6 +4835,141 @@ function buildFloor(
     });
   }
 
+  /** Stretches of a flight's side whose wall was cut back (see below):
+   * the side's start and direction, toward the flight, the stretch along
+   * it and the cut face's offset from it. */
+  const cutBack: {
+    p: Vec2;
+    u: Vec2;
+    n: Vec2;
+    a: number;
+    b: number;
+    face: number;
+  }[] = [];
+  // Along a flight's side, a thick wall (a foundation wall, 12 cm or more)
+  // under a thinner, framed one of the floor above on the same line: where it
+  // stands proud of that wall's face into the stairwell, it's cut to that
+  // wall's own footprint and meets its foot (it'd stop a hair under the
+  // floor there), so the stairwell's wall runs flush from the floor below
+  // to the one above.
+  for (const st of stairs) {
+    if (st.outdoor) continue;
+    const [cx, cz] = st.P(0, 0);
+    for (const [p, q] of st.sides) {
+      const L = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (L < 0.1) continue;
+      const ux = (q[0] - p[0]) / L;
+      const uz = (q[1] - p[1]) / L;
+      // Toward the flight's middle.
+      let nx = -uz;
+      let nz = ux;
+      if ((cx - p[0]) * nx + (cz - p[1]) * nz < 0) {
+        nx = -nx;
+        nz = -nz;
+      }
+      for (let i = walls.length - 1; i >= 0; i--) {
+        const box = walls[i]!;
+        // Its line: local +x is (cos, -sin) under rotation.y.
+        const bx = Math.cos(box.angle);
+        const bz = -Math.sin(box.angle);
+        if (Math.abs(bx * uz - bz * ux) > 0.02) continue;
+        if (box.depth < 0.12) continue;
+        // Its middle's offset from the side (into the flight +).
+        const off = (box.x - p[0]) * nx + (box.z - p[1]) * nz;
+        if (Math.abs(off) > box.depth / 2 + 0.05) continue;
+        const t = (box.x - p[0]) * ux + (box.z - p[1]) * uz;
+        const t0 = t - box.length / 2;
+        const t1 = t + box.length / 2;
+        // Along the flight, and on past its ends where little is left.
+        let a = Math.max(t0, 0);
+        let b = Math.min(t1, L);
+        if (b - a < 0.05) continue;
+        if (a - t0 < 0.3) a = t0;
+        if (t1 - b < 0.3) b = t1;
+        const mx = box.x + ((a + b) / 2 - t) * ux;
+        const mz = box.z + ((a + b) / 2 - t) * uz;
+        const over = upperWalls.find((w) => {
+          const wl = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
+          if (wl < 0.05) return false;
+          const vx = (w.b[0] - w.a[0]) / wl;
+          const vz = (w.b[1] - w.a[1]) / wl;
+          return (
+            Math.abs(vx * uz - vz * ux) < 0.02 &&
+            pointToSegmentDistance(mx, mz, w.a[0], w.a[1], w.b[0], w.b[1]) <
+              0.06
+          );
+        });
+        if (!over) continue;
+        // (Drawn a joint's inset thinner each side than on the plan.)
+        const tUp = over.t - 2 * JOINT_INSET_M;
+        const offUp = (over.a[0] - p[0]) * nx + (over.a[1] - p[1]) * nz;
+        const proud = off + box.depth / 2 - (offUp + tUp / 2);
+        if (proud <= 0.001 || tUp > box.depth) continue;
+        const beyond = floorAbove(
+          mx - nx * (box.depth / 2 + 0.15),
+          mz - nz * (box.depth / 2 + 0.15),
+        );
+        const top =
+          beyond !== null &&
+          beyond > box.y1 &&
+          beyond - box.y1 <= JOINT_INSET_M + 0.002
+            ? beyond
+            : box.y1;
+        const pieces: Box3d[] = [];
+        const piece = (s0: number, s1: number, cut: boolean) => {
+          const sm = (s0 + s1) / 2;
+          // Cut: on the wall above's footprint.
+          const shift = cut ? offUp - off : 0;
+          pieces.push({
+            ...box,
+            x: box.x + (sm - t) * ux + nx * shift,
+            z: box.z + (sm - t) * uz + nz * shift,
+            length: s1 - s0,
+            depth: cut ? tUp : box.depth,
+            ...(cut ? { y1: top } : {}),
+          });
+        };
+        if (a - t0 > 0.005) piece(t0, a, false);
+        piece(a, b, true);
+        if (t1 - b > 0.005) piece(b, t1, false);
+        walls.splice(i, 1, ...pieces);
+        cutBack.push({
+          p,
+          u: [ux, uz],
+          n: [nx, nz],
+          a,
+          b,
+          face: offUp + tUp / 2,
+        });
+      }
+    }
+  }
+  // A wall ending against a cut-back one (a corner there) ends at its new
+  // face, not standing out past it.
+  for (const c of cutBack)
+    for (let i = 0; i < walls.length; i++) {
+      const box = walls[i]!;
+      const bx = Math.cos(box.angle);
+      const bz = -Math.sin(box.angle);
+      // Square to the side: its length runs across it.
+      if (Math.abs(bx * c.u[1] - bz * c.u[0]) < 0.98) continue;
+      const t = (box.x - c.p[0]) * c.u[0] + (box.z - c.p[1]) * c.u[1];
+      if (t < c.a - box.depth / 2 - 0.05 || t > c.b + box.depth / 2 + 0.05)
+        continue;
+      const o = (box.x - c.p[0]) * c.n[0] + (box.z - c.p[1]) * c.n[1];
+      const inner = o + box.length / 2;
+      const outer = o - box.length / 2;
+      if (inner <= c.face + 0.001 || inner > c.face + 0.1 || outer >= c.face)
+        continue;
+      const mid = (outer + c.face) / 2;
+      walls[i] = {
+        ...box,
+        x: box.x + c.n[0] * (mid - o),
+        z: box.z + c.n[1] * (mid - o),
+        length: c.face - outer,
+      };
+    }
+
   const floor: Floor3d = {
     floorId: input.floorId,
     name: input.name,
@@ -5090,7 +5318,19 @@ export function buildScene(input: SceneInput): Scene3d {
       })()
     : [0, 1];
   const grade = input.ground?.uphill_m ?? 0;
-  const site = input.ground ? terrain(input, input.ground, northDeg) : null;
+  // A hidden floor's flight up into a drawn one: dug out and drawn down
+  // its stairwell (see wellsDown).
+  const wells = input.ground
+    ? wellsDown(input, Math.max(input.ground.uphill_m, input.ground.downhill_m))
+    : [];
+  const site = input.ground
+    ? terrain(
+        input,
+        input.ground,
+        northDeg,
+        wells.map((w) => w.hole),
+      )
+    : null;
   // The planned roof's sections, to tell walls under it from walls out in
   // the open.
   const planM = metersPerUnit(
@@ -5147,7 +5387,7 @@ export function buildScene(input: SceneInput): Scene3d {
     }
     return best;
   };
-  const floors = input.floors.map((f) =>
+  const buildOne = (f: FloorInput) =>
     buildFloor(
       f,
       hass,
@@ -5259,6 +5499,29 @@ export function buildScene(input: SceneInput): Scene3d {
           }
           return best;
         },
+        drawnFloorAbove: floorAboveOf(f, input.floors),
+        upperFlightSides: (input.context ?? input.floors)
+          .filter((g) => g.baseY > f.baseY + 0.5)
+          .flatMap((g) => {
+            const gm = metersPerUnit(g.layout.scale);
+            return g.layout.furniture
+              .filter((it) => it.kind === STAIRS_KIND)
+              .flatMap((it): [Vec2, Vec2][] => {
+                const a = (-it.rotation_deg * Math.PI) / 180;
+                const c = Math.cos(a);
+                const sn = Math.sin(a);
+                const w = it.width_cm / 200;
+                const d = it.depth_cm / 200;
+                const P = (lx: number, lz: number): Vec2 => [
+                  it.x * gm + lx * c + lz * sn,
+                  it.y * gm - lx * sn + lz * c,
+                ];
+                return [
+                  [P(-w, -d), P(-w, d)],
+                  [P(w, -d), P(w, d)],
+                ];
+              });
+          }),
         roofShown: !!input.roof,
         dormers,
         roofLines,
@@ -5277,8 +5540,93 @@ export function buildScene(input: SceneInput): Scene3d {
           return best;
         },
       },
-    ),
-  );
+    );
+  const floors = input.floors.map(buildOne);
+  // Down each hidden floor's stairwell (see wellsDown): its flight, the
+  // walls along it as that floor has them (each stopping under the floor
+  // over it), its floor, and a plain face where it opens on to the rest
+  // of that floor, all from that floor built as if drawn.
+  if (wells.length && floors.length) {
+    const lowest = floors.reduce((a, b) => (b.baseY < a.baseY ? b : a));
+    const built = new Map<FloorInput, Floor3d>();
+    for (const well of wells) {
+      const g = well.floor;
+      if (!built.has(g)) built.set(g, buildOne(g));
+      const hf = built.get(g)!;
+      const dy = g.baseY - lowest.baseY;
+      const poly = well.points;
+      for (const it of hf.items)
+        if (it.id === well.itemId)
+          lowest.items.push({ ...it, id: `well:${it.id}`, y0: it.y0 + dy });
+      for (const sl of hf.slabs) {
+        const pts = clipToConvex(sl.points, poly);
+        if (pts.length < 3) continue;
+        lowest.slabs.push({
+          ...sl,
+          id: `well:${sl.id}`,
+          y: sl.y + dy,
+          points: pts,
+        });
+      }
+      // Its sides and far end (not the high end, under the floor it
+      // climbs to): the hidden floor's walls along them, cut to the well.
+      for (let e = 1; e < poly.length; e++) {
+        const a = poly[e]!;
+        const b = poly[(e + 1) % poly.length]!;
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (L < 0.05) continue;
+        const ux = (b[0] - a[0]) / L;
+        const uz = (b[1] - a[1]) / L;
+        let covered = 0;
+        for (const box of hf.walls) {
+          // The box's line: local +x is (cos, -sin) under rotation.y.
+          const bx = Math.cos(box.angle);
+          const bz = -Math.sin(box.angle);
+          if (Math.abs(bx * uz - bz * ux) > 0.05) continue;
+          const off = (box.x - a[0]) * -uz + (box.z - a[1]) * ux;
+          if (Math.abs(off) > box.depth / 2 + 0.08) continue;
+          const t = (box.x - a[0]) * ux + (box.z - a[1]) * uz;
+          const half = box.length / 2;
+          const t0 = Math.max(t - half, -box.depth / 2 - 0.1);
+          const t1 = Math.min(t + half, L + box.depth / 2 + 0.1);
+          if (t1 - t0 < 0.05) continue;
+          covered += Math.min(t1, L) - Math.max(t0, 0);
+          const tm = (t0 + t1) / 2;
+          // Not the plan's wall on this floor: not picked in the editor.
+          const { ref: _ref, ...rest } = box;
+          lowest.walls.push({
+            ...rest,
+            x: box.x + (tm - t) * ux,
+            z: box.z + (tm - t) * uz,
+            length: t1 - t0,
+            y0: box.y0 + dy,
+            y1: box.y1 + dy,
+          });
+        }
+        if (covered > 0.8 * L) continue;
+        // Open on to the rest of the hidden floor there: a plain face up
+        // to the drawn floor beyond it, its inner face on the well's edge.
+        const cx = poly.reduce((t, q) => t + q[0], 0) / poly.length;
+        const cz = poly.reduce((t, q) => t + q[1], 0) / poly.length;
+        const outward =
+          ((a[0] + b[0]) / 2 - cx) * uz - ((a[1] + b[1]) / 2 - cz) * ux > 0;
+        const [ox, oz] = outward ? [uz, -ux] : [-uz, ux];
+        const mx = (a[0] + b[0]) / 2 + ox * 0.15;
+        const mz = (a[1] + b[1]) / 2 + oz * 0.15;
+        const beyond = floorAboveOf(g, input.floors)(mx, mz);
+        const up = beyond === null ? 0 : beyond + dy;
+        lowest.walls.push({
+          x: mx - ox * 0.1,
+          z: mz - oz * 0.1,
+          y0: dy,
+          y1: up - 0.004,
+          length: L + 0.2,
+          depth: 0.1,
+          angle: Math.atan2(-uz, ux),
+        });
+      }
+    }
+  }
   // Within a dug-in floor's walls (see dugInFloors), where no room covers
   // it (a stairwell's foot, the space under its stairs), a bare concrete
   // floor just under its rooms' own: the ground is cut away there, so it
@@ -5332,7 +5680,18 @@ export function buildScene(input: SceneInput): Scene3d {
     const lowest = floors.reduce((a, b) => (b.baseY < a.baseY ? b : a));
     for (const g of input.context ?? []) {
       if (g.baseY >= lowest.baseY - 0.01 || g.baseY >= top - 0.01) continue;
-      openingsDownTo(g, input.floors).forEach(([x0, z0, x1, z1], k) => {
+      const own = wells
+        .filter((w) => w.floor === g)
+        .map((w): [number, number, number, number] => [
+          Math.min(...w.hole.map((p) => p[0])),
+          Math.min(...w.hole.map((p) => p[1])),
+          Math.max(...w.hole.map((p) => p[0])),
+          Math.max(...w.hole.map((p) => p[1])),
+        ]);
+      const rects = openingsDownTo(g, input.floors).flatMap((r) =>
+        own.reduce((left, w) => left.flatMap((q) => rectMinus(q, w)), [r]),
+      );
+      rects.forEach(([x0, z0, x1, z1], k) => {
         const y = Math.max(
           ...[
             [x0, z0],
@@ -7169,6 +7528,161 @@ function openingsDownTo(
   return out;
 }
 
+/** A flight on a floor left out of the view, under the drawn ones and dug
+ * into the hillside, that climbs into a drawn floor's room (a basement's
+ * flight up to a split level's entry): drawn with the lowest drawn floor,
+ * in its stairwell, so the entry shows its stairs down. */
+interface WellDown {
+  floor: FloorInput;
+  itemId: string;
+  /** The stairwell (world metres, corners in order): the flight's strip
+   * from its high end on past its foot to where a drawn floor's room
+   * covers it, or the hidden floor's house ends. Its high end's edge is
+   * points[0] to points[1]. */
+  points: Vec2[];
+  /** The ground dug out for it: the well, the walls round it and a
+   * margin (see wellsDown). */
+  hole: Vec2[];
+}
+
+/** The stairwells down to the hidden floors under the drawn ones, below
+ * `top` (the high side's grade): see WellDown. */
+function wellsDown(input: SceneInput, top: number): WellDown[] {
+  if (!input.floors.length) return [];
+  const lowest = input.floors.reduce((a, b) => (b.baseY < a.baseY ? b : a));
+  const drawnLevel = (x: number, z: number): number | null => {
+    for (const f of input.floors) {
+      const fm = metersPerUnit(f.layout.scale);
+      const room = f.layout.rooms.find(
+        (r) =>
+          !r.outdoor &&
+          r.points.length >= 3 &&
+          pointInPolygon(x / fm, z / fm, r.points),
+      );
+      if (room) return f.baseY + (room.floor_offset_m ?? 0);
+    }
+    return null;
+  };
+  const out: WellDown[] = [];
+  for (const g of input.context ?? []) {
+    if (g.baseY >= lowest.baseY - 0.01 || g.baseY >= top - 0.01) continue;
+    if (input.floors.some((f) => f.floorId === g.floorId)) continue;
+    const m = metersPerUnit(g.layout.scale);
+    const loops = houseLoopsOf(g.layout);
+    for (const it of g.layout.furniture) {
+      if (it.kind !== STAIRS_KIND) continue;
+      const a = (-it.rotation_deg * Math.PI) / 180;
+      const c = Math.cos(a);
+      const sn = Math.sin(a);
+      const w = it.width_cm / 100;
+      const d = it.depth_cm / 100;
+      const P = (lx: number, lz: number): Vec2 => [
+        it.x * m + lx * c + lz * sn,
+        it.y * m - lx * sn + lz * c,
+      ];
+      // Its top: as set by hand, else its higher end's room.
+      const levelOf = ([x, z]: Vec2) =>
+        g.layout.rooms.find(
+          (r) => r.points.length >= 3 && pointInPolygon(x / m, z / m, r.points),
+        )?.floor_offset_m ?? 0;
+      const topRel =
+        it.elevation_cm != null && it.height_cm
+          ? (it.elevation_cm + it.height_cm) / 100
+          : Math.max(levelOf(P(0, d / 2 + 0.3)), levelOf(P(0, -d / 2 - 0.3)));
+      if (topRel < 0.3) continue;
+      const high = ([1, -1] as const).find((e) => {
+        const y = drawnLevel(...P(0, e * (d / 2 + 0.3)));
+        return y !== null && Math.abs(y - (g.baseY + topRel)) < 0.06;
+      });
+      if (high === undefined) continue;
+      // On past its foot, while still inside the hidden floor's house and
+      // under none of the drawn floors' rooms.
+      let ext = 0;
+      while (ext < 4) {
+        const [x, z] = P(0, -high * (d / 2 + ext + 0.025));
+        const inside = loops.some((l) => pointInPolygon(x / m, z / m, l));
+        if (!inside || drawnLevel(x, z) !== null) break;
+        ext += 0.05;
+      }
+      const far = -high * (d / 2 + ext);
+      // Past the walls round it: a lawn is cut in 45 cm cells by their
+      // triangles' middles, so its edge reaches up to 30 cm into a hole.
+      const pad = 0.35;
+      out.push({
+        floor: g,
+        itemId: it.id,
+        points: [
+          P(-w / 2, (high * d) / 2),
+          P(w / 2, (high * d) / 2),
+          P(w / 2, far),
+          P(-w / 2, far),
+        ],
+        hole: [
+          P(-w / 2 - pad, high * (d / 2 + pad)),
+          P(w / 2 + pad, high * (d / 2 + pad)),
+          P(w / 2 + pad, far - high * pad),
+          P(-w / 2 - pad, far - high * pad),
+        ],
+      });
+    }
+  }
+  return out;
+}
+
+/** A convex polygon `clip` cut out of `poly` the other way round: the
+ * part of `poly` inside `clip` (Sutherland-Hodgman). */
+function clipToConvex(poly: Vec2[], clip: Vec2[]): Vec2[] {
+  // Make the clip counter-clockwise in (x, z).
+  let area = 0;
+  for (let i = 0; i < clip.length; i++) {
+    const p = clip[i]!;
+    const q = clip[(i + 1) % clip.length]!;
+    area += p[0] * q[1] - q[0] * p[1];
+  }
+  const cw = area < 0;
+  let out = poly;
+  for (let i = 0; i < clip.length && out.length; i++) {
+    const a = clip[i]!;
+    const b = clip[(i + 1) % clip.length]!;
+    const side = (p: Vec2) => {
+      const v = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+      return cw ? -v : v;
+    };
+    const next: Vec2[] = [];
+    for (let k = 0; k < out.length; k++) {
+      const p = out[k]!;
+      const q = out[(k + 1) % out.length]!;
+      const sp = side(p);
+      const sq = side(q);
+      if (sp >= 0) next.push(p);
+      if (sp >= 0 !== sq >= 0) {
+        const t = sp / (sp - sq);
+        next.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
+      }
+    }
+    out = next;
+  }
+  return out;
+}
+
+/** Rectangle `r` (x0, z0, x1, z1) less rectangle `w`: up to four. */
+function rectMinus(
+  r: [number, number, number, number],
+  w: [number, number, number, number],
+): [number, number, number, number][] {
+  const [x0, z0, x1, z1] = r;
+  const [a0, b0, a1, b1] = w;
+  if (a0 >= x1 || a1 <= x0 || b0 >= z1 || b1 <= z0) return [r];
+  const out: [number, number, number, number][] = [];
+  if (b0 > z0) out.push([x0, z0, x1, b0]);
+  if (b1 < z1) out.push([x0, b1, x1, z1]);
+  const zt = Math.max(z0, b0);
+  const zb = Math.min(z1, b1);
+  if (a0 > x0) out.push([x0, zt, a0, zb]);
+  if (a1 < x1) out.push([a1, zt, x1, zb]);
+  return out.filter(([p, q, s, t]) => s - p > 0.01 && t - q > 0.01);
+}
+
 /** The hillside the building stands on: grade on its high and low sides,
  * falling toward a compass bearing. Rooms whose floor sits below the high
  * side's grade are cut out of the ground, so a walk-out basement still
@@ -7177,10 +7691,14 @@ function terrain(
   input: SceneInput,
   ground: GroundSetting,
   northDeg: number,
+  /** More outlines cut out of the ground (a hidden floor's stairwell
+   * drawn down into it: see wellsDown). */
+  extraHoles: Vec2[][] = [],
 ): Terrain3d {
   const [dx, dz] = planVector(ground.downhill_deg, northDeg);
   const top = Math.max(ground.uphill_m, ground.downhill_m);
   const holes = [
+    ...extraHoles,
     ...input.floors.flatMap((f) => {
       const m = metersPerUnit(f.layout.scale);
       return f.layout.rooms

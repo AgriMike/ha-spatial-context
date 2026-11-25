@@ -317,6 +317,13 @@ export interface Item3d {
      * pairs in the item's frame (z back to front, metres; level above the
      * floor's), else null (level with the floor). */
     sideTops?: [[number, number][] | null, [number, number][] | null];
+    /** Per side with a sideTops half wall: its across range (x0, x1, the
+     * item's frame), on the footprint of the wall it stands on; null for
+     * 10 cm on the side's line. */
+    sideWalls?: [[number, number] | null, [number, number] | null];
+    /** Walled in on both sides with no banister: the side (0 left, 1
+     * right) whose wall carries a handrail on brackets. */
+    wallRail?: 0 | 1;
   };
 }
 
