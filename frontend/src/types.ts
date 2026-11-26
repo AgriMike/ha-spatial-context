@@ -230,6 +230,10 @@ export interface Opening {
    * door when it's wider than 1.2 m; between rooms, a three panel mission
    * door, or none where it's wider than 1.3 m). */
   door_style?: DoorStyle | null;
+  /** A pair of doors meeting in the middle (closet doors), each half the
+   * opening and hung on its own jamb, in the door's style (not French,
+   * sliding or barn doors, which are their own). */
+  door_double?: boolean | null;
   /** A door between rooms: how far it stands open, degrees (absent: 90),
    * and its hinges and swing put on the other jamb and the other side of
    * the wall. */

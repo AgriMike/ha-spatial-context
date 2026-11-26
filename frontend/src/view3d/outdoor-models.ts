@@ -1199,56 +1199,95 @@ function lightModel(m: Model, item: Item3d, kind: string, o: Opts): boolean {
   return false;
 }
 
-/** A giant C9 holiday bulb (3 ft): a green socket on a foot, fluted, with
- * a curled handle on one side, and the bulb's tapered glass on top,
+/** A giant C9 holiday bulb (3 ft): a tall green fluted socket (about
+ * half its height) on a flared foot, a mug-like handle down one side that
+ * curls up into a scroll at its top, and the bulb's tapered glass on top,
  * frosted white while off, glowing in its light's colour while on. Sized
- * from a 36 cm × 91 cm original. */
+ * from a 36 cm × 91 cm original, whose socket is 23 cm across. */
 function c9Bulb(m: Model, item: Item3d): void {
   const { W, D, H } = m;
   const s = Math.min(W, D) / 0.36;
   const k = H / 0.91;
   const green = mat("#11804a", 0.45);
-  const dark = mat("#0d6b3d", 0.5);
-  // The foot, the socket and its rim.
-  m.cyl(0.125 * s, 0.13 * s, 0.035 * k, 0, 0, 0, green, 32);
-  m.cyl(0.1 * s, 0.1 * s, 0.25 * k, 0, 0.035 * k, 0, green, 32);
-  for (let i = 0; i < 14; i++) {
-    const a = (i / 14) * Math.PI * 2;
-    const r = 0.1 * s;
-    const g = new THREE.BoxGeometry(0.012 * s, 0.2 * k, 0.012 * s);
+  const dark = mat("#0e7041", 0.5);
+  // The foot, the socket, its flutes and the rim the bulb sits in.
+  m.cyl(0.116 * s, 0.122 * s, 0.04 * k, 0, 0, 0, green, 32);
+  m.cyl(0.108 * s, 0.112 * s, 0.38 * k, 0, 0.04 * k, 0, green, 32);
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2;
+    const r = 0.11 * s;
+    const g = new THREE.BoxGeometry(0.014 * s, 0.31 * k, 0.012 * s);
     g.rotateY(-a);
-    g.translate(Math.cos(a) * r, 0.06 * k + 0.1 * k, Math.sin(a) * r);
+    g.translate(Math.cos(a) * r, 0.07 * k + 0.155 * k, Math.sin(a) * r);
     m.add(g, dark);
   }
-  m.cyl(0.112 * s, 0.108 * s, 0.045 * k, 0, 0.285 * k, 0, green, 32);
-  // The handle: out from the socket's top, curling round and down to
-  // meet it low on its side.
-  const handle = new THREE.CatmullRomCurve3(
+  m.cyl(0.118 * s, 0.114 * s, 0.035 * k, 0, 0.415 * k, 0, green, 32);
+  // The handle: from low on the socket out and up its side, to a scroll
+  // curling over at the top, joined to the socket by a short arm there.
+  const tube = (pts: [number, number][], r: number, n: number) =>
+    m.add(
+      new THREE.TubeGeometry(
+        new THREE.CatmullRomCurve3(
+          pts.map(([x, y]) => new THREE.Vector3(x * s, y * k, 0)),
+        ),
+        n,
+        r * s,
+        8,
+        false,
+      ),
+      green,
+    );
+  tube(
     [
-      [0.1, 0.27],
-      [0.16, 0.29],
-      [0.19, 0.25],
-      [0.17, 0.19],
-      [0.135, 0.13],
-      [0.1, 0.09],
-    ].map(([x, y]) => new THREE.Vector3(x! * s, y! * k, 0)),
+      [0.104, 0.1],
+      [0.122, 0.14],
+      [0.132, 0.22],
+      [0.137, 0.3],
+      [0.134, 0.355],
+      [0.144, 0.38],
+      [0.16, 0.375],
+      [0.163, 0.355],
+      [0.152, 0.345],
+    ],
+    0.011,
+    40,
   );
-  m.add(new THREE.TubeGeometry(handle, 24, 0.013 * s, 8, false), green);
-  // The bulb: a lathed C9 profile from the rim up to a rounded point.
+  tube(
+    [
+      [0.104, 0.31],
+      [0.122, 0.318],
+      [0.135, 0.322],
+    ],
+    0.01,
+    8,
+  );
+  // The bulb: a lathed C9 profile from the rim up to a rounded point,
+  // widest a little over halfway up.
   const profile = [
-    [0.095, 0],
-    [0.12, 0.04],
-    [0.155, 0.11],
-    [0.175, 0.19],
-    [0.172, 0.27],
-    [0.15, 0.37],
-    [0.11, 0.46],
-    [0.06, 0.53],
-    [0.02, 0.575],
-    [0, 0.58],
-  ].map(([r, y]) => new THREE.Vector2(r! * s, (0.33 + y!) * k));
-  m.add(new THREE.LatheGeometry(profile, 40), lens(item, "#f4f4f1"));
-  halo(m, item, 0, 0.58 * k, 0, 0.26 * s);
+    [0.1, 0],
+    [0.108, 0.04],
+    [0.122, 0.11],
+    [0.134, 0.19],
+    [0.139, 0.25],
+    [0.135, 0.3],
+    [0.12, 0.36],
+    [0.095, 0.41],
+    [0.06, 0.445],
+    [0.025, 0.465],
+    [0, 0.47],
+  ].map(([r, y]) => new THREE.Vector2(r! * s, (0.44 + y!) * k));
+  // Its glass in the light's own colour (a lens's pale tint glowing on a
+  // globe this big reads as white): tinted through, glowing with the
+  // light's brightness; frosted white while it's off.
+  const lit = item.light;
+  const glass = lit
+    ? mat(lit.color, 0.5, 0, {
+        glow: lit.color,
+        glowLevel: 0.35 + 0.65 * lit.level,
+      })
+    : mat("#f4f4f1", 0.3);
+  m.add(new THREE.LatheGeometry(profile, 40), glass);
+  halo(m, item, 0, 0.68 * k, 0, 0.2 * s);
 }
 
 // --- plants -------------------------------------------------------------------

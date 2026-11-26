@@ -4858,6 +4858,20 @@ export class Floorplan3dView extends LitElement {
           ],
           (v) => set({ door_style: v }),
         )}
+        ${
+          o.door_style &&
+          ["french", "sliding", "barn", "none"].includes(o.door_style)
+            ? nothing
+            : this._select<"single" | "pair">(
+                L("doorLeaves"),
+                o.door_double ? "pair" : "single",
+                [
+                  ["single", L("doorSingle")],
+                  ["pair", L("doorPair")],
+                ],
+                (v) => set({ door_double: v === "pair" ? true : null }),
+              )
+        }
         ${this._num(
           L("doorOpen"),
           o.door_open_deg ?? null,

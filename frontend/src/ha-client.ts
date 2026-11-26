@@ -577,6 +577,7 @@ const ITEM_FINISH_KEYS = [
 ] as const;
 const OPENING_STYLE_KEYS = [
   "door_style",
+  "door_double",
   "door_open_deg",
   "door_hinge_flip",
   "door_swing_flip",

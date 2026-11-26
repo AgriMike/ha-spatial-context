@@ -200,6 +200,8 @@ _OPENING_SCHEMA = {
     ),
     vol.Optional("door_hinge_flip"): bool,
     vol.Optional("door_swing_flip"): bool,
+    # A pair of doors meeting in the middle (closet doors), in its style.
+    vol.Optional("door_double"): vol.Any(None, bool),
     vol.Optional("window_type"): vol.In(
         ["picture", "single_hung", "casement", "slider"]
     ),

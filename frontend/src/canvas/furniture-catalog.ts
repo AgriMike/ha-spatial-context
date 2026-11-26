@@ -2725,7 +2725,7 @@ const OUTDOOR_LIGHTING: Row[] = [
     36,
     36,
     "c9Bulb",
-    { h3d: 0.91, beam: "omni", lightY: 0.6, ownGlow: true },
+    { h3d: 0.91, beam: "omni", lightY: 0.68, ownGlow: true },
   ],
 ];
 

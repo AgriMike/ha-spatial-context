@@ -2327,8 +2327,10 @@ function buildFloor(
         y1: number,
         style: DoorStyle,
         color: string,
+        pair = false,
       ) => {
         const D = 0.05;
+        const meet = style === "french" || pair;
         const h = y1 - y0;
         const glass = (l: [number, number, number, number]) =>
           panes.push({
@@ -2337,13 +2339,12 @@ function buildFloor(
             color: "#86a6bd",
             opacity: 0.38,
           });
-        const leaves: [number, number][] =
-          style === "french"
-            ? [
-                [s0, (s0 + s1) / 2],
-                [(s0 + s1) / 2, s1],
-              ]
-            : [[s0, s1]];
+        const leaves: [number, number][] = meet
+          ? [
+              [s0, (s0 + s1) / 2],
+              [(s0 + s1) / 2, s1],
+            ]
+          : [[s0, s1]];
         leaves.forEach(([a, b], li) => {
           const lw = b - a;
           const st = Math.min(0.12, lw * 0.14);
@@ -2417,13 +2418,12 @@ function buildFloor(
               color,
             });
           }
-          // The knob (French doors: at the meeting stiles).
-          const latch =
-            style === "french"
-              ? li === 0
-                ? b - st / 2
-                : a + st / 2
-              : b - st / 2;
+          // The knob (a pair's: at the meeting stiles).
+          const latch = meet
+            ? li === 0
+              ? b - st / 2
+              : a + st / 2
+            : b - st / 2;
           walls.push({
             ...proud(
               box(latch - 0.02, latch + 0.02, y0 + 0.95, y0 + 1.1, 0.03),
@@ -2987,10 +2987,15 @@ function buildFloor(
             head,
             doorStyle ?? "slab",
             opening.paint_color ?? (dark ? DOOR_DARK : DOOR),
+            !!opening.door_double,
           );
         } else if (isDoor && !opening.garage) {
+          // (A pair of closet doors is a door however wide.)
           const style =
-            doorStyle ?? (hole.s1 - hole.s0 > 1.3 ? "none" : "mission");
+            doorStyle ??
+            (hole.s1 - hole.s0 > 1.3 && !opening.door_double
+              ? "none"
+              : "mission");
           if (style === "barn")
             barnDoor(
               hole.s0,
@@ -3001,18 +3006,53 @@ function buildFloor(
               Math.min(1, Math.max(0, (opening.door_open_deg ?? 90) / 90)),
               !!opening.door_hinge_flip,
             );
-          else if (style !== "none" && style !== "sliding")
-            insideDoor(
-              hole.s0 + JOINT_INSET_M,
-              hole.s1 - JOINT_INSET_M,
-              sill,
-              head - JOINT_INSET_M,
-              style,
-              opening.paint_color ?? (dark ? DOOR_INSIDE_DARK : DOOR_INSIDE),
-              !!opening.door_hinge_flip,
-              opening.door_swing_flip ? -1 : 1,
-              opening.door_open_deg ?? 90,
-            );
+          else if (style !== "none" && style !== "sliding") {
+            const a = hole.s0 + JOINT_INSET_M;
+            const b = hole.s1 - JOINT_INSET_M;
+            const top = head - JOINT_INSET_M;
+            const color =
+              opening.paint_color ?? (dark ? DOOR_INSIDE_DARK : DOOR_INSIDE);
+            const side = opening.door_swing_flip ? -1 : 1;
+            const open = opening.door_open_deg ?? 90;
+            if (opening.door_double && style !== "french") {
+              // Closet doors: a leaf hung on each jamb, meeting in the
+              // middle with a hair of a gap.
+              const mid = (a + b) / 2;
+              insideDoor(
+                a,
+                mid - 0.0015,
+                sill,
+                top,
+                style,
+                color,
+                false,
+                side,
+                open,
+              );
+              insideDoor(
+                mid + 0.0015,
+                b,
+                sill,
+                top,
+                style,
+                color,
+                true,
+                side,
+                open,
+              );
+            } else
+              insideDoor(
+                a,
+                b,
+                sill,
+                top,
+                style,
+                color,
+                !!opening.door_hinge_flip,
+                side,
+                open,
+              );
+          }
         }
         // A window's rails (how it opens) and grid, in the trim's white.
         if (!isDoor) {
